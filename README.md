@@ -38,6 +38,18 @@ rows are matched on a message's own content. Everything anchored to a message is
 positioned from that row's rectangle and keyed by the message it belongs to, so
 a recycled row drops what was drawn for its previous occupant.
 
+Being in its own layer means the overlay cannot push Slack's own UI aside, so it
+measures around it instead. The message button takes a row's bottom-right corner,
+because Slack's hover actions and an unread divider's **New** label both own the
+top-right. The menu hangs off that button rather than dropping across the message
+it was opened from. A result is drawn inside its own row, not below it, where a
+line would cover the next message's timestamp. And the channel pill measures the
+free space beside the channel name before it takes any: it truncates its label,
+then shows only its dot, and then gets out of the way entirely rather than
+covering the huddle button. Colours come from Slack — the font and text colour by
+inheritance, the background read off the message list — so the overlay follows
+the workspace theme instead of assuming a light one.
+
 There is no Slack app to create, no bot token, no workspace install and no
 network hop. The trade-off is that Slack only accepts the debug flag at process
 start, so Sidequest has to be the thing that launches Slack.
@@ -73,11 +85,16 @@ Leave it running. In Slack:
 
 1. Open a channel and click **Link a repo** beside the channel name. Paste an
    absolute path to a git checkout. The panel that opens is Sidequest's own —
-   Electron does not implement `window.prompt`.
+   Electron does not implement `window.prompt`. In a narrow window there may be
+   no room for that pill beside Slack's own header buttons; the same panel is
+   one click away under **Sidequest** → **Link a repo…**, and `sidequest link`
+   does it from the terminal.
 2. Hover any message → **Sidequest** → **Investigate** / **Fix** / **Review**.
 
 A Warp tab opens on a new worktree with Claude Code already working. The result —
-the branch name, or what went wrong — appears under the message you clicked.
+the branch name, or what went wrong — appears on the message you clicked. It is
+one line, so it covers nothing; hover it to read a long one in full, click it to
+dismiss it.
 
 Stopping Sidequest leaves Slack running; the overlay disappears on Slack's next
 reload.
@@ -195,7 +212,9 @@ changed its `data-qa` attributes; set `verbose: true` and check Slack's devtools
 console.
 
 **"No repo is linked to #channel".** Click **Link a repo** beside the channel
-name.
+name, or **Sidequest** → **Link a repo…** on any message. If the pill beside the
+channel name is only a dot, or missing, Slack's own header buttons left it no
+room — widen the window, or use the menu.
 
 **Warp opens but Claude doesn't start.** Run `sidequest install-hook`, then open a
 new terminal.
@@ -210,7 +229,7 @@ Check with `sidequest sessions`, then use `--force` once you're sure.
 
 ```bash
 npm run dev -- doctor   # run from source
-npm test                # 49 tests
+npm test                # 50 tests
 npm run typecheck
 ```
 

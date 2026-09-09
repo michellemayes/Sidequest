@@ -104,7 +104,19 @@ describeIfChrome("overlay over CDP", () => {
       if (Date.now() > deadline + 15_000) throw new Error("fixture never finished loading");
       await sleep(200);
     }
-    baseline = String(await evaluate(probe, GEOMETRY));
+    // Read it twice and wait for the two to agree: the page is still settling
+    // right after load, and a baseline measured mid-settle fails against a
+    // perfectly innocent overlay.
+    for (;;) {
+      const first = String(await evaluate(probe, GEOMETRY));
+      await sleep(250);
+      const second = String(await evaluate(probe, GEOMETRY));
+      if (first === second) {
+        baseline = second;
+        break;
+      }
+      if (Date.now() > deadline + 15_000) throw new Error("fixture layout never settled");
+    }
     probe.close();
   }, 60_000);
 
@@ -302,16 +314,26 @@ describeIfChrome("overlay over CDP", () => {
       );
       expect(buttonText).toBe("Sidequest");
 
-      // The button sits on the hovered row, not somewhere in the void.
+      // The button sits on the hovered row, not somewhere in the void — and at
+      // the row's bottom edge, because Slack's own hover actions and an unread
+      // divider's "New" label both own the top-right corner.
       const onRow = await evaluate(
         session,
         `(() => {
            const btn = ${UI}.querySelector('.sq-launch').getBoundingClientRect();
            const row = document.getElementById('row-1').getBoundingClientRect();
-           return btn.top >= row.top - 2 && btn.bottom <= row.bottom + 2 && btn.right <= row.right;
+           return JSON.stringify({
+             inside: btn.top >= row.top - 2 && btn.bottom <= row.bottom + 2 && btn.right <= row.right,
+             offTopRight: btn.top - row.top >= 12,
+             onBottom: Math.abs(row.bottom - btn.bottom) <= 4,
+           });
          })()`,
       );
-      expect(onRow).toBe(true);
+      expect(JSON.parse(String(onRow))).toEqual({
+        inside: true,
+        offTopRight: true,
+        onBottom: true,
+      });
 
       // The sidebar is a virtual list with the same data-qa. It is not a message.
       await hover(session, "sidebar-1");
@@ -339,14 +361,26 @@ describeIfChrome("overlay over CDP", () => {
       await sleep(150);
       const labels = await evaluate(
         session,
-        `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-menu button')).map(b => b.textContent))`,
+        `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-menu-prompt')).map(b => b.textContent))`,
       );
       expect(JSON.parse(String(labels))).toEqual(["Investigate", "Fix", "Review"]);
+
+      // The menu hangs off the button, clear of the message it was opened from.
+      // Dropping it across that message hid the thing being acted on.
+      const clearOfMessage = await evaluate(
+        session,
+        `(() => {
+           const menu = ${UI}.querySelector('.sq-menu').getBoundingClientRect();
+           const row = document.getElementById('row-1').getBoundingClientRect();
+           return menu.top >= row.bottom - 1;
+         })()`,
+      );
+      expect(clearOfMessage).toBe(true);
 
       // Click "Fix" and wait for the daemon's answer to land on the row.
       await evaluate(
         session,
-        `Array.from(${UI}.querySelectorAll('.sq-menu button')).find(b => b.textContent === 'Fix').click()`,
+        `Array.from(${UI}.querySelectorAll('.sq-menu-prompt')).find(b => b.textContent === 'Fix').click()`,
       );
 
       let text = "";
@@ -362,16 +396,30 @@ describeIfChrome("overlay over CDP", () => {
       // The branch name is built from the message text, which came off the DOM.
       expect(text).toContain("fix/checkout-total-is-wrong-for-gift-cards");
 
-      // The result is drawn against the message it belongs to.
+      // The result is drawn against the message it belongs to — inside that
+      // row, along its bottom edge, and out of the next message's way. Hung
+      // below the boundary it covered the following message's timestamp.
       const anchored = await evaluate(
         session,
         `(() => {
            const line = ${UI}.querySelector('.sq-result').getBoundingClientRect();
+           const btn = ${UI}.querySelector('.sq-launch').getBoundingClientRect();
            const row = document.getElementById('row-1').getBoundingClientRect();
-           return Math.abs(line.top - (row.bottom - 6)) < 2;
+           const next = document.getElementById('row-2').getBoundingClientRect();
+           return JSON.stringify({
+             insideRow: line.top >= row.top - 1 && line.bottom <= row.bottom + 1,
+             onBottom: row.bottom - line.bottom <= 4,
+             clearOfNext: line.bottom <= next.top + 1,
+             clearOfButton: line.right <= btn.left - 2,
+           });
          })()`,
       );
-      expect(anchored).toBe(true);
+      expect(JSON.parse(String(anchored))).toEqual({
+        insideRow: true,
+        onBottom: true,
+        clearOfNext: true,
+        clearOfButton: true,
+      });
 
       const { stdout } = await exec("git", ["branch", "--list"], { cwd: repoPath });
       expect(stdout).toContain("fix/checkout-total-is-wrong-for-gift-cards");
@@ -407,7 +455,7 @@ describeIfChrome("overlay over CDP", () => {
       await sleep(150);
       await evaluate(
         session,
-        `Array.from(${UI}.querySelectorAll('.sq-menu button')).find(b => b.textContent === 'Investigate').click()`,
+        `Array.from(${UI}.querySelectorAll('.sq-menu-prompt')).find(b => b.textContent === 'Investigate').click()`,
       );
 
       let text = "";
@@ -486,6 +534,69 @@ describeIfChrome("overlay over CDP", () => {
     }
   }, 30_000);
 
+  it("keeps the channel pill off Slack's own header controls", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+
+      // Room to spare beside the name: the pill shows its label, follows the
+      // name's control rather than the bare text, and touches nothing.
+      const roomy = await evaluate(
+        session,
+        `(() => {
+           const pill = ${UI}.querySelector('.sq-channel');
+           const rect = pill.getBoundingClientRect();
+           const name = document.querySelector('[data-qa="channel_name"]').getBoundingClientRect();
+           const control = document.getElementById('name-control').getBoundingClientRect();
+           const hits = ['huddle', 'more', 'name-control'].filter((id) => {
+             const other = document.getElementById(id).getBoundingClientRect();
+             return rect.right > other.left && rect.left < other.right
+               && rect.bottom > other.top && rect.top < other.bottom;
+           });
+           return JSON.stringify({
+             hidden: pill.classList.contains('sq-off'),
+             compact: pill.dataset.compact === '1',
+             afterControl: rect.left >= control.right,
+             pastText: rect.left > name.right,
+             hits,
+           });
+         })()`,
+      );
+      expect(JSON.parse(String(roomy))).toEqual({
+        hidden: false,
+        compact: false,
+        afterControl: true,
+        pastText: true,
+        hits: [],
+      });
+
+      // Narrow enough for a label but not the whole one: it truncates rather
+      // than reaching across Slack's buttons.
+      await evaluate(session, "window.__crowdHeader(90)");
+      await sleep(400);
+      const tight = await evaluate(
+        session,
+        `(() => {
+           const pill = ${UI}.querySelector('.sq-channel');
+           const rect = pill.getBoundingClientRect();
+           const huddle = document.getElementById('huddle').getBoundingClientRect();
+           return JSON.stringify({ hidden: pill.classList.contains('sq-off'), clear: rect.right <= huddle.left });
+         })()`,
+      );
+      expect(JSON.parse(String(tight))).toEqual({ hidden: false, clear: true });
+
+      // No room at all: the pill gets out of the way entirely. Linking is still
+      // reachable from the message menu and from the CLI.
+      await evaluate(session, "window.__crowdHeader(4)");
+      await sleep(400);
+      expect(await evaluate(session, shown(".sq-channel"))).toBe(false);
+    } finally {
+      await evaluate(session, "window.__crowdHeader(260)");
+      attacher.stop();
+      session.close();
+    }
+  }, 30_000);
+
   it("refuses to offer prompts in a channel with no repo", async () => {
     const { attacher, session } = await attachAndEval();
     try {
@@ -501,10 +612,31 @@ describeIfChrome("overlay over CDP", () => {
         session,
         `${UI}.querySelector('.sq-menu .sq-note')?.textContent || ''`,
       );
-      expect(String(note)).toContain("no repo yet");
+      expect(String(note)).toContain("No repo is linked to #random-chatter");
 
-      const buttons = await evaluate(session, `${UI}.querySelectorAll('.sq-menu button').length`);
-      expect(buttons).toBe(0);
+      const prompts = await evaluate(session, `${UI}.querySelectorAll('.sq-menu-prompt').length`);
+      expect(prompts).toBe(0);
+
+      // A sentence must not stretch the menu into a bar across the message
+      // underneath it; it wraps inside a menu-sized menu instead.
+      const width = await evaluate(
+        session,
+        `${UI}.querySelector('.sq-menu').getBoundingClientRect().width`,
+      );
+      expect(Number(width)).toBeLessThanOrEqual(268);
+
+      // Sending the reader off to find another button is a dead end, so the
+      // menu carries the way out itself.
+      const link = await evaluate(session, `${UI}.querySelector('.sq-menu-link')?.textContent || ''`);
+      expect(String(link)).toBe("Link a repo…");
+
+      await evaluate(session, `${UI}.querySelector('.sq-menu-link').click()`);
+      await sleep(200);
+      const panel = await evaluate(
+        session,
+        `${UI}.querySelector('.sq-panel-title')?.textContent || ''`,
+      );
+      expect(String(panel)).toBe("Repo for #random-chatter");
     } finally {
       await evaluate(session, "window.__setChannel('eng-alerts')");
       attacher.stop();

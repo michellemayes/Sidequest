@@ -43,6 +43,8 @@
   const RESULT_TTL_MS = 10 * 60 * 1000;
   const MAX_RESULTS = 20;
   const TICK_MS = 250;
+  // What the overlay leaves between itself and anything of Slack's.
+  const GAP = 8;
 
   const SEL = {
     item: '[data-qa="virtual-list-item"]',
@@ -50,8 +52,12 @@
     sender: '[data-qa="message_sender_name"]',
     rich: '.p-rich_text_section',
     channel: '[data-qa="channel_name"]',
+    header: '[data-qa="channel_header"]',
     timestamp: 'a.c-timestamp',
   };
+
+  /* Anything in the channel header that owns its own clicks. */
+  const HEADER_CONTROLS = 'button, a, input, [role="button"]';
 
   const log = (...args) => { if (CONFIG.verbose) console.log('[sidequest]', ...args); };
 
@@ -66,83 +72,138 @@
   const CSS = `
     .sq-off { display: none !important; }
 
+    /*
+     * Every colour here is derived from what Slack hands down. The font and
+     * the text colour arrive by inheritance on the host; --sq-bg is measured
+     * off Slack's own message list in refreshTheme, because the host is
+     * transparent and a background cannot be inherited. Nothing is hardcoded
+     * per theme, so the overlay follows a workspace from Aubergine to dark
+     * without being told which one it is on.
+     */
+    :host {
+      --sq-line: color-mix(in srgb, currentColor 16%, transparent);
+      --sq-line-hover: color-mix(in srgb, currentColor 34%, transparent);
+      --sq-wash: color-mix(in srgb, currentColor 8%, transparent);
+      --sq-shade: color-mix(in srgb, currentColor 20%, transparent);
+      --sq-ok: #2eb67d;
+      --sq-bad: #e01e5a;
+    }
+
     .sq-pill {
       position: fixed; left: 0; top: 0;
-      display: inline-flex; align-items: center; gap: 5px;
-      max-width: 40vw; padding: 2px 8px;
-      font-family: inherit; font-size: 11px; line-height: 16px; font-weight: 500;
-      color: inherit; opacity: .75; white-space: nowrap;
-      background: var(--saf-background, rgba(255,255,255,.96));
-      border: 1px solid rgba(127,127,127,.35); border-radius: 7px;
+      box-sizing: border-box;
+      display: inline-flex; align-items: center; gap: 6px;
+      max-width: 40vw; height: 22px; padding: 0 8px;
+      font-family: inherit; font-size: 12px; line-height: 20px; font-weight: 500;
+      color: inherit; white-space: nowrap;
+      background: var(--sq-bg, #fff);
+      border: 1px solid var(--sq-line); border-radius: 6px;
+      box-shadow: 0 1px 3px var(--sq-shade);
       cursor: pointer; user-select: none; pointer-events: auto;
     }
-    .sq-pill:hover { opacity: 1; border-color: rgba(127,127,127,.6); }
-    .sq-pill[data-busy="1"] { opacity: .4; pointer-events: none; }
-    .sq-pill > span { overflow: hidden; text-overflow: ellipsis; }
+    /* The chrome stays crisp and only the label is quiet, so the pill reads as
+       one of Slack's own buttons instead of a faded sticker over the message. */
+    .sq-pill > .sq-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: .72; }
+    .sq-pill:hover { border-color: var(--sq-line-hover); background: var(--sq-wash); }
+    .sq-pill:hover > .sq-label { opacity: 1; }
+    .sq-pill[data-busy="1"] { opacity: .45; pointer-events: none; }
+    /* Nowhere near enough room beside the channel name for a label: the dot
+       alone, with the whole sentence still in the tooltip. */
+    .sq-pill[data-compact="1"] { width: 22px; padding: 0; justify-content: center; }
+    .sq-pill[data-compact="1"] > .sq-label { display: none; }
 
-    .sq-dot { width: 6px; height: 6px; border-radius: 50%; background: #2eb67d; flex: 0 0 auto; }
-    .sq-pill[data-linked="0"] .sq-dot { background: #8d8d8d; }
+    .sq-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--sq-ok); flex: 0 0 auto; }
+    .sq-pill[data-linked="0"] .sq-dot { background: color-mix(in srgb, currentColor 45%, transparent); }
 
     .sq-menu {
       position: fixed; left: 0; top: 0;
-      display: flex; flex-direction: column; min-width: 176px; padding: 4px;
+      box-sizing: border-box;
+      display: flex; flex-direction: column; gap: 1px;
+      min-width: 180px; max-width: 264px; padding: 5px;
       font-family: inherit; color: inherit;
-      background: var(--saf-background, #fff);
-      border: 1px solid rgba(127,127,127,.35); border-radius: 8px;
-      box-shadow: 0 6px 20px rgba(0,0,0,.18);
+      background: var(--sq-bg, #fff);
+      border: 1px solid var(--sq-line); border-radius: 8px;
+      box-shadow: 0 8px 24px var(--sq-shade);
       pointer-events: auto;
     }
     .sq-menu button {
       display: flex; align-items: center; gap: 8px;
-      padding: 6px 8px; margin: 0;
-      font-family: inherit; font-size: 13px; line-height: 18px;
+      width: 100%; padding: 6px 8px; margin: 0;
+      font-family: inherit; font-size: 13px; line-height: 18px; font-weight: 400;
       color: inherit; text-align: left;
       background: transparent; border: 0; border-radius: 5px; cursor: pointer;
     }
-    .sq-menu button:hover { background: rgba(127,127,127,.14); }
-    .sq-note { padding: 6px 8px; font-size: 11px; line-height: 15px; opacity: .7; }
+    .sq-menu button:hover { background: var(--sq-wash); }
+    .sq-menu-link { font-weight: 500; }
+    /* A sentence, not a menu item. It wraps inside the menu rather than
+       stretching it into a bar across the message underneath. */
+    .sq-note {
+      padding: 6px 8px 4px; font-size: 12px; line-height: 16px; opacity: .7;
+      white-space: normal; overflow-wrap: break-word;
+    }
 
-    /* The result reads as an annotation on the message it came from: drawn at
-       that row's bottom edge, on the same indent as its text. */
+    /* The result reads as an annotation on the message it came from: drawn
+       inside that row, along its bottom edge, tucked against the right where a
+       message leaves space. Its own row, not the next one — a line hung below
+       the boundary covers the following message's timestamp. One line, so it
+       covers nothing unasked; hovering it lets the whole thing wrap, which is
+       what an error needs. */
     .sq-result {
       position: fixed; left: 0; top: 0;
-      max-width: 60vw; padding: 1px 7px;
+      box-sizing: border-box;
+      max-width: 60vw; padding: 1px 8px;
       font-family: inherit; font-size: 11px; line-height: 16px;
-      color: inherit; opacity: .85;
+      color: inherit; opacity: .9;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      background: var(--saf-background, rgba(255,255,255,.96));
-      border: 1px solid rgba(127,127,127,.25); border-radius: 6px;
+      background: var(--sq-bg, #fff);
+      border: 1px solid var(--sq-line); border-radius: 5px;
       cursor: pointer; pointer-events: auto;
     }
-    .sq-result[data-kind="error"] { color: #e01e5a; opacity: 1; }
+    .sq-result:hover {
+      white-space: normal; overflow: visible; opacity: 1;
+      box-shadow: 0 6px 18px var(--sq-shade);
+    }
+    /* An error is the one line worth interrupting for, so it gets an edge as
+       well as a colour — a red-on-dark word alone is easy to scroll past. */
+    .sq-result[data-kind="error"] {
+      color: var(--sq-bad); opacity: 1;
+      border-color: color-mix(in srgb, var(--sq-bad) 40%, transparent);
+      border-left: 2px solid var(--sq-bad);
+    }
 
     .sq-panel {
       position: fixed; left: 0; top: 0;
-      display: flex; flex-direction: column; gap: 6px;
-      width: 340px; padding: 10px;
+      box-sizing: border-box;
+      display: flex; flex-direction: column; gap: 7px;
+      width: 340px; padding: 12px;
       font-family: inherit; color: inherit;
-      background: var(--saf-background, #fff);
-      border: 1px solid rgba(127,127,127,.35); border-radius: 8px;
-      box-shadow: 0 8px 24px rgba(0,0,0,.22);
+      background: var(--sq-bg, #fff);
+      border: 1px solid var(--sq-line); border-radius: 8px;
+      box-shadow: 0 10px 28px var(--sq-shade);
       pointer-events: auto;
     }
-    .sq-panel-title { font-size: 12px; line-height: 16px; font-weight: 700; }
+    .sq-panel-title { font-size: 13px; line-height: 18px; font-weight: 700; }
     .sq-panel input {
-      padding: 5px 7px;
+      box-sizing: border-box; padding: 6px 8px;
       font-family: inherit; font-size: 12px; line-height: 18px;
       color: inherit; background: transparent;
-      border: 1px solid rgba(127,127,127,.45); border-radius: 5px;
+      border: 1px solid var(--sq-line-hover); border-radius: 5px;
     }
+    .sq-panel input:focus { border-color: currentColor; outline: none; }
     .sq-panel-note { font-size: 11px; line-height: 15px; opacity: .7; }
-    .sq-panel-error { font-size: 11px; line-height: 15px; color: #e01e5a; }
-    .sq-panel-actions { display: flex; justify-content: flex-end; gap: 6px; }
+    .sq-panel-error { font-size: 11px; line-height: 15px; color: var(--sq-bad); }
+    .sq-panel-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 1px; }
     .sq-panel-actions button {
-      padding: 4px 10px; margin: 0;
+      padding: 5px 12px; margin: 0;
       font-family: inherit; font-size: 12px; line-height: 16px; font-weight: 500;
       color: inherit; background: transparent;
-      border: 1px solid rgba(127,127,127,.4); border-radius: 5px; cursor: pointer;
+      border: 1px solid var(--sq-line-hover); border-radius: 5px; cursor: pointer;
     }
-    .sq-panel-actions button:hover { background: rgba(127,127,127,.14); }
+    .sq-panel-actions button:hover { background: var(--sq-wash); }
+    .sq-panel-actions button[data-primary="1"] {
+      color: #fff; background: #007a5a; border-color: #007a5a;
+    }
+    .sq-panel-actions button[data-primary="1"]:hover { background: #148567; }
     .sq-panel[data-busy="1"] { opacity: .5; pointer-events: none; }
   `;
 
@@ -167,6 +228,7 @@
     menuRow = null;
     menuSig = '';
     panelEl = null;
+    themeSig = '';
     resultEls.clear();
   }
 
@@ -202,6 +264,52 @@
     // devtools console.
     window.__SIDEQUEST_UI__ = ui;
     return true;
+  }
+
+  /*
+   * The host is transparent, so a background is the one thing the overlay
+   * cannot inherit from Slack — and a hardcoded near-white one is unreadable
+   * on a dark workspace under Slack's own light text. So the nearest opaque
+   * background behind the message list is read off Slack's DOM and handed to
+   * the stylesheet as --sq-bg. Read, as ever, never written.
+   */
+  const RGB = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,/\s]+([\d.]+))?/;
+
+  function parseColor(value) {
+    const m = RGB.exec(String(value || ''));
+    if (!m) return null;
+    const alpha = m[4] === undefined ? 1 : Number(m[4]);
+    return { r: Number(m[1]), g: Number(m[2]), b: Number(m[3]), a: alpha };
+  }
+
+  const isLight = (color) => color
+    ? (0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b) / 255 > 0.6
+    : false;
+
+  function opaqueBackground(start) {
+    let node = start;
+    for (let hops = 0; node && hops < 30; hops += 1) {
+      const color = parseColor(getComputedStyle(node).backgroundColor);
+      if (color && color.a > 0.9) return `rgb(${color.r}, ${color.g}, ${color.b})`;
+      node = node.parentElement;
+    }
+    return '';
+  }
+
+  let themeSig = '';
+
+  function refreshTheme() {
+    const anchor = document.querySelector(SEL.content)
+      || document.querySelector(SEL.channel)
+      || document.body;
+    const text = getComputedStyle(host).color;
+    // Nothing opaque to be found: light text means a dark workspace, so the
+    // guess at least lands on the right side of legible.
+    const bg = opaqueBackground(anchor) || (isLight(parseColor(text)) ? '#1a1d21' : '#ffffff');
+    const sig = `${bg}|${text}`;
+    if (sig === themeSig) return;
+    themeSig = sig;
+    host.style.setProperty('--sq-bg', bg);
   }
 
   const show = (el) => el.classList.remove('sq-off');
@@ -396,8 +504,10 @@
     const dot = document.createElement('span');
     dot.className = 'sq-dot';
     const label = document.createElement('span');
+    label.className = 'sq-label';
     label.textContent = 'Sidequest';
     button.append(dot, label);
+    button.title = 'Start a Claude Code session from this message';
 
     button.addEventListener('click', (event) => {
       event.preventDefault();
@@ -432,13 +542,32 @@
       const note = document.createElement('div');
       note.className = 'sq-note';
       note.textContent = channel
-        ? `#${channel} has no repo yet — use the button beside the channel name.`
-        : 'Open a channel first.';
+        ? `No repo is linked to #${channel} yet.`
+        : 'Open a channel to start a session.';
       menu.append(note);
+
+      // Sending the reader off to hunt for another button is a dead end, and
+      // in a narrow window that button may have no room to be shown at all.
+      // The way out of the menu is in the menu.
+      if (channel) {
+        const link = document.createElement('button');
+        link.type = 'button';
+        link.className = 'sq-menu-link';
+        link.textContent = 'Link a repo…';
+        link.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          closeMenu();
+          openPanel();
+          schedule();
+        });
+        menu.append(link);
+      }
     } else {
       for (const prompt of CONFIG.prompts) {
         const entry = document.createElement('button');
         entry.type = 'button';
+        entry.className = 'sq-menu-prompt';
         entry.textContent = prompt.label;
         entry.addEventListener('click', (event) => {
           event.preventDefault();
@@ -516,7 +645,6 @@
   function buildResult(sig) {
     const el = document.createElement('div');
     el.className = 'sq-result';
-    el.title = 'Click to dismiss';
     el.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -536,7 +664,7 @@
     const dot = document.createElement('span');
     dot.className = 'sq-dot';
     const label = document.createElement('span');
-    label.className = 'sq-channel-label';
+    label.className = 'sq-label sq-channel-label';
     button.append(dot, label);
 
     button.addEventListener('click', (event) => {
@@ -596,6 +724,7 @@
     cancel.textContent = 'Cancel';
     const submit = document.createElement('button');
     submit.type = 'button';
+    submit.dataset.primary = '1';
     submit.textContent = current ? 'Save' : 'Link';
     actions.append(cancel, submit);
 
@@ -645,6 +774,48 @@
     schedule();
   }
 
+  /*
+   * Slack's own header controls start immediately to the right of the channel
+   * name — the dropdown chevron, the huddle button, the bell — and in a narrow
+   * window there is barely a gap between them. A pill dropped at the name's
+   * right edge lands on top of them and, because it takes its own clicks,
+   * swallows theirs. So the free space is measured first: the label truncates if
+   * it will not fit, then goes entirely, and then so does the pill. Linking is
+   * reachable from the message menu and the CLI either way.
+   */
+
+  /**
+   * Where the channel-name control ends. Slack wraps the name in a button that
+   * also holds the chevron, so the text's own box stops short of the control's.
+   */
+  function channelAnchorBox(anchor) {
+    const rect = anchor.getBoundingClientRect();
+    const box = { right: rect.right, top: rect.top, height: rect.height };
+    const control = anchor.closest('button, [role="button"]');
+    if (!control || control === anchor) return box;
+    const outer = control.getBoundingClientRect();
+    // A control wider than the name plus a chevron is something else — a whole
+    // header pretending to be a button — and is not what the pill follows.
+    if (outer.right > rect.right && outer.right - rect.right <= 80) box.right = outer.right;
+    return box;
+  }
+
+  /** How much clear room there is to the right of the name, in pixels. */
+  function headerRoom(anchor, box) {
+    const header = anchor.closest(SEL.header);
+    if (!header) return window.innerWidth - box.right;
+    let edge = header.getBoundingClientRect().right;
+    header.querySelectorAll(HEADER_CONTROLS).forEach((el) => {
+      if (el === anchor || el.contains(anchor) || anchor.contains(el)) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) return;
+      // Only what lies to the right of the name can be collided with.
+      if (rect.left < box.right) return;
+      if (rect.left < edge) edge = rect.left;
+    });
+    return edge - box.right;
+  }
+
   function refreshChannelButton() {
     const anchor = document.querySelector(SEL.channel);
     const channel = anchor ? anchor.textContent.trim().replace(/^#+/, '') : '';
@@ -674,24 +845,49 @@
       : `Link #${channel} to a git repo so messages can start Claude Code sessions`;
     if (channelBtn.title !== title) channelBtn.title = title;
 
-    const rect = anchor.getBoundingClientRect();
-    if (rect.width === 0 && rect.height === 0) {
+    const box = channelAnchorBox(anchor);
+    if (box.right === 0 && box.height === 0) {
       hide(channelBtn);
       return;
     }
-    show(channelBtn);
-    placeAt(channelBtn, rect.right + 8, rect.top + (rect.height - channelBtn.offsetHeight) / 2);
 
-    if (panelEl) {
-      const pill = channelBtn.getBoundingClientRect();
-      placeAt(panelEl, pill.left, pill.bottom + 6);
+    // Measured while visible: a hidden element has no width to compare.
+    show(channelBtn);
+    delete channelBtn.dataset.compact;
+    channelBtn.style.maxWidth = '';
+    const room = Math.floor(headerRoom(anchor, box)) - GAP * 2;
+    if (channelBtn.offsetWidth > room) {
+      if (room >= 64) channelBtn.style.maxWidth = `${room}px`;
+      else channelBtn.dataset.compact = '1';
     }
+    if (channelBtn.offsetWidth > room) {
+      hide(channelBtn);
+      placePanel();
+      return;
+    }
+    placeAt(channelBtn, box.right + GAP, box.top + (box.height - channelBtn.offsetHeight) / 2);
+    placePanel();
+  }
+
+  /** Under the pill when there is one on screen, and under the header when not. */
+  function placePanel() {
+    if (!panelEl) return;
+    const pill = channelBtn.getBoundingClientRect();
+    if (pill.width > 0) {
+      placeAt(panelEl, pill.left, pill.bottom + 6);
+      return;
+    }
+    // The panel was opened from the message menu, with no pill to hang off.
+    const header = document.querySelector(SEL.header);
+    const top = header ? header.getBoundingClientRect().bottom + 8 : 12;
+    placeAt(panelEl, (window.innerWidth - panelEl.offsetWidth) / 2, top);
   }
 
   /* ------------------------------------------------------------- placement */
 
   let hoverRow = null;
   let frame = 0;
+  let tick = 0;
 
   function schedule() {
     if (frame) return;
@@ -707,6 +903,10 @@
 
   function place() {
     if (!ensureLayer()) return;
+    // Colours only change when someone changes theme; a computed-style read on
+    // every frame would be waste.
+    if (!themeSig || tick % 8 === 0) refreshTheme();
+    tick += 1;
     pruneResults();
 
     const rows = messageRows();
@@ -728,7 +928,15 @@
       const flag = isLinked(currentChannel()) ? '1' : '0';
       if (launchBtn.dataset.linked !== flag) launchBtn.dataset.linked = flag;
       show(launchBtn);
-      placeAt(launchBtn, activeRect.right - launchBtn.offsetWidth - 8, activeRect.top + 2);
+      // Slack's own hover actions and an unread divider's "New" label both live
+      // at a row's top-right corner, so the pill takes the bottom-right and
+      // leaves them clickable.
+      const bottom = Math.min(activeRect.bottom, clip.bottom);
+      placeAt(
+        launchBtn,
+        activeRect.right - launchBtn.offsetWidth - GAP,
+        bottom - launchBtn.offsetHeight - 3,
+      );
     } else {
       hide(launchBtn);
       if (menuEl) closeMenu();
@@ -736,7 +944,20 @@
 
     if (menuEl && activeRect) {
       show(menuEl);
-      placeAt(menuEl, activeRect.right - menuEl.offsetWidth - 8, activeRect.top + 26);
+      // Hung off the pill like any menu, rather than dropped across the message
+      // it was opened from, and flipped above when the row is near the bottom.
+      const pill = launchBtn.getBoundingClientRect();
+      const corner = {
+        right: activeRect.right - GAP,
+        top: activeRect.bottom,
+        bottom: activeRect.bottom,
+      };
+      const anchor = pill.width > 0 ? pill : corner;
+      const below = anchor.bottom + 4;
+      const top = below + menuEl.offsetHeight > window.innerHeight - 4
+        ? anchor.top - menuEl.offsetHeight - 4
+        : below;
+      placeAt(menuEl, anchor.right - menuEl.offsetWidth, top);
     }
 
     for (const [sig, el] of resultEls) {
@@ -754,15 +975,30 @@
         resultEls.set(sig, el);
         ui.append(el);
       }
-      if (el.textContent !== entry.text) el.textContent = entry.text;
+      if (el.textContent !== entry.text) {
+        el.textContent = entry.text;
+        // The line is one line wide; the tooltip is where all of it lives.
+        el.title = `${entry.text}\n\nClick to dismiss.`;
+      }
       if (el.dataset.kind !== entry.kind) el.dataset.kind = entry.kind;
 
       const rect = row.getBoundingClientRect();
       if (clip && onScreen(rect, clip)) {
         show(el);
+        // The row button shares this corner while the pointer is on the
+        // message, so the line makes room for it rather than sitting under it.
+        const reserve = row === activeRow && !launchBtn.classList.contains('sq-off')
+          ? launchBtn.offsetWidth + GAP
+          : 0;
         const content = row.querySelector(SEL.content);
-        const left = content ? content.getBoundingClientRect().left : rect.left + 16;
-        placeAt(el, left, rect.bottom - 6);
+        const indent = content ? content.getBoundingClientRect().left : rect.left + 16;
+        const right = rect.right - GAP - reserve;
+        el.style.maxWidth = `${Math.max(160, Math.round((right - indent) * 0.75))}px`;
+        placeAt(
+          el,
+          right - el.offsetWidth,
+          Math.min(rect.bottom, clip.bottom) - el.offsetHeight - 3,
+        );
       } else {
         hide(el);
       }
