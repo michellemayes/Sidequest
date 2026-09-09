@@ -1,0 +1,81 @@
+# ccslack Slack app manifest.
+#
+# Create the app at https://api.slack.com/apps -> Create New App -> From a manifest,
+# paste this file, then follow the README to generate the two tokens.
+#
+# Socket Mode is what makes this work with the Slack desktop app: the app dials
+# out to Slack over a WebSocket, so nothing needs to be publicly reachable and
+# everything runs on your own laptop.
+display_information:
+  name: ccslack
+  description: Start a Claude Code session in a fresh worktree from any Slack message.
+  background_color: "#1f2933"
+  long_description: >-
+    ccslack links a Slack channel to a git repository on your machine. From any
+    message you can start an Investigate, Fix or Review session: it cuts a fresh
+    git worktree from your base branch, writes a prompt built from the message
+    and its thread, and opens the worktree in Warp with Claude Code already
+    running. Everything happens locally over Socket Mode; no message content is
+    sent anywhere but your own machine.
+
+features:
+  bot_user:
+    display_name: ccslack
+    always_online: false
+
+  slash_commands:
+    - command: /ccslack
+      description: Link this channel to a repo, or inspect ccslack sessions
+      usage_hint: "link ~/code/my-repo"
+      should_escape: false
+
+  shortcuts:
+    # One entry per prompt, so the actions menu is a single click each.
+    - name: Investigate
+      type: message
+      callback_id: ccslack_investigate
+      description: Trace this to its cause in a fresh worktree, without changing code
+
+    - name: Fix
+      type: message
+      callback_id: ccslack_fix
+      description: Root-cause and fix this on a new branch, with a test
+
+    - name: Review
+      type: message
+      callback_id: ccslack_review
+      description: Review the code this message refers to
+
+    # A single entry that offers all three as buttons instead.
+    - name: Claude Code…
+      type: message
+      callback_id: ccslack_start
+      description: Choose Investigate, Fix or Review for this message
+
+oauth_config:
+  scopes:
+    bot:
+      # Post the ephemeral confirmation back to whoever clicked.
+      - chat:write
+      # Resolve the channel name for the prompt and for /ccslack replies.
+      - channels:read
+      - groups:read
+      - im:read
+      - mpim:read
+      # Read the thread a message belongs to, for prompt context.
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+      # Turn a user id into a display name.
+      - users:read
+      # Register the /ccslack slash command.
+      - commands
+
+settings:
+  # Required: this is what lets the app run on your laptop with no public URL.
+  socket_mode_enabled: true
+  org_deploy_enabled: false
+  token_rotation_enabled: false
+  interactivity:
+    is_enabled: true
