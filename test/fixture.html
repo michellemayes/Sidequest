@@ -73,6 +73,30 @@
       window.__setChannel = (name) => {
         document.querySelector('[data-qa="channel_name"]').textContent = name;
       };
+      // Slack takes clipboard and key events on the document, in capture, and
+      // routes them into its own composer. Standing in for that here is what
+      // makes the overlay's claim on those events worth testing: without it a
+      // paste meant for the panel's path box lands in the channel instead.
+      window.__composer = [];
+      window.__shortcuts = [];
+      document.addEventListener('paste', (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        window.__composer.push(event.clipboardData ? event.clipboardData.getData('text/plain') : '');
+      }, true);
+      document.addEventListener('keydown', (event) => {
+        window.__shortcuts.push(event.key);
+      }, true);
+      // Puts text on the system clipboard, from a gesture so the copy is allowed.
+      window.__clip = (text) => {
+        const box = document.createElement('textarea');
+        box.value = text;
+        document.body.appendChild(box);
+        box.select();
+        const ok = document.execCommand('copy');
+        box.remove();
+        return ok;
+      };
       // The overlay reveals its UI on hover, so the tests drive a pointer.
       window.__hover = (id) => {
         const el = id ? document.getElementById(id) : document.documentElement;
