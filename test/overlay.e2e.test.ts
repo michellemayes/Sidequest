@@ -49,7 +49,7 @@ describeIfChrome("overlay over CDP", () => {
     });
     await new Promise<void>((resolve) => server!.listen(HTTP_PORT, "127.0.0.1", resolve));
 
-    profileDir = await mkdtemp(join(tmpdir(), "ccslack-chrome-"));
+    profileDir = await mkdtemp(join(tmpdir(), "sidequest-chrome-"));
     chrome = spawn(
       CHROME!,
       [
@@ -92,7 +92,7 @@ describeIfChrome("overlay over CDP", () => {
   });
 
   beforeEach(async () => {
-    root = await mkdtemp(join(tmpdir(), "ccslack-e2e-"));
+    root = await mkdtemp(join(tmpdir(), "sidequest-e2e-"));
     configHome = join(root, "config");
     repoPath = join(root, "repo");
     await mkdir(repoPath, { recursive: true });
@@ -111,7 +111,7 @@ describeIfChrome("overlay over CDP", () => {
     await exec("git", ["commit", "-m", "initial"], { cwd: repoPath, env });
 
     // The daemon reads config from here; point it at a fresh dir per test.
-    process.env.CCSLACK_HOME = configHome;
+    process.env.SIDEQUEST_HOME = configHome;
     await writeFile(
       join(configHome, "config.json"),
       JSON.stringify({
@@ -132,7 +132,7 @@ describeIfChrome("overlay over CDP", () => {
   });
 
   afterEach(async () => {
-    delete process.env.CCSLACK_HOME;
+    delete process.env.SIDEQUEST_HOME;
     await rm(root, { recursive: true, force: true });
   });
 
@@ -166,13 +166,20 @@ describeIfChrome("overlay over CDP", () => {
     const { attacher, session } = await attachAndEval();
     try {
       await sleep(600);
-      const count = await evaluate(session, "document.querySelectorAll('.ccslack-launch').length");
+      const count = await evaluate(session, "document.querySelectorAll('.sidequest-launch').length");
       expect(count).toBe(2);
+
+      // The button carries the product name, which is what a reader sees.
+      const buttonText = await evaluate(
+        session,
+        "document.querySelector('.sidequest-launch').textContent.trim()",
+      );
+      expect(buttonText).toBe("Sidequest");
 
       // The channel is linked, so the header button names the repo.
       const label = await evaluate(
         session,
-        "document.querySelector('.ccslack-channel .ccslack-channel-label').textContent",
+        "document.querySelector('.sidequest-channel .sidequest-channel-label').textContent",
       );
       expect(label).toBe("repo");
     } finally {
@@ -186,24 +193,24 @@ describeIfChrome("overlay over CDP", () => {
     try {
       await sleep(600);
 
-      await evaluate(session, "document.querySelector('#row-1 .ccslack-launch').click()");
+      await evaluate(session, "document.querySelector('#row-1 .sidequest-launch').click()");
       const labels = await evaluate(
         session,
-        "JSON.stringify(Array.from(document.querySelectorAll('#row-1 .ccslack-menu button')).map(b => b.textContent))",
+        "JSON.stringify(Array.from(document.querySelectorAll('#row-1 .sidequest-menu button')).map(b => b.textContent))",
       );
       expect(JSON.parse(String(labels))).toEqual(["Investigate", "Fix", "Review"]);
 
       // Click "Fix" and wait for the daemon's answer to land on the row.
       await evaluate(
         session,
-        "Array.from(document.querySelectorAll('#row-1 .ccslack-menu button')).find(b => b.textContent === 'Fix').click()",
+        "Array.from(document.querySelectorAll('#row-1 .sidequest-menu button')).find(b => b.textContent === 'Fix').click()",
       );
 
       let text = "";
       const deadline = Date.now() + 25_000;
       while (Date.now() < deadline) {
         text = String(
-          (await evaluate(session, "document.querySelector('#row-1 .ccslack-result')?.textContent || ''")) ?? "",
+          (await evaluate(session, "document.querySelector('#row-1 .sidequest-result')?.textContent || ''")) ?? "",
         );
         if (text && !text.startsWith("Starting")) break;
         await sleep(300);
@@ -220,7 +227,7 @@ describeIfChrome("overlay over CDP", () => {
       const worktrees = await exec("git", ["worktree", "list"], { cwd: repoPath });
       const line = worktrees.stdout.split("\n").find((l) => l.includes("fix-checkout"));
       const worktreePath = line?.split(/\s+/)[0] ?? "";
-      const prompt = await readFile(join(worktreePath, ".ccslack", "prompt.md"), "utf8");
+      const prompt = await readFile(join(worktreePath, ".sidequest", "prompt.md"), "utf8");
       expect(prompt).toContain("Checkout total is wrong for gift cards");
       expect(prompt).toContain("@michelle");
       expect(prompt).toContain("#eng-alerts");
@@ -241,14 +248,14 @@ describeIfChrome("overlay over CDP", () => {
         `(() => {
            const row = document.querySelector('#row-1');
            const line = document.createElement('div');
-           line.className = 'ccslack-result';
+           line.className = 'sidequest-result';
            line.dataset.sig = '1757430000.000100';
            line.textContent = 'Fix → fix/old-branch';
            row.appendChild(line);
          })()`,
       );
       expect(
-        await evaluate(session, "!!document.querySelector('#row-1 .ccslack-result')"),
+        await evaluate(session, "!!document.querySelector('#row-1 .sidequest-result')"),
       ).toBe(true);
 
       // Slack recycles the row into a different message.
@@ -257,11 +264,11 @@ describeIfChrome("overlay over CDP", () => {
 
       // The old result must not still be sitting under someone else's message.
       expect(
-        await evaluate(session, "!!document.querySelector('#row-1 .ccslack-result')"),
+        await evaluate(session, "!!document.querySelector('#row-1 .sidequest-result')"),
       ).toBe(false);
       // The button survives the recycle.
       expect(
-        await evaluate(session, "!!document.querySelector('#row-1 .ccslack-launch')"),
+        await evaluate(session, "!!document.querySelector('#row-1 .sidequest-launch')"),
       ).toBe(true);
     } finally {
       attacher.stop();
@@ -276,16 +283,16 @@ describeIfChrome("overlay over CDP", () => {
       await evaluate(session, "window.__setChannel('random-chatter')");
       await sleep(800);
 
-      await evaluate(session, "document.querySelector('#row-2 .ccslack-launch').click()");
+      await evaluate(session, "document.querySelector('#row-2 .sidequest-launch').click()");
       const note = await evaluate(
         session,
-        "document.querySelector('#row-2 .ccslack-menu .ccslack-menu-note')?.textContent || ''",
+        "document.querySelector('#row-2 .sidequest-menu .sidequest-menu-note')?.textContent || ''",
       );
       expect(String(note)).toContain("no repo yet");
 
       const buttons = await evaluate(
         session,
-        "document.querySelectorAll('#row-2 .ccslack-menu button').length",
+        "document.querySelectorAll('#row-2 .sidequest-menu button').length",
       );
       expect(buttons).toBe(0);
     } finally {

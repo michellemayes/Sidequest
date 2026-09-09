@@ -66,7 +66,7 @@ export async function launchSlack(options: {
   force?: boolean;
 }): Promise<LaunchResult> {
   if (platform() !== "darwin") {
-    throw new UserFacingError("ccslack drives the macOS Slack desktop app; this is not macOS.");
+    throw new UserFacingError("Sidequest drives the macOS Slack desktop app; this is not macOS.");
   }
 
   if (await isDebugPortOpen(options.cdpPort)) {
@@ -77,13 +77,13 @@ export async function launchSlack(options: {
     if (!options.force) {
       throw new UserFacingError(
         `Slack is running without --remote-debugging-port=${options.cdpPort}.`,
-        "Quit Slack and try again, or re-run with --force to have ccslack quit it for you.",
+        "Quit Slack and try again, or re-run with --force to have Sidequest quit it for you.",
       );
     }
     if (!(await quitSlack())) {
       throw new UserFacingError(
         "Slack did not quit in time.",
-        "Quit it by hand and run `ccslack start` again.",
+        "Quit it by hand and run `sidequest start` again.",
       );
     }
   }

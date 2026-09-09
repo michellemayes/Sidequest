@@ -3,13 +3,13 @@ type Level = "debug" | "info" | "warn" | "error";
 const ORDER: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 
 function threshold(): number {
-  const raw = (process.env.CCSLACK_LOG_LEVEL ?? "info").toLowerCase();
+  const raw = (process.env.SIDEQUEST_LOG_LEVEL ?? "info").toLowerCase();
   return ORDER[raw as Level] ?? ORDER.info;
 }
 
 function emit(level: Level, message: string, extra?: unknown): void {
   if (ORDER[level] < threshold()) return;
-  const prefix = `[ccslack] ${level.toUpperCase()}`;
+  const prefix = `[sidequest] ${level.toUpperCase()}`;
   const stream = level === "error" || level === "warn" ? console.error : console.log;
   if (extra === undefined) stream(`${prefix} ${message}`);
   else stream(`${prefix} ${message}`, extra);

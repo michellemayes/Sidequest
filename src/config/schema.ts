@@ -56,7 +56,7 @@ export const settingsSchema = z.object({
   fetchBeforeCreate: z.boolean().default(true),
   /** How many messages of surrounding thread context to include. */
   threadContextLimit: z.number().int().min(0).max(50).default(10),
-  /** Delete the worktree's branch too when running `ccslack clean`. */
+  /** Delete the worktree's branch too when running `sidequest clean`. */
   pruneBranchesOnClean: z.boolean().default(true),
 
   /**

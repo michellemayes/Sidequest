@@ -14,7 +14,7 @@ const CONTEXT: PromptContext = {
   branch: "fix/checkout-20260909-1432",
   baseBranch: "main",
   repo: "/Users/m/code/storefront",
-  worktree: "/Users/m/.ccslack/worktrees/fix-checkout",
+  worktree: "/Users/m/.sidequest/worktrees/fix-checkout",
 };
 
 describe("renderPrompt", () => {
@@ -26,7 +26,7 @@ describe("renderPrompt", () => {
     expect(out).toBe(
       "michelle|eng-alerts|> checkout is broken|https://slack.com/archives/C1/p1|" +
         "fix/checkout-20260909-1432|main|/Users/m/code/storefront|" +
-        "/Users/m/.ccslack/worktrees/fix-checkout|2026-09-09T14:32:00.000Z",
+        "/Users/m/.sidequest/worktrees/fix-checkout|2026-09-09T14:32:00.000Z",
     );
   });
 

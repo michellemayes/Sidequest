@@ -72,7 +72,7 @@ async function openUri(uri: string): Promise<void> {
   const opener = uriOpener();
   if (!opener) {
     throw new UserFacingError(
-      `ccslack does not know how to open URIs on ${platform()}.`,
+      `sidequest does not know how to open URIs on ${platform()}.`,
       `Open this by hand: ${uri}`,
     );
   }

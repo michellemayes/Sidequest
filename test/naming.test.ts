@@ -105,7 +105,7 @@ describe("branchNameFor", () => {
 describe("warpConfigName", () => {
   it("produces a filename-safe, lowercase name", () => {
     expect(warpConfigName("fix/Total-Wrong-20260909-1432")).toBe(
-      "ccslack-fix-total-wrong-20260909-1432",
+      "sidequest-fix-total-wrong-20260909-1432",
     );
   });
 });

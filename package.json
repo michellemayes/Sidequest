@@ -1,10 +1,10 @@
 {
-  "name": "ccslackassist",
+  "name": "sidequest",
   "version": "0.1.0",
-  "description": "Turn any Slack message into a Claude Code session in a fresh git worktree, opened in Warp.",
+  "description": "An overlay for the Slack desktop app that turns any message into a Claude Code session in a fresh git worktree, opened in Warp.",
   "type": "module",
   "bin": {
-    "ccslack": "./dist/index.js"
+    "sidequest": "./dist/index.js"
   },
   "main": "./dist/index.js",
   "engines": {

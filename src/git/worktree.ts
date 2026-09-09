@@ -88,7 +88,7 @@ async function findFreeNames(
 
   throw new UserFacingError(
     `Could not find a free branch name based on "${desiredBranch}" after 50 tries.`,
-    "Clean up old sessions with `ccslack clean`.",
+    "Clean up old sessions with `sidequest clean`.",
   );
 }
 

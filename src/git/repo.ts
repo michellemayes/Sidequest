@@ -17,7 +17,7 @@ export async function assertGitAvailable(): Promise<void> {
   if (!(await succeeds("git", ["--version"]))) {
     throw new UserFacingError(
       "git is not installed or not on PATH.",
-      "Install git and restart ccslack.",
+      "Install git and restart Sidequest.",
     );
   }
 }
@@ -45,7 +45,7 @@ export async function inspectRepo(path: string): Promise<RepoInfo> {
     if (err instanceof CommandError) {
       throw new UserFacingError(
         `${path} is not inside a git repository.`,
-        "Point ccslack at a git checkout, or run `git init` there first.",
+        "Point Sidequest at a git checkout, or run `git init` there first.",
       );
     }
     throw err;
@@ -122,7 +122,7 @@ export async function resolveBaseRef(
   if (await refExists(root, baseBranch)) return baseBranch;
   throw new UserFacingError(
     `Base branch "${baseBranch}" does not exist in ${root}.`,
-    "Set a different base with `ccslack link <repo> --base <branch>`.",
+    "Set a different base with `sidequest link <repo> --base <branch>`.",
   );
 }
 
@@ -141,7 +141,7 @@ function describe(err: unknown): string {
 
 /**
  * True when every commit on `branch` is already contained in `base`, i.e. the
- * branch has nothing left to lose. Used to decide what `ccslack clean` may
+ * branch has nothing left to lose. Used to decide what `sidequest clean` may
  * remove without being asked twice.
  */
 export async function isMergedInto(
@@ -155,10 +155,10 @@ export async function isMergedInto(
 }
 
 /**
- * Teach the repository to ignore the per-session `.ccslack/` directory.
+ * Teach the repository to ignore the per-session `.sidequest/` directory.
  *
  * Two things depend on this. `git worktree remove` refuses to delete a worktree
- * holding untracked files, so without it `ccslack clean` could never remove
+ * holding untracked files, so without it `sidequest clean` could never remove
  * anything; and Claude Code would otherwise see the prompt files as untracked
  * changes and might commit them.
  *
@@ -181,10 +181,10 @@ export async function ensureSessionDirIgnored(
 
     await mkdir(dirname(excludeFile), { recursive: true });
     const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
-    await appendFile(excludeFile, `${separator}# ccslack session files\n${rule}\n`, "utf8");
+    await appendFile(excludeFile, `${separator}# sidequest session files\n${rule}\n`, "utf8");
     log.debug(`added ${rule} to ${excludeFile}`);
   } catch (err) {
-    // Not fatal: sessions still work, `ccslack clean` just needs --force.
+    // Not fatal: sessions still work, `sidequest clean` just needs --force.
     log.warn(`could not add ${rule} to the repo's exclude file`, describe(err));
   }
 }

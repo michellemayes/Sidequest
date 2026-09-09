@@ -2,7 +2,7 @@ import type { PromptConfig, PromptKey } from "./schema.js";
 
 /**
  * The three prompts that show up on every Slack message. Users can override any
- * field per prompt in ~/.ccslack/config.json; anything they omit falls back to
+ * field per prompt in ~/.sidequest/config.json; anything they omit falls back to
  * the definition here.
  */
 export const DEFAULT_PROMPTS: Record<PromptKey, PromptConfig> = {

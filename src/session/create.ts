@@ -52,7 +52,7 @@ export async function createSession(
   if (!link) {
     throw new UserFacingError(
       `No repo is linked to #${message.channelName}.`,
-      "Click the repo button in the channel header, or run `ccslack link <path> -c <channel>`.",
+      "Click the repo button in the channel header, or run `sidequest link <path> -c <channel>`.",
     );
   }
 

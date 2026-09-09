@@ -1,9 +1,9 @@
-# ccslack
+# Sidequest
 
 An overlay for the Slack desktop app that turns any message into a Claude Code session.
 
 Assign a repo to a channel. Then hover any message in that channel, click
-**Claude Code**, and pick **Investigate**, **Fix** or **Review**. ccslack cuts a
+**Sidequest**, and pick **Investigate**, **Fix** or **Review**. Sidequest cuts a
 fresh git worktree off your base branch, writes a prompt built from the message
 and its thread, and opens the worktree in Warp with Claude Code already running.
 
@@ -12,7 +12,7 @@ goes straight from Slack's renderer into a prompt file in the worktree.
 
 ```
 hover a message  ──▶  git worktree  ──▶  Warp tab  ──▶  claude "<prompt>"
-  Claude Code ▾        fix/checkout-…     "Fix · storefront"
+  Sidequest ▾          fix/checkout-…     "Fix · storefront"
    Investigate
    Fix
    Review
@@ -21,14 +21,14 @@ hover a message  ──▶  git worktree  ──▶  Warp tab  ──▶  claude
 ## How it attaches to the desktop app
 
 Slack's desktop app is Electron, so its renderer speaks the Chrome DevTools
-Protocol. `ccslack start` launches Slack with `--remote-debugging-port`, attaches
+Protocol. `sidequest start` launches Slack with `--remote-debugging-port`, attaches
 over CDP, and injects [`client/inject.js`](client/inject.js) into every Slack
-window. That is a real DOM overlay: the buttons are ccslack's own elements sitting
+window. That is a real DOM overlay: the buttons are Sidequest's own elements sitting
 in Slack's message list.
 
 There is no Slack app to create, no bot token, no workspace install and no
 network hop. The trade-off is that Slack only accepts the debug flag at process
-start, so ccslack has to be the thing that launches Slack.
+start, so Sidequest has to be the thing that launches Slack.
 
 ## Requirements
 
@@ -45,35 +45,35 @@ git clone https://github.com/michellemayes/CCSlackAssist.git
 cd CCSlackAssist
 npm install
 npm run build
-npm link              # puts `ccslack` on your PATH
-ccslack init          # creates ~/.ccslack/config.json
-ccslack install-hook  # so Claude starts when the Warp tab opens
+npm link              # puts `sidequest` on your PATH
+Sidequest init          # creates ~/.Sidequest/config.json
+Sidequest install-hook  # so Claude starts when the Warp tab opens
 ```
 
 ## Run it
 
 ```bash
-ccslack start          # launches Slack with the overlay attached
-ccslack start --force  # quits an already-running Slack first
+Sidequest start          # launches Slack with the overlay attached
+Sidequest start --force  # quits an already-running Slack first
 ```
 
 Leave it running. In Slack:
 
 1. Open a channel and click **Link a repo** in the channel header. Paste an
    absolute path to a git checkout.
-2. Hover any message → **Claude Code** → **Investigate** / **Fix** / **Review**.
+2. Hover any message → **Sidequest** → **Investigate** / **Fix** / **Review**.
 
 A Warp tab opens on a new worktree with Claude Code already working. The result —
 the branch name, or what went wrong — appears under the message you clicked.
 
-Stopping ccslack leaves Slack running; the overlay disappears on Slack's next
+Stopping Sidequest leaves Slack running; the overlay disappears on Slack's next
 reload.
 
 ### The shell hook
 
 Warp has [ignored `exec` commands from `warp://launch/` deeplinks](https://github.com/warpdotdev/warp/issues/9007)
-in some versions. `ccslack install-hook` adds one line to your `~/.zshrc` that
-starts the session when a shell opens in a ccslack worktree. It is safe alongside
+in some versions. `sidequest install-hook` adds one line to your `~/.zshrc` that
+starts the session when a shell opens in a Sidequest worktree. It is safe alongside
 the launch config — whichever fires first claims the session, and the other exits
 quietly.
 
@@ -81,17 +81,17 @@ quietly.
 
 | Command | What it does |
 | --- | --- |
-| `ccslack start` | Launch Slack with the overlay attached. `--force` |
-| `ccslack doctor` | Check git, Warp, Claude Code, Slack.app and the debug port |
-| `ccslack list` | Show settings and linked channels |
-| `ccslack sessions` | List every worktree ccslack created |
-| `ccslack clean` | Remove worktrees whose branch is merged. `--all`, `--force` |
-| `ccslack prompts` | Print the three prompt templates |
-| `ccslack install-hook` | Install the shell hook. `--print`, `--rc <path>` |
-| `ccslack link <path> -c <channel>` | Link from the terminal, by channel name |
-| `ccslack unlink -c <channel>` | Remove a link |
+| `sidequest start` | Launch Slack with the overlay attached. `--force` |
+| `sidequest doctor` | Check git, Warp, Claude Code, Slack.app and the debug port |
+| `sidequest list` | Show settings and linked channels |
+| `sidequest sessions` | List every worktree Sidequest created |
+| `sidequest clean` | Remove worktrees whose branch is merged. `--all`, `--force` |
+| `sidequest prompts` | Print the three prompt templates |
+| `sidequest install-hook` | Install the shell hook. `--print`, `--rc <path>` |
+| `sidequest link <path> -c <channel>` | Link from the terminal, by channel name |
+| `sidequest unlink -c <channel>` | Remove a link |
 
-`ccslack clean` never destroys work: it leaves a branch alone if it holds
+`sidequest clean` never destroys work: it leaves a branch alone if it holds
 unmerged commits, and refuses a worktree with uncommitted changes unless you pass
 `--force`.
 
@@ -108,7 +108,7 @@ the channel, a permalink, and the branch it is working on.
 
 ### Customising them
 
-Edit the `prompts` section of `~/.ccslack/config.json`. Anything you leave out
+Edit the `prompts` section of `~/.sidequest/config.json`. Anything you leave out
 falls back to the built-in default, so you can override just the template:
 
 ```json
@@ -127,16 +127,16 @@ Available tokens: `{{author}}`, `{{channel}}`, `{{message}}`, `{{thread}}`,
 `{{worktree}}`. An unknown token is left visible in the prompt rather than
 silently blanked, so typos are obvious.
 
-Run `ccslack prompts` to see the current set. The button labels come from `label`,
+Run `sidequest prompts` to see the current set. The button labels come from `label`,
 so renaming a prompt renames it in the menu.
 
 ## Settings
 
-`~/.ccslack/config.json`, under `settings`:
+`~/.sidequest/config.json`, under `settings`:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `worktreesRoot` | `~/.ccslack/worktrees` | Where worktrees are created |
+| `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees are created |
 | `warpStrategy` | `launch_config` | `launch_config`, `tab_config` or `new_tab` |
 | `warpPreview` | `false` | Use Warp Preview (`warppreview://`) |
 | `claudeCommand` | `claude` | The Claude Code executable |
@@ -159,10 +159,10 @@ name is what the overlay can read off the DOM.
    then `main`/`master`/`develop`, then the current branch).
 3. `git worktree add -b <branch> <path> origin/<base>` — a real branch, isolated
    from whatever you have checked out.
-4. The prompt is rendered into `<worktree>/.ccslack/prompt.md`, alongside a
+4. The prompt is rendered into `<worktree>/.sidequest/prompt.md`, alongside a
    run-once `autorun.sh`.
-5. `.ccslack/` is added to the repo's `.git/info/exclude`, so Claude never sees
-   the prompt files as untracked changes and `ccslack clean` can remove the
+5. `.sidequest/` is added to the repo's `.git/info/exclude`, so Claude never sees
+   the prompt files as untracked changes and `sidequest clean` can remove the
    worktree later.
 6. Warp is opened on the worktree and `autorun.sh` starts Claude Code.
 
@@ -172,24 +172,24 @@ same message twice gives you `-2`, `-3` rather than an error.
 ## Troubleshooting
 
 **"Slack is running without --remote-debugging-port".** Slack only accepts the
-flag at startup. Quit Slack, or run `ccslack start --force` to have ccslack
+flag at startup. Quit Slack, or run `sidequest start --force` to have Sidequest
 restart it.
 
-**No buttons in Slack.** Check the terminal running `ccslack start` — it prints a
+**No buttons in Slack.** Check the terminal running `sidequest start` — it prints a
 line per attached window. If it attached but nothing shows, Slack may have
 changed its `data-qa` attributes; set `verbose: true` and check Slack's devtools
 console.
 
 **"No repo is linked to #channel".** Click **Link a repo** in the channel header.
 
-**Warp opens but Claude doesn't start.** Run `ccslack install-hook`, then open a
+**Warp opens but Claude doesn't start.** Run `sidequest install-hook`, then open a
 new terminal.
 
-**Warp doesn't open at all.** ccslack still creates the worktree and says so under
-the message — `cd` there and run `.ccslack/autorun.sh`.
+**Warp doesn't open at all.** Sidequest still creates the worktree and says so under
+the message — `cd` there and run `.sidequest/autorun.sh`.
 
-**`ccslack clean` skips everything.** Those worktrees have uncommitted changes.
-Check with `ccslack sessions`, then use `--force` once you're sure.
+**`sidequest clean` skips everything.** Those worktrees have uncommitted changes.
+Check with `sidequest sessions`, then use `--force` once you're sure.
 
 ## Development
 

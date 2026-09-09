@@ -2,7 +2,7 @@
 import { config as loadDotenv } from "dotenv";
 import { envFile } from "./config/paths.js";
 
-// Load ~/.ccslack/.env before anything reads process.env, then the local .env
+// Load ~/.sidequest/.env before anything reads process.env, then the local .env
 // so a checkout can override the global config during development.
 loadDotenv({ path: envFile() });
 loadDotenv();

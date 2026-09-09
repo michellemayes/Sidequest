@@ -26,7 +26,7 @@ export async function runCli(argv: string[]): Promise<void> {
   const program = new Command();
 
   program
-    .name("ccslack")
+    .name("sidequest")
     .description("Turn any Slack message into a Claude Code session in a fresh git worktree, opened in Warp.")
     .version("0.1.0");
 
@@ -59,19 +59,19 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("sessions")
-    .description("list worktrees ccslack has created")
+    .description("list worktrees Sidequest has created")
     .action(() => wrap(sessions));
 
   program
     .command("clean")
     .description("remove finished worktrees")
     .option("--force", "also remove worktrees with uncommitted changes", false)
-    .option("--all", "remove every ccslack worktree, not just merged ones", false)
+    .option("--all", "remove every Sidequest worktree, not just merged ones", false)
     .action((options: { force: boolean; all: boolean }) => wrap(() => clean(options)));
 
   program
     .command("init")
-    .description("write a starter config and .env to ~/.ccslack")
+    .description("write a starter config to ~/.sidequest")
     .action(() => wrap(init));
 
   program
@@ -212,7 +212,7 @@ async function list(): Promise<void> {
 
   console.log("\nlinked channels");
   if (entries.length === 0) {
-    console.log("  (none yet — run `/ccslack link ~/path/to/repo` in Slack)");
+    console.log("  (none yet — run `/sidequest link ~/path/to/repo` in Slack)");
     return;
   }
   for (const [id, l] of entries) {
@@ -259,7 +259,7 @@ async function clean(options: { force: boolean; all: boolean }): Promise<void> {
     const repo = await inspectRepo(repoPath);
     const base = baseBranchFor(config.channels, repoPath) || repo.defaultBranch;
 
-    // Only ever touch worktrees ccslack created, never a worktree the user made
+    // Only ever touch worktrees sidequest created, never a worktree the user made
     // by hand elsewhere in the same repo.
     const worktrees = (await listWorktrees(repoPath)).filter(
       (w) => !w.isMain && w.path.startsWith(config.settings.worktreesRoot),
@@ -317,8 +317,8 @@ async function init(): Promise<void> {
   console.log(`Wrote ${configFile()}`);
   console.log(`Config lives in ${root}.`);
   console.log("\nNext:");
-  console.log("  1. ccslack install-hook   (so sessions start when the Warp tab opens)");
-  console.log("  2. ccslack start          (launches Slack with the overlay attached)");
+  console.log("  1. sidequest install-hook   (so sessions start when the Warp tab opens)");
+  console.log("  2. sidequest start          (launches Slack with the overlay attached)");
   console.log("  3. In Slack, click 'Link a repo' in a channel header.");
 }
 
@@ -343,7 +343,7 @@ async function installHook(options: { rc?: string; print: boolean }): Promise<vo
     return;
   }
 
-  await appendFile(rc, `\n# ccslack\n${sourceLine}\n`, "utf8");
+  await appendFile(rc, `\n# sidequest\n${sourceLine}\n`, "utf8");
   console.log(`Wrote ${hookPath}`);
   console.log(`Added a source line to ${rc}`);
   console.log("\nOpen a new terminal for it to take effect.");
@@ -359,7 +359,7 @@ function detectRcFile(): string {
       // The fish snippet is POSIX-ish enough to fail loudly rather than silently.
       throw new UserFacingError(
         "fish is not supported by the generated hook.",
-        `Run \`ccslack install-hook --print\` and translate it, or set warpStrategy to "launch_config".`,
+        `Run \`sidequest install-hook --print\` and translate it, or set warpStrategy to "launch_config".`,
       );
     default:
       return join(homedir(), ".zshrc");
@@ -405,7 +405,7 @@ async function doctor(): Promise<void> {
     if (!ok) problems += 1;
   };
 
-  console.log("\nccslack doctor\n");
+  console.log("\nsidequest doctor\n");
 
   check(await succeeds("git", ["--version"]), "git", "required to create worktrees");
 
@@ -435,7 +435,7 @@ async function doctor(): Promise<void> {
   console.log(
     hookInstalled
       ? `       installed at ${shellHookFile()}`
-      : `       not installed. Run \`ccslack install-hook\` so sessions start even when Warp ignores the launch config.`,
+      : `       not installed. Run \`sidequest install-hook\` so sessions start even when Warp ignores the launch config.`,
   );
 
   const app = findSlackApp();
@@ -448,17 +448,17 @@ async function doctor(): Promise<void> {
   const portOpen = await isDebugPortOpen(config.settings.cdpPort);
   const slackUp = await isSlackRunning();
   if (portOpen) {
-    check(true, `Slack DevTools port ${config.settings.cdpPort}`, "open — ccslack can attach");
+    check(true, `Slack DevTools port ${config.settings.cdpPort}`, "open — Sidequest can attach");
   } else if (slackUp) {
     check(
       false,
       `Slack DevTools port ${config.settings.cdpPort}`,
       "Slack is running without it. Slack only accepts the flag at startup — " +
-        "quit Slack, or run `ccslack start --force` to restart it.",
+        "quit Slack, or run `sidequest start --force` to restart it.",
     );
   } else {
     console.log(`  --   Slack DevTools port ${config.settings.cdpPort}`);
-    console.log("       Slack is not running. `ccslack start` will launch it with the port open.");
+    console.log("       Slack is not running. `sidequest start` will launch it with the port open.");
   }
 
   const channels = Object.entries(config.channels);
@@ -476,7 +476,7 @@ async function doctor(): Promise<void> {
 
   console.log(
     problems === 0
-      ? "\nEverything checks out. Run `ccslack start`.\n"
+      ? "\nEverything checks out. Run `sidequest start`.\n"
       : `\n${problems} problem${problems === 1 ? "" : "s"} to fix.\n`,
   );
   if (problems > 0) process.exitCode = 1;

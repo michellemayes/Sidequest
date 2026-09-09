@@ -27,7 +27,7 @@ export function branchNameFor(input: BranchNameInput): string {
  * unique across concurrent sessions and safe in a filename.
  */
 export function warpConfigName(branch: string): string {
-  return `ccslack-${slugify(branch, 60)}`;
+  return `sidequest-${slugify(branch, 60)}`;
 }
 
 /** The tab title shown in Warp. */

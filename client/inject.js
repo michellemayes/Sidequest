@@ -1,10 +1,10 @@
 /*
- * ccslack overlay — runs inside the Slack desktop app's renderer.
+ * sidequest overlay — runs inside the Slack desktop app's renderer.
  *
  * Injected over CDP by src/cdp/attacher.ts, which also installs the
- * __ccslackAsk binding this talks to. Nothing here reaches the network; every
+ * __sidequestAsk binding this talks to. Nothing here reaches the network; every
  * request goes down to the local daemon and comes back through
- * __ccslackResult.
+ * __sidequestResult.
  *
  * Two pieces of UI:
  *   1. A button on each message, revealed on hover, opening the three prompts.
@@ -17,18 +17,18 @@
  * message it was last decorated for.
  */
 (() => {
-  if (window.__CCSLACK__) return;
-  window.__CCSLACK__ = true;
+  if (window.__SIDEQUEST__) return;
+  window.__SIDEQUEST__ = true;
 
   const CONFIG = Object.assign({
     prompts: [],
     linkedChannels: [],
     repoLabels: {},
     verbose: false,
-  }, window.__CCSLACK_CONFIG || {});
+  }, window.__SIDEQUEST_CONFIG || {});
 
-  const ASK = '__ccslackAsk';
-  const ATTR_ROW = 'data-ccslack-row';
+  const ASK = '__sidequestAsk';
+  const ATTR_ROW = 'data-sidequest-row';
   const REQUEST_TIMEOUT_MS = 120000;
 
   const SEL = {
@@ -41,11 +41,11 @@
     timestamp: 'a.c-timestamp',
   };
 
-  const log = (...args) => { if (CONFIG.verbose) console.log('[ccslack]', ...args); };
+  const log = (...args) => { if (CONFIG.verbose) console.log('[sidequest]', ...args); };
 
   /* ---------------------------------------------------------------- styles */
 
-  const STYLE_ID = 'ccslack-style';
+  const STYLE_ID = 'sidequest-style';
   const CSS = `
     /* The row is the hover target. Slack already positions these relatively,
        but say so rather than depending on it. */
@@ -53,7 +53,7 @@
 
     /* Parked top-right, where Slack's own hover toolbar sits, but offset below
        it so the two never overlap when both are showing. */
-    .ccslack-launch {
+    .sidequest-launch {
       position: absolute; top: 2px; right: 8px; z-index: 20;
       display: none; align-items: center; gap: 5px;
       padding: 2px 8px;
@@ -63,20 +63,20 @@
       border: 1px solid rgba(127,127,127,.35); border-radius: 7px;
       cursor: pointer; user-select: none;
     }
-    ${SEL.item}:hover .ccslack-launch,
-    .ccslack-launch[data-open="1"] { display: inline-flex; }
-    .ccslack-launch:hover { opacity: 1; border-color: rgba(127,127,127,.6); }
-    .ccslack-launch[data-busy="1"] { opacity: .4; pointer-events: none; }
+    ${SEL.item}:hover .sidequest-launch,
+    .sidequest-launch[data-open="1"] { display: inline-flex; }
+    .sidequest-launch:hover { opacity: 1; border-color: rgba(127,127,127,.6); }
+    .sidequest-launch[data-busy="1"] { opacity: .4; pointer-events: none; }
 
-    .ccslack-dot {
+    .sidequest-dot {
       width: 6px; height: 6px; border-radius: 50%;
       background: #2eb67d; flex: 0 0 auto;
     }
-    .ccslack-launch[data-linked="0"] .ccslack-dot { background: #8d8d8d; }
+    .sidequest-launch[data-linked="0"] .sidequest-dot { background: #8d8d8d; }
 
     /* The prompt menu. Anchored to the row, not the button, so it cannot be
        clipped by the button's own stacking context. */
-    .ccslack-menu {
+    .sidequest-menu {
       position: absolute; top: 26px; right: 8px; z-index: 30;
       display: flex; flex-direction: column; min-width: 176px;
       padding: 4px;
@@ -84,7 +84,7 @@
       border: 1px solid rgba(127,127,127,.35); border-radius: 8px;
       box-shadow: 0 6px 20px rgba(0,0,0,.18);
     }
-    .ccslack-menu button {
+    .sidequest-menu button {
       display: flex; align-items: center; gap: 8px;
       padding: 6px 8px; margin: 0;
       font-size: 13px; line-height: 18px; font-family: inherit;
@@ -92,22 +92,22 @@
       background: transparent; border: 0; border-radius: 5px;
       cursor: pointer;
     }
-    .ccslack-menu button:hover { background: rgba(127,127,127,.14); }
-    .ccslack-menu .ccslack-menu-note {
+    .sidequest-menu button:hover { background: rgba(127,127,127,.14); }
+    .sidequest-menu .sidequest-menu-note {
       padding: 6px 8px; font-size: 11px; line-height: 15px; opacity: .7;
     }
 
     /* Result line, left under the message so it reads as an annotation on it
        rather than as a toast that will vanish before it is read. */
-    .ccslack-result {
+    .sidequest-result {
       display: block; margin: 4px 0 6px;
       font-size: 11px; line-height: 16px; opacity: .7;
       word-break: break-word;
     }
-    .ccslack-result[data-kind="error"] { color: #e01e5a; opacity: .95; }
+    .sidequest-result[data-kind="error"] { color: #e01e5a; opacity: .95; }
 
     /* The channel header button. Bordered, matching Slack's header affordances. */
-    .ccslack-channel {
+    .sidequest-channel {
       display: inline-flex; align-items: center; gap: 5px;
       margin: 0 0 0 8px; padding: 1px 8px; vertical-align: middle;
       font-size: 11px; line-height: 16px; font-weight: 500;
@@ -116,11 +116,11 @@
       border: 1px solid rgba(127,127,127,.35); border-radius: 7px;
       cursor: pointer; user-select: none;
     }
-    .ccslack-channel:hover {
+    .sidequest-channel:hover {
       opacity: 1; background: rgba(127,127,127,.13);
       border-color: rgba(127,127,127,.6);
     }
-    .ccslack-channel[data-busy="1"] { opacity: .35; pointer-events: none; }
+    .sidequest-channel[data-busy="1"] { opacity: .35; pointer-events: none; }
   `;
 
   function ensureStyle() {
@@ -136,7 +136,7 @@
   let seq = 0;
   const pending = new Map();
 
-  window.__ccslackResult = (json) => {
+  window.__sidequestResult = (json) => {
     let msg;
     try {
       msg = JSON.parse(json);
@@ -151,7 +151,7 @@
   };
 
   // Settings changed elsewhere — another window, the menu bar, the terminal.
-  window.__ccslackSetConfig = (json) => {
+  window.__sidequestSetConfig = (json) => {
     try {
       Object.assign(CONFIG, JSON.parse(json));
     } catch {
@@ -162,7 +162,7 @@
 
   function ask(payload) {
     if (typeof window[ASK] !== 'function') {
-      return Promise.reject(new Error('ccslack binding missing'));
+      return Promise.reject(new Error('sidequest binding missing'));
     }
     const id = `r${++seq}`;
     return new Promise((resolve, reject) => {
@@ -170,7 +170,7 @@
       // far longer than a UI request normally would.
       const timer = setTimeout(() => {
         pending.delete(id);
-        reject(new Error('ccslack did not answer'));
+        reject(new Error('sidequest did not answer'));
       }, REQUEST_TIMEOUT_MS);
       pending.set(id, { resolve, reject, timer });
       try {
@@ -261,10 +261,10 @@
   /* ------------------------------------------------------------ row button */
 
   function closeMenus(except) {
-    document.querySelectorAll('.ccslack-menu').forEach((menu) => {
+    document.querySelectorAll('.sidequest-menu').forEach((menu) => {
       if (menu !== except) menu.remove();
     });
-    document.querySelectorAll('.ccslack-launch[data-open="1"]').forEach((b) => {
+    document.querySelectorAll('.sidequest-launch[data-open="1"]').forEach((b) => {
       if (!except || b.parentElement !== except.parentElement) delete b.dataset.open;
     });
   }
@@ -272,12 +272,12 @@
   function buildLaunchButton() {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'ccslack-launch';
+    button.className = 'sidequest-launch';
 
     const dot = document.createElement('span');
-    dot.className = 'ccslack-dot';
+    dot.className = 'sidequest-dot';
     const label = document.createElement('span');
-    label.textContent = 'Claude Code';
+    label.textContent = 'Sidequest';
     button.append(dot, label);
 
     button.addEventListener('click', (event) => {
@@ -298,12 +298,12 @@
 
   function openMenu(item, button) {
     const menu = document.createElement('div');
-    menu.className = 'ccslack-menu';
+    menu.className = 'sidequest-menu';
     const channel = currentChannel();
 
     if (!isLinked(channel)) {
       const note = document.createElement('div');
-      note.className = 'ccslack-menu-note';
+      note.className = 'sidequest-menu-note';
       note.textContent = channel
         ? `#${channel} has no repo yet — use the button in the channel header.`
         : 'Open a channel first.';
@@ -359,10 +359,10 @@
    * addressed by the message signature and dropped when the row moves on.
    */
   function showResult(item, text, kind) {
-    let line = item.querySelector(':scope > .ccslack-result');
+    let line = item.querySelector(':scope > .sidequest-result');
     if (!line) {
       line = document.createElement('div');
-      line.className = 'ccslack-result';
+      line.className = 'sidequest-result';
       item.appendChild(line);
     }
     line.dataset.kind = kind;
@@ -375,14 +375,14 @@
 
     // The row was recycled into a different message: anything we drew about
     // the old one is now a lie, so take it down.
-    const stale = item.querySelector(':scope > .ccslack-result');
+    const stale = item.querySelector(':scope > .sidequest-result');
     if (stale && stale.dataset.sig !== signature) stale.remove();
     if (item.getAttribute(ATTR_ROW) !== signature) {
-      item.querySelector(':scope > .ccslack-menu')?.remove();
+      item.querySelector(':scope > .sidequest-menu')?.remove();
       item.setAttribute(ATTR_ROW, signature);
     }
 
-    let button = item.querySelector(':scope > .ccslack-launch');
+    let button = item.querySelector(':scope > .sidequest-launch');
     if (!button) {
       button = buildLaunchButton();
       item.appendChild(button);
@@ -399,12 +399,12 @@
   function buildChannelButton() {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'ccslack-channel';
+    button.className = 'sidequest-channel';
 
     const dot = document.createElement('span');
-    dot.className = 'ccslack-dot';
+    dot.className = 'sidequest-dot';
     const label = document.createElement('span');
-    label.className = 'ccslack-channel-label';
+    label.className = 'sidequest-channel-label';
     button.append(dot, label);
 
     button.addEventListener('click', (event) => {
@@ -479,7 +479,7 @@
     const flag = linked ? '1' : '0';
     if (channelButton.dataset.linked !== flag) channelButton.dataset.linked = flag;
 
-    const label = channelButton.querySelector('.ccslack-channel-label');
+    const label = channelButton.querySelector('.sidequest-channel-label');
     const text = linked ? repo || 'Linked' : 'Link a repo';
     if (label.textContent !== text) label.textContent = text;
 
@@ -519,7 +519,7 @@
   function collect(node) {
     if (!node || node.nodeType !== 1) return;
     // Our own UI mutating must not schedule another pass over itself.
-    if (node.closest?.('.ccslack-menu, .ccslack-launch, .ccslack-result, .ccslack-channel')) return;
+    if (node.closest?.('.sidequest-menu, .sidequest-launch, .sidequest-result, .sidequest-channel')) return;
     const item = node.closest?.(SEL.item);
     if (item) {
       dirty.add(item);
@@ -542,7 +542,7 @@
 
   // Clicking anywhere else dismisses an open menu.
   document.addEventListener('click', (event) => {
-    if (event.target.closest?.('.ccslack-menu, .ccslack-launch')) return;
+    if (event.target.closest?.('.sidequest-menu, .sidequest-launch')) return;
     closeMenus();
   }, true);
 

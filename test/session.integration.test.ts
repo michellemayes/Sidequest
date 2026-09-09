@@ -29,7 +29,7 @@ async function git(args: string[], cwd: string): Promise<void> {
 }
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "ccslack-test-"));
+  root = await mkdtemp(join(tmpdir(), "sidequest-test-"));
   repoPath = join(root, "repo");
   await mkdir(repoPath, { recursive: true });
 
@@ -120,7 +120,7 @@ describe("createWorktree", () => {
 });
 
 describe("session directory is ignored", () => {
-  it("keeps .ccslack out of git status and lets the worktree be removed", async () => {
+  it("keeps .sidequest out of git status and lets the worktree be removed", async () => {
     const repo = await inspectRepo(repoPath);
     const worktree = await createWorktree({
       repo,
@@ -141,7 +141,7 @@ describe("session directory is ignored", () => {
     const { stdout } = await exec("git", ["status", "--porcelain"], { cwd: worktree.path });
     expect(stdout.trim()).toBe("");
 
-    // And `git worktree remove` must not refuse over them, or `ccslack clean`
+    // And `git worktree remove` must not refuse over them, or `sidequest clean`
     // could never remove a session without --force.
     const result = await removeWorktree(repo.root, worktree.path, {});
     expect(result.removedWorktree).toBe(true);
@@ -244,11 +244,11 @@ describe("writeLaunchConfig", () => {
     try {
       const name = await writeLaunchConfig(
         {
-          name: "ccslack-fix-thing",
+          name: "sidequest-fix-thing",
           title: "Fix · repo",
           color: "yellow",
           cwd: "/tmp/wt",
-          command: "/tmp/wt/.ccslack/autorun.sh",
+          command: "/tmp/wt/.sidequest/autorun.sh",
         },
         false,
       );
@@ -256,11 +256,11 @@ describe("writeLaunchConfig", () => {
       const file = join(dir, "warp-terminal", "launch_configurations", `${name}.yaml`);
       const doc = parseYaml(await readFile(file, "utf8"));
 
-      expect(doc.name).toBe("ccslack-fix-thing");
+      expect(doc.name).toBe("sidequest-fix-thing");
       expect(doc.windows[0].tabs[0].title).toBe("Fix · repo");
       expect(doc.windows[0].tabs[0].color).toBe("Yellow");
       expect(doc.windows[0].tabs[0].layout.cwd).toBe("/tmp/wt");
-      expect(doc.windows[0].tabs[0].layout.commands[0].exec).toBe("/tmp/wt/.ccslack/autorun.sh");
+      expect(doc.windows[0].tabs[0].layout.commands[0].exec).toBe("/tmp/wt/.sidequest/autorun.sh");
     } finally {
       Object.defineProperty(process, "platform", { value: previousPlatform });
       delete process.env.XDG_DATA_HOME;

@@ -1,11 +1,11 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/** Root of all ccslack state, overridable for tests via CCSLACK_HOME. */
+/** Root of all sidequest state, overridable for tests via SIDEQUEST_HOME. */
 export function configRoot(): string {
-  const override = process.env.CCSLACK_HOME?.trim();
+  const override = process.env.SIDEQUEST_HOME?.trim();
   if (override && override.length > 0) return override;
-  return join(homedir(), ".ccslack");
+  return join(homedir(), ".sidequest");
 }
 
 export function configFile(): string {

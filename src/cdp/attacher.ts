@@ -16,8 +16,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // so it lives outside src/ and is read at inject time.
 const INJECT_PATH = join(HERE, "..", "..", "client", "inject.js");
 
-const BINDING = "__ccslackAsk";
-const RESULT_FN = "__ccslackResult";
+const BINDING = "__sidequestAsk";
+const RESULT_FN = "__sidequestResult";
 const POLL_MS = 4000;
 
 export interface AttacherEvent {
@@ -70,7 +70,7 @@ export class Attacher {
   private async source(): Promise<string> {
     const script = readFileSync(INJECT_PATH, "utf8");
     const config = pageConfig(await loadConfig());
-    return `window.__CCSLACK_CONFIG = ${JSON.stringify(config)};\n${script}`;
+    return `window.__SIDEQUEST_CONFIG = ${JSON.stringify(config)};\n${script}`;
   }
 
   async start(): Promise<void> {
@@ -155,7 +155,7 @@ export class Attacher {
       if (!session) continue;
       try {
         await session.send("Runtime.evaluate", {
-          expression: `window.__ccslackSetConfig && window.__ccslackSetConfig(${payload})`,
+          expression: `window.__sidequestSetConfig && window.__sidequestSetConfig(${payload})`,
         });
       } catch {
         // Window is going away; the poll loop re-attaches with the new prelude.
