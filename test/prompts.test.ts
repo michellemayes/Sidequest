@@ -3,7 +3,6 @@ import { DEFAULT_PROMPTS, renderPrompt, type PromptContext } from "../src/config
 import { PROMPT_KEYS } from "../src/config/schema.js";
 import { shellQuote } from "../src/warp/autorun.js";
 import { tomlString } from "../src/warp/configFiles.js";
-import { parseFlags, tokenize } from "../src/slack/commands.js";
 
 const CONTEXT: PromptContext = {
   author: "michelle",
@@ -97,46 +96,5 @@ describe("tomlString", () => {
   it("escapes newlines and control characters", () => {
     expect(tomlString("a\nb")).toBe('"a\\nb"');
     expect(tomlString("a\u0001b")).toBe('"a\\u0001b"');
-  });
-});
-
-describe("tokenize", () => {
-  it("splits on whitespace", () => {
-    expect(tokenize("link ~/code/app")).toEqual(["link", "~/code/app"]);
-  });
-
-  it("keeps quoted paths together", () => {
-    expect(tokenize(`link "~/my code/app"`)).toEqual(["link", "~/my code/app"]);
-  });
-
-  it("treats Slack's smart quotes as plain quotes", () => {
-    expect(tokenize("link \u201c~/my code/app\u201d")).toEqual(["link", "~/my code/app"]);
-  });
-
-  it("returns nothing for empty input", () => {
-    expect(tokenize("   ")).toEqual([]);
-  });
-});
-
-describe("parseFlags", () => {
-  it("reads --key value pairs", () => {
-    expect(parseFlags(["~/code/app", "--base", "develop"])).toEqual({
-      positional: ["~/code/app"],
-      flags: { base: "develop" },
-    });
-  });
-
-  it("reads --key=value pairs", () => {
-    expect(parseFlags(["--label=Storefront"])).toEqual({
-      positional: [],
-      flags: { label: "Storefront" },
-    });
-  });
-
-  it("does not swallow the next flag as a value", () => {
-    expect(parseFlags(["--base", "--label", "x"])).toEqual({
-      positional: [],
-      flags: { base: "", label: "x" },
-    });
   });
 });

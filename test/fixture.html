@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><title>ccslack fixture</title></head>
+  <body>
+    <!--
+      A cut-down stand-in for Slack's message list, carrying only the data-qa
+      hooks and class names the overlay actually reads. It is not a replica of
+      Slack's markup — it exists so the overlay's reconciliation, the CDP
+      binding and the session path can be exercised without the Slack app.
+    -->
+    <div class="p-view_header" data-qa="channel_header">
+      <span data-qa="channel_name">eng-alerts</span>
+    </div>
+
+    <div id="list">
+      <div data-qa="virtual-list-item" id="row-1">
+        <span data-qa="message_sender_name">michelle</span>
+        <a class="c-timestamp" id="ts-1757430000.000100"
+           href="https://example.slack.com/archives/C0SMOKE/p1757430000000100">2:20 PM</a>
+        <div data-qa="message_content">
+          <div class="p-rich_text_section">Checkout total is wrong for gift cards</div>
+        </div>
+      </div>
+
+      <div data-qa="virtual-list-item" id="row-2">
+        <a class="c-timestamp" id="ts-1757430060.000200"
+           href="https://example.slack.com/archives/C0SMOKE/p1757430060000200">2:21 PM</a>
+        <div data-qa="message_content">
+          <div class="p-rich_text_section">only on the EU store</div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Lets a test recycle a row the way Slack's virtual list does.
+      window.__recycle = (id, text, ts) => {
+        const row = document.getElementById(id);
+        row.querySelector('.p-rich_text_section').textContent = text;
+        const anchor = row.querySelector('a.c-timestamp');
+        anchor.id = 'ts-' + ts;
+        anchor.href = 'https://example.slack.com/archives/C0SMOKE/p' + ts.replace('.', '');
+      };
+      window.__setChannel = (name) => {
+        document.querySelector('[data-qa="channel_name"]').textContent = name;
+      };
+    </script>
+  </body>
+</html>

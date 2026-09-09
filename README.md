@@ -1,37 +1,42 @@
 # ccslack
 
-Turn any Slack message into a Claude Code session.
+An overlay for the Slack desktop app that turns any message into a Claude Code session.
 
-Assign a repo to a Slack channel. Then, from any message in that channel, pick
-**Investigate**, **Fix** or **Review**. ccslack cuts a fresh git worktree off your
-base branch, writes a prompt built from the message and its thread, and opens
-the worktree in Warp with Claude Code already running on it.
+Assign a repo to a channel. Then hover any message in that channel, click
+**Claude Code**, and pick **Investigate**, **Fix** or **Review**. ccslack cuts a
+fresh git worktree off your base branch, writes a prompt built from the message
+and its thread, and opens the worktree in Warp with Claude Code already running.
 
-Everything runs on your own machine. Slack message content never leaves your
-laptop — it goes straight into a prompt file in the worktree.
+Everything runs on your own machine. Nothing is sent anywhere — the message text
+goes straight from Slack's renderer into a prompt file in the worktree.
 
 ```
-Slack message  ──▶  git worktree  ──▶  Warp tab  ──▶  claude "<prompt>"
-   ⋮ → Fix          fix/checkout-…      "Fix · storefront"
+hover a message  ──▶  git worktree  ──▶  Warp tab  ──▶  claude "<prompt>"
+  Claude Code ▾        fix/checkout-…     "Fix · storefront"
+   Investigate
+   Fix
+   Review
 ```
 
-## Why it works with the Slack desktop app
+## How it attaches to the desktop app
 
-The buttons are Slack **message shortcuts**, which show up in every message's
-`⋮` (More actions) menu in the desktop app, the web app and mobile alike. There
-is no browser extension to install and nothing to patch.
+Slack's desktop app is Electron, so its renderer speaks the Chrome DevTools
+Protocol. `ccslack start` launches Slack with `--remote-debugging-port`, attaches
+over CDP, and injects [`client/inject.js`](client/inject.js) into every Slack
+window. That is a real DOM overlay: the buttons are ccslack's own elements sitting
+in Slack's message list.
 
-The app connects to Slack in **Socket Mode**: it dials out over a WebSocket from
-your laptop, so no public URL, tunnel or hosting is needed — and it can create
-worktrees and launch Warp locally, which a hosted Slack app could never do.
+There is no Slack app to create, no bot token, no workspace install and no
+network hop. The trade-off is that Slack only accepts the debug flag at process
+start, so ccslack has to be the thing that launches Slack.
 
 ## Requirements
 
+- macOS (the launcher drives `Slack.app`)
 - Node.js 20 or newer
 - git
 - [Warp](https://www.warp.dev/)
 - [Claude Code](https://claude.com/claude-code) on your `PATH` as `claude`
-- Permission to create a Slack app in your workspace
 
 ## Install
 
@@ -40,96 +45,66 @@ git clone https://github.com/michellemayes/CCSlackAssist.git
 cd CCSlackAssist
 npm install
 npm run build
-npm link          # puts `ccslack` on your PATH
-ccslack init      # creates ~/.ccslack/config.json and ~/.ccslack/.env
+npm link              # puts `ccslack` on your PATH
+ccslack init          # creates ~/.ccslack/config.json
+ccslack install-hook  # so Claude starts when the Warp tab opens
 ```
-
-## Create the Slack app
-
-1. Go to <https://api.slack.com/apps> → **Create New App** → **From a manifest**.
-2. Pick your workspace and paste [`manifest/slack-app-manifest.yaml`](manifest/slack-app-manifest.yaml).
-3. **Basic Information → App-Level Tokens → Generate Token and Scopes**. Give it
-   the `connections:write` scope. Copy the `xapp-…` token.
-4. **Install App** → install to your workspace. Copy the `xoxb-…` **Bot User OAuth Token**.
-5. Put both in `~/.ccslack/.env`:
-
-   ```
-   SLACK_BOT_TOKEN=xoxb-…
-   SLACK_APP_TOKEN=xapp-…
-   ```
-
-6. Check everything is wired up:
-
-   ```bash
-   ccslack doctor
-   ```
 
 ## Run it
 
 ```bash
-ccslack start
+ccslack start          # launches Slack with the overlay attached
+ccslack start --force  # quits an already-running Slack first
 ```
 
-Leave it running. Then in Slack:
+Leave it running. In Slack:
 
-1. Invite the bot to a channel: `/invite @ccslack`
-2. Link the channel to a repo: `/ccslack link ~/code/storefront`
-3. On any message, open `⋮` → **Fix** (or **Investigate** / **Review**).
+1. Open a channel and click **Link a repo** in the channel header. Paste an
+   absolute path to a git checkout.
+2. Hover any message → **Claude Code** → **Investigate** / **Fix** / **Review**.
 
-A Warp tab opens on a new worktree with Claude Code already working.
+A Warp tab opens on a new worktree with Claude Code already working. The result —
+the branch name, or what went wrong — appears under the message you clicked.
+
+Stopping ccslack leaves Slack running; the overlay disappears on Slack's next
+reload.
 
 ### The shell hook
 
 Warp has [ignored `exec` commands from `warp://launch/` deeplinks](https://github.com/warpdotdev/warp/issues/9007)
-in some versions. To make sessions start regardless:
-
-```bash
-ccslack install-hook
-```
-
-This adds one line to your `~/.zshrc` (or `~/.bashrc`) that starts the session
-when a shell opens in a ccslack worktree. It is safe alongside the launch
-config — whichever fires first claims the session, and the other exits quietly.
-
-## Slack commands
-
-| Command | What it does |
-| --- | --- |
-| `/ccslack link <path>` | Link this channel to a repo. `--base <branch>`, `--label <name>` |
-| `/ccslack unlink` | Remove this channel's link |
-| `/ccslack status` | Show what this channel is linked to |
-| `/ccslack list` | List every linked channel |
-| `/ccslack sessions` | Live worktrees for this channel's repo |
-
-Replies are ephemeral — only you see them.
+in some versions. `ccslack install-hook` adds one line to your `~/.zshrc` that
+starts the session when a shell opens in a ccslack worktree. It is safe alongside
+the launch config — whichever fires first claims the session, and the other exits
+quietly.
 
 ## CLI
 
 | Command | What it does |
 | --- | --- |
-| `ccslack start` | Connect to Slack and listen |
-| `ccslack doctor` | Check git, Warp, Claude Code, tokens and links |
+| `ccslack start` | Launch Slack with the overlay attached. `--force` |
+| `ccslack doctor` | Check git, Warp, Claude Code, Slack.app and the debug port |
 | `ccslack list` | Show settings and linked channels |
 | `ccslack sessions` | List every worktree ccslack created |
 | `ccslack clean` | Remove worktrees whose branch is merged. `--all`, `--force` |
 | `ccslack prompts` | Print the three prompt templates |
 | `ccslack install-hook` | Install the shell hook. `--print`, `--rc <path>` |
-| `ccslack link <path> -c <channel-id>` | Link from the terminal |
+| `ccslack link <path> -c <channel>` | Link from the terminal, by channel name |
+| `ccslack unlink -c <channel>` | Remove a link |
 
 `ccslack clean` never destroys work: it leaves a branch alone if it holds
-unmerged commits, and refuses a worktree with uncommitted changes unless you
-pass `--force`.
+unmerged commits, and refuses a worktree with uncommitted changes unless you pass
+`--force`.
 
 ## The three prompts
 
 | | Branch | What it asks for |
 | --- | --- | --- |
-| 🔍 **Investigate** | `investigate/…` | Reproduce, trace to the responsible code, explain the mechanism, recommend a fix. Changes nothing. |
-| 🔧 **Fix** | `fix/…` | Root-cause it, make the smallest fix, add a failing-then-passing test, get lint and tests green, commit. |
-| 👀 **Review** | `review/…` | Review the referenced PR, branch or diff for real bugs first, then clarity. Changes nothing. |
+| **Investigate** | `investigate/…` | Reproduce, trace to the responsible code, explain the mechanism, recommend a fix. Changes nothing. |
+| **Fix** | `fix/…` | Root-cause it, make the smallest fix, add a failing-then-passing test, get lint and tests green, commit. |
+| **Review** | `review/…` | Review the referenced PR, branch or diff for real bugs first, then clarity. Changes nothing. |
 
-Each prompt receives the message text, the thread, the author, the channel, a
-permalink, and the branch it is working on.
+Each prompt receives the message text, up to ten preceding messages, the sender,
+the channel, a permalink, and the branch it is working on.
 
 ### Customising them
 
@@ -152,7 +127,8 @@ Available tokens: `{{author}}`, `{{channel}}`, `{{message}}`, `{{thread}}`,
 `{{worktree}}`. An unknown token is left visible in the prompt rather than
 silently blanked, so typos are obvious.
 
-Run `ccslack prompts` to see the current set.
+Run `ccslack prompts` to see the current set. The button labels come from `label`,
+so renaming a prompt renames it in the menu.
 
 ## Settings
 
@@ -166,42 +142,51 @@ Run `ccslack prompts` to see the current set.
 | `claudeCommand` | `claude` | The Claude Code executable |
 | `claudeArgs` | `[]` | Extra flags, e.g. `["--model", "opus"]` |
 | `fetchBeforeCreate` | `true` | Fetch the base branch before branching |
-| `threadContextLimit` | `10` | Thread replies to include in the prompt |
+| `threadContextLimit` | `10` | Preceding messages included in the prompt |
 | `pruneBranchesOnClean` | `true` | Also delete merged branches on `clean` |
+| `cdpPort` | `9222` | DevTools port Slack is launched with |
+| `targetUrlPattern` | `app\.slack\.com\|/client/` | Which windows count as Slack |
+| `verbose` | `false` | Log overlay activity to Slack's devtools console |
 
-`launch_config` and `tab_config` give a titled, coloured tab. `new_tab` only
-opens the folder and relies on the shell hook. If the preferred strategy fails,
-ccslack falls back to `new_tab` automatically.
+Channels are keyed by name, lowercased and without the `#`, because the channel
+name is what the overlay can read off the DOM.
 
 ## How a session is built
 
-1. The channel's repo is resolved and the base branch detected (`origin/HEAD`,
+1. The overlay reads the message, its sender, its permalink and the preceding
+   messages out of Slack's DOM, and sends them to the local daemon.
+2. The channel's repo is resolved and the base branch detected (`origin/HEAD`,
    then `main`/`master`/`develop`, then the current branch).
-2. `git worktree add -b <branch> <path> origin/<base>` — a real branch, isolated
+3. `git worktree add -b <branch> <path> origin/<base>` — a real branch, isolated
    from whatever you have checked out.
-3. The prompt is rendered into `<worktree>/.ccslack/prompt.md`, alongside a
+4. The prompt is rendered into `<worktree>/.ccslack/prompt.md`, alongside a
    run-once `autorun.sh`.
-4. `.ccslack/` is added to the repo's `.git/info/exclude`, so Claude never sees
+5. `.ccslack/` is added to the repo's `.git/info/exclude`, so Claude never sees
    the prompt files as untracked changes and `ccslack clean` can remove the
    worktree later.
-5. Warp is opened on the worktree and `autorun.sh` starts Claude Code.
+6. Warp is opened on the worktree and `autorun.sh` starts Claude Code.
 
 Branch names look like `fix/checkout-total-is-wrong-20260909-1432`. Clicking the
 same message twice gives you `-2`, `-3` rather than an error.
 
 ## Troubleshooting
 
-**Nothing happens when I click.** Check the terminal running `ccslack start`.
-The most common cause is the bot not being in the channel — `/invite @ccslack`.
+**"Slack is running without --remote-debugging-port".** Slack only accepts the
+flag at startup. Quit Slack, or run `ccslack start --force` to have ccslack
+restart it.
 
-**"No repo is linked to #channel".** Run `/ccslack link ~/path/to/repo` there.
+**No buttons in Slack.** Check the terminal running `ccslack start` — it prints a
+line per attached window. If it attached but nothing shows, Slack may have
+changed its `data-qa` attributes; set `verbose: true` and check Slack's devtools
+console.
+
+**"No repo is linked to #channel".** Click **Link a repo** in the channel header.
 
 **Warp opens but Claude doesn't start.** Run `ccslack install-hook`, then open a
 new terminal.
 
-**Warp doesn't open at all.** ccslack still creates the worktree and tells you
-the path — `cd` there and run `.ccslack/autorun.sh`. Check Warp is installed and
-registered for `warp://` links.
+**Warp doesn't open at all.** ccslack still creates the worktree and says so under
+the message — `cd` there and run `.ccslack/autorun.sh`.
 
 **`ccslack clean` skips everything.** Those worktrees have uncommitted changes.
 Check with `ccslack sessions`, then use `--force` once you're sure.
@@ -210,19 +195,28 @@ Check with `ccslack sessions`, then use `--force` once you're sure.
 
 ```bash
 npm run dev -- doctor   # run from source
-npm test                # 50 tests, including real git worktree integration tests
+npm test                # 47 tests
 npm run typecheck
 ```
 
+The test suite includes integration tests that create real git worktrees and
+execute the generated `autorun.sh`, plus end-to-end tests that launch headless
+Chromium, inject the real overlay over CDP against a Slack-shaped fixture, and
+click through to a real worktree. Chromium stands in for Slack's Electron
+renderer — the same engine, driven the same way. Those tests skip themselves if
+no Chromium is found.
+
 ## Security notes
 
-- Both tokens live in `~/.ccslack/.env` (mode `600`) and are never logged.
+- The overlay only reads the DOM of Slack windows and only talks to the local
+  daemon over the CDP binding. It makes no network requests.
 - Commands are executed with an argv array, never through a shell, so message
-  text cannot inject shell syntax. The generated `autorun.sh` single-quotes
-  every interpolated value, and the prompt is passed via a file rather than the
-  command line.
-- The bot only requests the scopes in the manifest; it posts ephemerally and
-  never writes to a channel.
+  text cannot inject shell syntax. The generated `autorun.sh` single-quotes every
+  interpolated value, and the prompt is passed via a file rather than the command
+  line.
+- The DevTools port is bound to `127.0.0.1`. Anything running as your user on
+  your machine can talk to it while Slack is running that way — the same
+  exposure any Electron app with remote debugging enabled has.
 
 ## License
 

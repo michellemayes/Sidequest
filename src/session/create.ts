@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { loadConfig, promptFor } from "../config/store.js";
+import { repoForChannelName } from "../config/channels.js";
 import { renderPrompt, type PromptContext } from "../config/prompts.js";
 import type { Config, PromptKey, RepoLink } from "../config/schema.js";
 import { inspectRepo } from "../git/repo.js";
@@ -11,9 +12,8 @@ import { describeError, UserFacingError } from "../util/errors.js";
 import { stripSlackMarkup } from "../util/slug.js";
 import { log } from "../util/log.js";
 
-/** Everything the Slack layer knows about the message that was clicked. */
+/** Everything the overlay could read off the message that was clicked. */
 export interface MessageContext {
-  channelId: string;
   channelName: string;
   authorName: string;
   text: string;
@@ -47,12 +47,12 @@ export async function createSession(
   configOverride?: Config,
 ): Promise<SessionResult> {
   const config = configOverride ?? (await loadConfig());
-  const link = config.channels[message.channelId];
+  const link = repoForChannelName(config, message.channelName);
 
   if (!link) {
     throw new UserFacingError(
       `No repo is linked to #${message.channelName}.`,
-      "Link one with `/ccslack link ~/path/to/repo` in this channel.",
+      "Click the repo button in the channel header, or run `ccslack link <path> -c <channel>`.",
     );
   }
 
@@ -149,12 +149,23 @@ function buildContext(message: MessageContext, extras: ContextExtras): PromptCon
     message: quote(stripSlackMarkup(message.text)),
     thread: formatThread(message.threadMessages, extras.threadLimit),
     permalink: message.permalink,
-    date: new Date(Number(message.ts.split(".")[0] ?? 0) * 1000).toISOString(),
+    date: messageDate(message.ts).toISOString(),
     branch: extras.branch,
     baseBranch: extras.baseBranch,
     repo: extras.repo,
     worktree: extras.worktree,
   };
+}
+
+/**
+ * Slack renders a message's timestamp as epoch seconds with a sub-second
+ * suffix. The overlay reads it off the DOM when it can; when it cannot, the
+ * message is still worth a session, so fall back to now rather than to 1970.
+ */
+function messageDate(ts: string): Date {
+  const seconds = Number.parseInt(ts.split(".")[0] ?? "", 10);
+  if (!Number.isFinite(seconds) || seconds <= 0) return new Date();
+  return new Date(seconds * 1000);
 }
 
 /** Markdown blockquote, so the report is visually separate from instructions. */

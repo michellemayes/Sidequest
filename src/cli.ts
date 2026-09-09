@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { appendFile, readFile, writeFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { configFile, configRoot, envFile, shellHookFile } from "./config/paths.js";
+import { configFile, configRoot, shellHookFile } from "./config/paths.js";
 import {
   allPrompts,
   ensureConfigRoot,
@@ -15,7 +15,9 @@ import { assertGitAvailable, inspectRepo, isMergedInto } from "./git/repo.js";
 import { listWorktrees, pruneWorktrees, removeWorktree } from "./git/worktree.js";
 import { shellHookSource } from "./warp/autorun.js";
 import { warpLaunchConfigDir, warpTabConfigDir, platform, uriOpener } from "./util/platform.js";
-import { createSlackApp, readCredentials, verifyCredentials } from "./slack/app.js";
+import { Attacher } from "./cdp/attacher.js";
+import { findSlackApp, isDebugPortOpen, isSlackRunning, launchSlack } from "./cdp/launch.js";
+import { channelKey } from "./config/channels.js";
 import { describeError, UserFacingError } from "./util/errors.js";
 import { succeeds } from "./util/exec.js";
 import { log } from "./util/log.js";
@@ -30,13 +32,14 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("start")
-    .description("connect to Slack and listen for message shortcuts")
-    .action(() => wrap(start));
+    .description("launch the Slack desktop app with the overlay attached")
+    .option("--force", "quit a running Slack that has no DevTools port", false)
+    .action((options: { force: boolean }) => wrap(() => start(options)));
 
   program
     .command("link <path>")
     .description("link a Slack channel to a repo from the terminal")
-    .requiredOption("-c, --channel <id>", "Slack channel id, e.g. C0123456789")
+    .requiredOption("-c, --channel <name>", "channel name, e.g. eng-alerts")
     .option("-b, --base <branch>", "branch to cut worktrees from (default: detected)")
     .option("-l, --label <name>", "display name for the repo")
     .action((path: string, options: { channel: string; base?: string; label?: string }) =>
@@ -46,7 +49,7 @@ export async function runCli(argv: string[]): Promise<void> {
   program
     .command("unlink")
     .description("remove a channel's repo link")
-    .requiredOption("-c, --channel <id>", "Slack channel id")
+    .requiredOption("-c, --channel <name>", "channel name, e.g. eng-alerts")
     .action((options: { channel: string }) => wrap(() => unlink(options.channel)));
 
   program
@@ -104,27 +107,62 @@ async function wrap(action: () => Promise<void>): Promise<void> {
   }
 }
 
-async function start(): Promise<void> {
+async function start(options: { force: boolean }): Promise<void> {
   await assertGitAvailable();
-  const credentials = readCredentials();
-  const app = createSlackApp(credentials);
-
-  await app.start();
   const config = await loadConfig();
-  const linked = Object.keys(config.channels).length;
+  const { cdpPort, targetUrlPattern } = config.settings;
 
-  console.log("ccslack is connected to Slack over Socket Mode.");
+  const launch = await launchSlack({ cdpPort, force: options.force });
+  const attacher = new Attacher({
+    cdpPort,
+    targetUrlPattern,
+    onEvent: (event) => {
+      switch (event.type) {
+        case "attached":
+          console.log(`attached to a Slack window (${attacher.attachedCount} total)`);
+          break;
+        case "session":
+          console.log(`${event.prompt} in #${event.channel} → ${event.branch}`);
+          break;
+        case "session-error":
+          console.error(`could not start a session in #${event.channel}: ${event.message}`);
+          break;
+        case "link":
+          console.log(`linked #${event.channel} → ${event.message}`);
+          break;
+        case "unlink":
+          console.log(`unlinked #${event.channel}`);
+          break;
+        case "attach-error":
+        case "poll-error":
+        case "ask-error":
+          log.warn(`${event.type}: ${event.message}`);
+          break;
+        default:
+          log.debug(event.type, event);
+      }
+    },
+  });
+
+  await attacher.start();
+
+  const linked = Object.keys(config.channels).length;
+  console.log(
+    launch.started
+      ? "Started Slack with its DevTools port open."
+      : "Slack was already listening on its DevTools port.",
+  );
   console.log(`  config:    ${configFile()}`);
   console.log(`  worktrees: ${config.settings.worktreesRoot}`);
   console.log(`  channels:  ${linked} linked`);
-  if (linked === 0) {
-    console.log("\nLink a channel by running `/ccslack link ~/path/to/repo` in Slack.");
-  }
-  console.log("\nUse a message's ⋮ menu to start Investigate, Fix or Review. Ctrl-C to stop.");
+  console.log(
+    "\nHover a message in Slack and click Claude Code. Ctrl-C to stop.\n" +
+      "Stopping leaves Slack running; the overlay disappears on its next reload.",
+  );
 
-  const shutdown = async () => {
+  const shutdown = (): void => {
     console.log("\nstopping…");
-    await app.stop().catch(() => undefined);
+    attacher.stop();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
@@ -136,26 +174,29 @@ async function link(
   options: { channel: string; base?: string; label?: string },
 ): Promise<void> {
   const repo = await inspectRepo(expandPath(path));
+  const key = channelKey(options.channel);
   await updateConfig((config) => {
-    config.channels[options.channel] = {
+    config.channels[key] = {
       repoPath: repo.root,
+      channel: key,
       baseBranch: options.base ?? "",
       label: options.label ?? "",
       linkedBy: "cli",
       linkedAt: new Date().toISOString(),
     };
   });
-  console.log(`Linked ${options.channel} → ${repo.root}`);
+  console.log(`Linked #${key} → ${repo.root}`);
   console.log(`Base branch: ${options.base || repo.defaultBranch}${options.base ? "" : " (detected)"}`);
 }
 
 async function unlink(channel: string): Promise<void> {
+  const key = channelKey(channel);
   const existed = await updateConfig((config) => {
-    const had = Boolean(config.channels[channel]);
-    delete config.channels[channel];
+    const had = Boolean(config.channels[key]);
+    delete config.channels[key];
     return had;
   });
-  console.log(existed ? `Unlinked ${channel}.` : `${channel} was not linked.`);
+  console.log(existed ? `Unlinked #${key}.` : `#${key} was not linked.`);
 }
 
 async function list(): Promise<void> {
@@ -175,7 +216,7 @@ async function list(): Promise<void> {
     return;
   }
   for (const [id, l] of entries) {
-    console.log(`  ${id} → ${l.repoPath}`);
+    console.log(`  #${id} → ${l.repoPath}`);
     console.log(`      base: ${l.baseBranch || "(detected)"}   label: ${l.label || basename(l.repoPath)}`);
   }
 }
@@ -270,30 +311,15 @@ function baseBranchFor(
 
 async function init(): Promise<void> {
   const root = await ensureConfigRoot();
-  const config = await loadConfig();
-  await saveConfig(config);
-
-  const env = envFile();
-  if (!(await fileExists(env))) {
-    await writeFile(
-      env,
-      [
-        "# ccslack credentials. Both tokens come from https://api.slack.com/apps",
-        "# Bot token: OAuth & Permissions -> Bot User OAuth Token",
-        "SLACK_BOT_TOKEN=xoxb-",
-        "# App-level token: Basic Information -> App-Level Tokens (scope: connections:write)",
-        "SLACK_APP_TOKEN=xapp-",
-        "",
-      ].join("\n"),
-      { mode: 0o600 },
-    );
-    console.log(`Wrote ${env} — fill in both tokens.`);
-  } else {
-    console.log(`${env} already exists, leaving it alone.`);
-  }
+  // Round-trips defaults into the file so it is there to edit.
+  await saveConfig(await loadConfig());
 
   console.log(`Wrote ${configFile()}`);
-  console.log(`\nConfig lives in ${root}. Next: fill in the tokens, then run \`ccslack start\`.`);
+  console.log(`Config lives in ${root}.`);
+  console.log("\nNext:");
+  console.log("  1. ccslack install-hook   (so sessions start when the Warp tab opens)");
+  console.log("  2. ccslack start          (launches Slack with the overlay attached)");
+  console.log("  3. In Slack, click 'Link a repo' in a channel header.");
 }
 
 async function installHook(options: { rc?: string; print: boolean }): Promise<void> {
@@ -412,21 +438,27 @@ async function doctor(): Promise<void> {
       : `       not installed. Run \`ccslack install-hook\` so sessions start even when Warp ignores the launch config.`,
   );
 
-  try {
-    const credentials = readCredentials();
-    check(true, "Slack tokens", `read from ${envFile()}`);
-    try {
-      const identity = await verifyCredentials(credentials);
-      check(true, "Slack authentication", `connected as ${identity.bot} in ${identity.team}`);
-    } catch (err) {
-      check(
-        false,
-        "Slack authentication",
-        `${describeError(err).message} — reinstall the app, or regenerate the bot token`,
-      );
-    }
-  } catch (err) {
-    check(false, "Slack tokens", describeError(err).message);
+  const app = findSlackApp();
+  check(
+    app !== null,
+    "Slack desktop app",
+    app ?? "not found in /Applications or ~/Applications",
+  );
+
+  const portOpen = await isDebugPortOpen(config.settings.cdpPort);
+  const slackUp = await isSlackRunning();
+  if (portOpen) {
+    check(true, `Slack DevTools port ${config.settings.cdpPort}`, "open — ccslack can attach");
+  } else if (slackUp) {
+    check(
+      false,
+      `Slack DevTools port ${config.settings.cdpPort}`,
+      "Slack is running without it. Slack only accepts the flag at startup — " +
+        "quit Slack, or run `ccslack start --force` to restart it.",
+    );
+  } else {
+    console.log(`  --   Slack DevTools port ${config.settings.cdpPort}`);
+    console.log("       Slack is not running. `ccslack start` will launch it with the port open.");
   }
 
   const channels = Object.entries(config.channels);

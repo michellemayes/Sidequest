@@ -22,6 +22,8 @@ export type PromptConfig = z.infer<typeof promptSchema>;
 export const repoLinkSchema = z.object({
   /** Absolute path to the main git checkout. */
   repoPath: z.string().min(1),
+  /** Channel name as Slack renders it, without the leading #. */
+  channel: z.string().default(""),
   /** Branch new worktrees are cut from. Empty means "detect the default". */
   baseBranch: z.string().default(""),
   /** Human label used in Slack replies; defaults to the directory name. */
@@ -56,6 +58,16 @@ export const settingsSchema = z.object({
   threadContextLimit: z.number().int().min(0).max(50).default(10),
   /** Delete the worktree's branch too when running `ccslack clean`. */
   pruneBranchesOnClean: z.boolean().default(true),
+
+  /**
+   * DevTools port Slack is launched with. Slack only accepts the flag at
+   * process start, so changing this means restarting Slack.
+   */
+  cdpPort: z.number().int().min(1024).max(65_535).default(9222),
+  /** Which DevTools targets count as a Slack window. */
+  targetUrlPattern: z.string().default("app\\.slack\\.com|/client/"),
+  /** Log what the injected overlay is doing to the Slack devtools console. */
+  verbose: z.boolean().default(false),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -79,7 +91,7 @@ export type PromptOverride = z.infer<typeof promptOverrideSchema>;
 export const configSchema = z.object({
   version: z.literal(1).default(1),
   settings: settingsSchema.default({}),
-  /** Slack channel id -> repo link. */
+  /** Lowercased channel name -> repo link. */
   channels: z.record(z.string(), repoLinkSchema).default({}),
   /** Per-prompt overrides of the built-in defaults. */
   prompts: z
