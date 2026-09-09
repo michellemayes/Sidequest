@@ -23,8 +23,20 @@ hover a message  ──▶  git worktree  ──▶  Warp tab  ──▶  claude
 Slack's desktop app is Electron, so its renderer speaks the Chrome DevTools
 Protocol. `sidequest start` launches Slack with `--remote-debugging-port`, attaches
 over CDP, and injects [`client/inject.js`](client/inject.js) into every Slack
-window. That is a real DOM overlay: the buttons are Sidequest's own elements sitting
-in Slack's message list.
+window. The buttons are Sidequest's own elements, drawn over Slack's message
+list.
+
+They live in a layer of Sidequest's own: one zero-sized, `pointer-events: none`
+host at the end of `<body>`, with a shadow root holding every element and the
+only stylesheet. Slack's DOM is read, never written — no children, no
+attributes, no styles — and no rule in that stylesheet can match a Slack
+element. Slack's lists are virtualised, so their rows are measured and recycled;
+anything put inside one, or any `position` overridden on one, changes how Slack
+lays out the app around it. `[data-qa="virtual-list-item"]` is not just messages
+either — the sidebar, the DM list and search results are virtual lists too — so
+rows are matched on a message's own content. Everything anchored to a message is
+positioned from that row's rectangle and keyed by the message it belongs to, so
+a recycled row drops what was drawn for its previous occupant.
 
 There is no Slack app to create, no bot token, no workspace install and no
 network hop. The trade-off is that Slack only accepts the debug flag at process
@@ -59,8 +71,9 @@ Sidequest start --force  # quits an already-running Slack first
 
 Leave it running. In Slack:
 
-1. Open a channel and click **Link a repo** in the channel header. Paste an
-   absolute path to a git checkout.
+1. Open a channel and click **Link a repo** beside the channel name. Paste an
+   absolute path to a git checkout. The panel that opens is Sidequest's own —
+   Electron does not implement `window.prompt`.
 2. Hover any message → **Sidequest** → **Investigate** / **Fix** / **Review**.
 
 A Warp tab opens on a new worktree with Claude Code already working. The result —
@@ -175,12 +188,14 @@ same message twice gives you `-2`, `-3` rather than an error.
 flag at startup. Quit Slack, or run `sidequest start --force` to have Sidequest
 restart it.
 
-**No buttons in Slack.** Check the terminal running `sidequest start` — it prints a
-line per attached window. If it attached but nothing shows, Slack may have
+**No buttons in Slack.** The message button is drawn on the message under the
+pointer, so hover one first. Then check the terminal running `sidequest start` —
+it prints a line per attached window. If it attached but nothing shows, Slack may have
 changed its `data-qa` attributes; set `verbose: true` and check Slack's devtools
 console.
 
-**"No repo is linked to #channel".** Click **Link a repo** in the channel header.
+**"No repo is linked to #channel".** Click **Link a repo** beside the channel
+name.
 
 **Warp opens but Claude doesn't start.** Run `sidequest install-hook`, then open a
 new terminal.
@@ -195,21 +210,24 @@ Check with `sidequest sessions`, then use `--force` once you're sure.
 
 ```bash
 npm run dev -- doctor   # run from source
-npm test                # 47 tests
+npm test                # 49 tests
 npm run typecheck
 ```
 
 The test suite includes integration tests that create real git worktrees and
 execute the generated `autorun.sh`, plus end-to-end tests that launch headless
 Chromium, inject the real overlay over CDP against a Slack-shaped fixture, and
-click through to a real worktree. Chromium stands in for Slack's Electron
+click through to a real worktree. One of those measures the fixture's own layout
+before anything is injected and again with the overlay running, and fails if a
+single row has moved. Chromium stands in for Slack's Electron
 renderer — the same engine, driven the same way. Those tests skip themselves if
 no Chromium is found.
 
 ## Security notes
 
 - The overlay only reads the DOM of Slack windows and only talks to the local
-  daemon over the CDP binding. It makes no network requests.
+  daemon over the CDP binding. It makes no network requests, and writes nothing
+  into Slack's own DOM.
 - Commands are executed with an argv array, never through a shell, so message
   text cannot inject shell syntax. The generated `autorun.sh` single-quotes every
   interpolated value, and the prompt is passed via a file rather than the command

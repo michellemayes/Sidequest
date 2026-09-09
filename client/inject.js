@@ -7,14 +7,23 @@
  * __sidequestResult.
  *
  * Two pieces of UI:
- *   1. A button on each message, revealed on hover, opening the three prompts.
- *   2. A button in the channel header showing which repo the channel is on.
+ *   1. A button on the message under the pointer, opening the three prompts.
+ *   2. A button beside the channel name showing which repo the channel is on.
  *
- * Slack's message list is virtualised: rows are recycled with new content, and
- * the header is rebuilt on every channel switch. So nothing here may assume a
- * node it decorated still holds the message it decorated it for. The overlay is
- * reconciled from the DOM on every mutation instead, and each row records the
- * message it was last decorated for.
+ * Both are drawn in a layer of sidequest's own: one zero-sized, pointer-events:
+ * none host at the end of <body>, with a shadow root holding every element and
+ * the only stylesheet. Slack's own DOM is never written to — no children, no
+ * attributes, no styles, and no rule in here can match a Slack element. That is
+ * deliberate. Slack's lists are virtualised and their rows are measured and
+ * recycled, so a child appended into a row, or a `position` overridden on one,
+ * changes how Slack lays out the app around it. `[data-qa="virtual-list-item"]`
+ * is also not just messages: the sidebar, the DM list and search results are
+ * virtual lists too, so anything drawn from that selector alone lands all over
+ * the app. Rows are matched on a message's own content, and only read.
+ *
+ * Everything anchored to a message is positioned from that row's rectangle on
+ * each frame and keyed by the message it belongs to, so a recycled row drops
+ * what was drawn for its previous occupant instead of relabelling it.
  */
 (() => {
   if (window.__SIDEQUEST__) return;
@@ -28,8 +37,12 @@
   }, window.__SIDEQUEST_CONFIG || {});
 
   const ASK = '__sidequestAsk';
-  const ATTR_ROW = 'data-sidequest-row';
+  const LAYER_ID = 'sidequest-layer';
   const REQUEST_TIMEOUT_MS = 120000;
+  // A result outlives a scroll away and back, not a working session.
+  const RESULT_TTL_MS = 10 * 60 * 1000;
+  const MAX_RESULTS = 20;
+  const TICK_MS = 250;
 
   const SEL = {
     item: '[data-qa="virtual-list-item"]',
@@ -37,7 +50,6 @@
     sender: '[data-qa="message_sender_name"]',
     rich: '.p-rich_text_section',
     channel: '[data-qa="channel_name"]',
-    header: '[data-qa="channel_header"], .p-view_header__text_container, .p-view_header',
     timestamp: 'a.c-timestamp',
   };
 
@@ -45,90 +57,162 @@
 
   /* ---------------------------------------------------------------- styles */
 
-  const STYLE_ID = 'sidequest-style';
+  /*
+   * Scoped to the shadow root, so none of it can reach a Slack element even by
+   * accident. Colours and font come from Slack through inheritance on the
+   * host, which is how the overlay follows the workspace theme without reading
+   * anything about it.
+   */
   const CSS = `
-    /* The row is the hover target. Slack already positions these relatively,
-       but say so rather than depending on it. */
-    ${SEL.item}[${ATTR_ROW}] { position: relative; }
+    .sq-off { display: none !important; }
 
-    /* Parked top-right, where Slack's own hover toolbar sits, but offset below
-       it so the two never overlap when both are showing. */
-    .sidequest-launch {
-      position: absolute; top: 2px; right: 8px; z-index: 20;
-      display: none; align-items: center; gap: 5px;
-      padding: 2px 8px;
-      font-size: 11px; line-height: 16px; font-weight: 500;
-      font-family: inherit; color: inherit; opacity: .75;
+    .sq-pill {
+      position: fixed; left: 0; top: 0;
+      display: inline-flex; align-items: center; gap: 5px;
+      max-width: 40vw; padding: 2px 8px;
+      font-family: inherit; font-size: 11px; line-height: 16px; font-weight: 500;
+      color: inherit; opacity: .75; white-space: nowrap;
       background: var(--saf-background, rgba(255,255,255,.96));
       border: 1px solid rgba(127,127,127,.35); border-radius: 7px;
-      cursor: pointer; user-select: none;
+      cursor: pointer; user-select: none; pointer-events: auto;
     }
-    ${SEL.item}:hover .sidequest-launch,
-    .sidequest-launch[data-open="1"] { display: inline-flex; }
-    .sidequest-launch:hover { opacity: 1; border-color: rgba(127,127,127,.6); }
-    .sidequest-launch[data-busy="1"] { opacity: .4; pointer-events: none; }
+    .sq-pill:hover { opacity: 1; border-color: rgba(127,127,127,.6); }
+    .sq-pill[data-busy="1"] { opacity: .4; pointer-events: none; }
+    .sq-pill > span { overflow: hidden; text-overflow: ellipsis; }
 
-    .sidequest-dot {
-      width: 6px; height: 6px; border-radius: 50%;
-      background: #2eb67d; flex: 0 0 auto;
-    }
-    .sidequest-launch[data-linked="0"] .sidequest-dot { background: #8d8d8d; }
+    .sq-dot { width: 6px; height: 6px; border-radius: 50%; background: #2eb67d; flex: 0 0 auto; }
+    .sq-pill[data-linked="0"] .sq-dot { background: #8d8d8d; }
 
-    /* The prompt menu. Anchored to the row, not the button, so it cannot be
-       clipped by the button's own stacking context. */
-    .sidequest-menu {
-      position: absolute; top: 26px; right: 8px; z-index: 30;
-      display: flex; flex-direction: column; min-width: 176px;
-      padding: 4px;
+    .sq-menu {
+      position: fixed; left: 0; top: 0;
+      display: flex; flex-direction: column; min-width: 176px; padding: 4px;
+      font-family: inherit; color: inherit;
       background: var(--saf-background, #fff);
       border: 1px solid rgba(127,127,127,.35); border-radius: 8px;
       box-shadow: 0 6px 20px rgba(0,0,0,.18);
+      pointer-events: auto;
     }
-    .sidequest-menu button {
+    .sq-menu button {
       display: flex; align-items: center; gap: 8px;
       padding: 6px 8px; margin: 0;
-      font-size: 13px; line-height: 18px; font-family: inherit;
+      font-family: inherit; font-size: 13px; line-height: 18px;
       color: inherit; text-align: left;
-      background: transparent; border: 0; border-radius: 5px;
-      cursor: pointer;
+      background: transparent; border: 0; border-radius: 5px; cursor: pointer;
     }
-    .sidequest-menu button:hover { background: rgba(127,127,127,.14); }
-    .sidequest-menu .sidequest-menu-note {
-      padding: 6px 8px; font-size: 11px; line-height: 15px; opacity: .7;
-    }
+    .sq-menu button:hover { background: rgba(127,127,127,.14); }
+    .sq-note { padding: 6px 8px; font-size: 11px; line-height: 15px; opacity: .7; }
 
-    /* Result line, left under the message so it reads as an annotation on it
-       rather than as a toast that will vanish before it is read. */
-    .sidequest-result {
-      display: block; margin: 4px 0 6px;
-      font-size: 11px; line-height: 16px; opacity: .7;
-      word-break: break-word;
+    /* The result reads as an annotation on the message it came from: drawn at
+       that row's bottom edge, on the same indent as its text. */
+    .sq-result {
+      position: fixed; left: 0; top: 0;
+      max-width: 60vw; padding: 1px 7px;
+      font-family: inherit; font-size: 11px; line-height: 16px;
+      color: inherit; opacity: .85;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      background: var(--saf-background, rgba(255,255,255,.96));
+      border: 1px solid rgba(127,127,127,.25); border-radius: 6px;
+      cursor: pointer; pointer-events: auto;
     }
-    .sidequest-result[data-kind="error"] { color: #e01e5a; opacity: .95; }
+    .sq-result[data-kind="error"] { color: #e01e5a; opacity: 1; }
 
-    /* The channel header button. Bordered, matching Slack's header affordances. */
-    .sidequest-channel {
-      display: inline-flex; align-items: center; gap: 5px;
-      margin: 0 0 0 8px; padding: 1px 8px; vertical-align: middle;
-      font-size: 11px; line-height: 16px; font-weight: 500;
-      font-family: inherit; color: inherit; opacity: .62;
-      background: transparent;
-      border: 1px solid rgba(127,127,127,.35); border-radius: 7px;
-      cursor: pointer; user-select: none;
+    .sq-panel {
+      position: fixed; left: 0; top: 0;
+      display: flex; flex-direction: column; gap: 6px;
+      width: 340px; padding: 10px;
+      font-family: inherit; color: inherit;
+      background: var(--saf-background, #fff);
+      border: 1px solid rgba(127,127,127,.35); border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.22);
+      pointer-events: auto;
     }
-    .sidequest-channel:hover {
-      opacity: 1; background: rgba(127,127,127,.13);
-      border-color: rgba(127,127,127,.6);
+    .sq-panel-title { font-size: 12px; line-height: 16px; font-weight: 700; }
+    .sq-panel input {
+      padding: 5px 7px;
+      font-family: inherit; font-size: 12px; line-height: 18px;
+      color: inherit; background: transparent;
+      border: 1px solid rgba(127,127,127,.45); border-radius: 5px;
     }
-    .sidequest-channel[data-busy="1"] { opacity: .35; pointer-events: none; }
+    .sq-panel-note { font-size: 11px; line-height: 15px; opacity: .7; }
+    .sq-panel-error { font-size: 11px; line-height: 15px; color: #e01e5a; }
+    .sq-panel-actions { display: flex; justify-content: flex-end; gap: 6px; }
+    .sq-panel-actions button {
+      padding: 4px 10px; margin: 0;
+      font-family: inherit; font-size: 12px; line-height: 16px; font-weight: 500;
+      color: inherit; background: transparent;
+      border: 1px solid rgba(127,127,127,.4); border-radius: 5px; cursor: pointer;
+    }
+    .sq-panel-actions button:hover { background: rgba(127,127,127,.14); }
+    .sq-panel[data-busy="1"] { opacity: .5; pointer-events: none; }
   `;
 
-  function ensureStyle() {
-    if (document.getElementById(STYLE_ID)) return;
+  /* ----------------------------------------------------------------- layer */
+
+  let host = null;
+  let ui = null;
+  let launchBtn = null;
+  let channelBtn = null;
+  let menuEl = null;
+  let menuRow = null;
+  let menuSig = '';
+  let panelEl = null;
+  const resultEls = new Map();
+
+  /** Everything drawn lives in here, so losing the host means losing all of it. */
+  function resetLayer() {
+    ui = null;
+    launchBtn = null;
+    channelBtn = null;
+    menuEl = null;
+    menuRow = null;
+    menuSig = '';
+    panelEl = null;
+    resultEls.clear();
+  }
+
+  function ensureLayer() {
+    if (host && !host.isConnected) {
+      host = null;
+      resetLayer();
+    }
+    if (host && ui) return true;
+
+    const parent = document.body || document.documentElement;
+    if (!parent) return false;
+
+    host = document.createElement('div');
+    host.id = LAYER_ID;
+    // Zero-sized, inert and last: the layer occupies nothing Slack lays out,
+    // and takes part in no hit test of Slack's.
+    host.style.cssText = [
+      'position:fixed', 'left:0', 'top:0', 'width:0', 'height:0',
+      'margin:0', 'padding:0', 'border:0',
+      'overflow:visible', 'pointer-events:none', 'z-index:2147483000',
+    ].join(';');
+    ui = host.attachShadow({ mode: 'open' });
+
     const style = document.createElement('style');
-    style.id = STYLE_ID;
     style.textContent = CSS;
-    (document.head || document.documentElement).appendChild(style);
+    launchBtn = buildLaunchButton();
+    channelBtn = buildChannelButton();
+    ui.append(style, launchBtn, channelBtn);
+
+    parent.appendChild(host);
+    // A handle for the tests and for anyone poking at the overlay from Slack's
+    // devtools console.
+    window.__SIDEQUEST_UI__ = ui;
+    return true;
+  }
+
+  const show = (el) => el.classList.remove('sq-off');
+  const hide = (el) => el.classList.add('sq-off');
+
+  /** Viewport coordinates, kept on screen. Measured after the element is shown. */
+  function placeAt(el, left, top) {
+    const maxLeft = Math.max(4, window.innerWidth - el.offsetWidth - 4);
+    const maxTop = Math.max(4, window.innerHeight - el.offsetHeight - 4);
+    el.style.left = `${Math.round(Math.min(Math.max(4, left), maxLeft))}px`;
+    el.style.top = `${Math.round(Math.min(Math.max(4, top), maxTop))}px`;
   }
 
   /* ------------------------------------------------------------- transport */
@@ -157,7 +241,7 @@
     } catch {
       return;
     }
-    refreshChannelButton();
+    schedule();
   };
 
   function ask(payload) {
@@ -196,6 +280,22 @@
 
   function isLinked(channel) {
     return CONFIG.linkedChannels.indexOf(channelKey(channel)) !== -1;
+  }
+
+  /**
+   * The sidebar, the DM list and search results are virtual lists too, so a
+   * row only counts as a message if it carries a message's own content.
+   */
+  function isMessageRow(item) {
+    return Boolean(item && item.querySelector && item.querySelector(SEL.content));
+  }
+
+  function messageRows() {
+    const rows = [];
+    document.querySelectorAll(SEL.item).forEach((item) => {
+      if (isMessageRow(item)) rows.push(item);
+    });
+    return rows;
   }
 
   /**
@@ -249,7 +349,7 @@
    * reply carries the message it is replying to.
    */
   function threadContext(item) {
-    const rows = Array.from(document.querySelectorAll(SEL.item));
+    const rows = messageRows();
     const index = rows.indexOf(item);
     if (index === -1) return [];
     return rows
@@ -258,24 +358,43 @@
       .filter((m) => m.text.length > 0);
   }
 
-  /* ------------------------------------------------------------ row button */
+  /**
+   * What the anchored UI is clipped to: a pill for a row scrolled up behind
+   * the channel header must not hang there in mid-air.
+   */
+  let scroller = null;
 
-  function closeMenus(except) {
-    document.querySelectorAll('.sidequest-menu').forEach((menu) => {
-      if (menu !== except) menu.remove();
-    });
-    document.querySelectorAll('.sidequest-launch[data-open="1"]').forEach((b) => {
-      if (!except || b.parentElement !== except.parentElement) delete b.dataset.open;
-    });
+  function clipRect(row) {
+    if (!scroller || !scroller.isConnected || !scroller.contains(row)) {
+      scroller = scrollParent(row);
+    }
+    if (scroller) return scroller.getBoundingClientRect();
+    return { top: 0, bottom: window.innerHeight, left: 0, right: window.innerWidth };
   }
+
+  function scrollParent(el) {
+    let node = el?.parentElement;
+    for (let hops = 0; node && hops < 20; hops += 1) {
+      const overflow = getComputedStyle(node).overflowY;
+      if (/(auto|scroll|overlay)/.test(overflow) && node.scrollHeight > node.clientHeight + 1) {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  const onScreen = (rect, clip) => rect.bottom > clip.top + 4 && rect.top < clip.bottom - 4;
+
+  /* ------------------------------------------------------------ row button */
 
   function buildLaunchButton() {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'sidequest-launch';
+    button.className = 'sq-pill sq-launch sq-off';
 
     const dot = document.createElement('span');
-    dot.className = 'sidequest-dot';
+    dot.className = 'sq-dot';
     const label = document.createElement('span');
     label.textContent = 'Sidequest';
     button.append(dot, label);
@@ -283,29 +402,37 @@
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      const item = button.closest(SEL.item);
-      if (!item) return;
-      if (button.dataset.open === '1') {
-        closeMenus();
+      const row = menuRow || hoverRow;
+      if (menuEl) {
+        closeMenu();
+        schedule();
         return;
       }
-      closeMenus();
-      button.dataset.open = '1';
-      openMenu(item, button);
+      if (row && row.isConnected) openMenu(row);
     });
     return button;
   }
 
-  function openMenu(item, button) {
+  function closeMenu() {
+    menuEl?.remove();
+    menuEl = null;
+    menuRow = null;
+    menuSig = '';
+  }
+
+  function openMenu(row) {
+    closeMenu();
+    closePanel();
+
     const menu = document.createElement('div');
-    menu.className = 'sidequest-menu';
+    menu.className = 'sq-menu';
     const channel = currentChannel();
 
     if (!isLinked(channel)) {
       const note = document.createElement('div');
-      note.className = 'sidequest-menu-note';
+      note.className = 'sq-note';
       note.textContent = channel
-        ? `#${channel} has no repo yet — use the button in the channel header.`
+        ? `#${channel} has no repo yet — use the button beside the channel name.`
         : 'Open a channel first.';
       menu.append(note);
     } else {
@@ -316,250 +443,379 @@
         entry.addEventListener('click', (event) => {
           event.preventDefault();
           event.stopPropagation();
-          closeMenus();
-          startSession(item, button, prompt);
+          const target = menuRow;
+          closeMenu();
+          if (target && target.isConnected) startSession(target, prompt);
+          schedule();
         });
         menu.append(entry);
       }
     }
 
-    item.appendChild(menu);
+    menuEl = menu;
+    menuRow = row;
+    menuSig = rowSignature(row);
+    ui.append(menu);
+    schedule();
   }
 
-  function startSession(item, button, prompt) {
-    const channel = currentChannel();
-    button.dataset.busy = '1';
-    showResult(item, `Starting ${prompt.label}…`, 'info');
-
-    ask({
+  function startSession(row, prompt) {
+    // Read everything now: the row can be recycled long before the daemon
+    // answers, and the answer belongs to the message that was clicked.
+    const sig = rowSignature(row);
+    const meta = messageMeta(row);
+    const payload = {
       op: 'start-session',
       promptKey: prompt.key,
-      channel,
-      sender: senderFor(item),
-      text: messageText(item),
-      thread: threadContext(item),
-      permalink: messageMeta(item).permalink,
-      ts: messageMeta(item).ts,
-    }).then((res) => {
+      channel: currentChannel(),
+      sender: senderFor(row),
+      text: messageText(row),
+      thread: threadContext(row),
+      permalink: meta.permalink,
+      ts: meta.ts,
+    };
+
+    launchBtn.dataset.busy = '1';
+    setResult(sig, `Starting ${prompt.label}…`, 'info');
+
+    ask(payload).then((res) => {
       if (res.error) {
-        showResult(item, res.hint ? `${res.error} ${res.hint}` : res.error, 'error');
+        setResult(sig, res.hint ? `${res.error} ${res.hint}` : res.error, 'error');
         return;
       }
       const base = `${prompt.label} → ${res.branch}`;
-      showResult(item, res.warning ? `${base} — ${res.warning}` : base, 'info');
+      setResult(sig, res.warning ? `${base} — ${res.warning}` : base, 'info');
     }).catch((err) => {
-      showResult(item, err.message, 'error');
+      setResult(sig, err.message, 'error');
     }).finally(() => {
-      delete button.dataset.busy;
+      delete launchBtn.dataset.busy;
+      schedule();
     });
   }
 
-  /**
-   * Results hang off the row, which the virtual list recycles, so they are
-   * addressed by the message signature and dropped when the row moves on.
-   */
-  function showResult(item, text, kind) {
-    let line = item.querySelector(':scope > .sidequest-result');
-    if (!line) {
-      line = document.createElement('div');
-      line.className = 'sidequest-result';
-      item.appendChild(line);
-    }
-    line.dataset.kind = kind;
-    line.dataset.sig = rowSignature(item);
-    line.textContent = text;
+  /* ---------------------------------------------------------------- results */
+
+  /** Keyed by message, not by row, so scrolling away and back keeps the line. */
+  const results = new Map();
+
+  function setResult(sig, text, kind) {
+    if (!sig) return;
+    results.delete(sig);
+    results.set(sig, { text, kind, at: Date.now() });
+    while (results.size > MAX_RESULTS) results.delete(results.keys().next().value);
+    schedule();
   }
 
-  function decorate(item) {
-    const signature = rowSignature(item);
-
-    // The row was recycled into a different message: anything we drew about
-    // the old one is now a lie, so take it down.
-    const stale = item.querySelector(':scope > .sidequest-result');
-    if (stale && stale.dataset.sig !== signature) stale.remove();
-    if (item.getAttribute(ATTR_ROW) !== signature) {
-      item.querySelector(':scope > .sidequest-menu')?.remove();
-      item.setAttribute(ATTR_ROW, signature);
+  function pruneResults() {
+    const cutoff = Date.now() - RESULT_TTL_MS;
+    for (const [sig, entry] of results) {
+      if (entry.at < cutoff) results.delete(sig);
     }
-
-    let button = item.querySelector(':scope > .sidequest-launch');
-    if (!button) {
-      button = buildLaunchButton();
-      item.appendChild(button);
-    }
-
-    const linked = isLinked(currentChannel()) ? '1' : '0';
-    if (button.dataset.linked !== linked) button.dataset.linked = linked;
   }
 
-  /* ------------------------------------------------------- channel button */
+  function buildResult(sig) {
+    const el = document.createElement('div');
+    el.className = 'sq-result';
+    el.title = 'Click to dismiss';
+    el.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      results.delete(sig);
+      schedule();
+    });
+    return el;
+  }
 
-  let channelButton = null;
+  /* -------------------------------------------------------- channel button */
 
   function buildChannelButton() {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'sidequest-channel';
+    button.className = 'sq-pill sq-channel sq-off';
 
     const dot = document.createElement('span');
-    dot.className = 'sidequest-dot';
+    dot.className = 'sq-dot';
     const label = document.createElement('span');
-    label.className = 'sidequest-channel-label';
+    label.className = 'sq-channel-label';
     button.append(dot, label);
 
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      promptForRepo(button);
+      if (panelEl) closePanel();
+      else openPanel();
+      schedule();
     });
     return button;
   }
 
   /*
    * Linking a channel to a repo needs a path, and the overlay has nowhere good
-   * to browse the filesystem from. `prompt` is unglamorous but it is the one
-   * thing that already exists, cannot be styled wrong, and puts the daemon in
-   * charge of deciding whether the path is a real repo.
+   * to browse the filesystem from. Electron does not implement window.prompt,
+   * so the panel is the overlay's own — one input in the shadow layer, with
+   * the daemon still deciding whether the path is a real repo.
    */
-  function promptForRepo(button) {
-    const channel = button.dataset.channel;
+  function closePanel() {
+    panelEl?.remove();
+    panelEl = null;
+  }
+
+  function openPanel() {
+    closeMenu();
+    closePanel();
+
+    const channel = currentChannel();
     if (!channel) return;
-
     const current = CONFIG.repoLabels[channelKey(channel)] || '';
-    const answer = window.prompt(
-      `Repo for #${channel}\n\nAbsolute path to a git checkout. Leave empty to unlink.`,
-      current ? '' : '',
-    );
-    // Cancelled: leave the link exactly as it was.
-    if (answer === null) return;
 
-    button.dataset.busy = '1';
-    ask({ op: 'link-repo', channel, repoPath: answer }).then((res) => {
-      if (res.error) {
-        window.alert(res.hint ? `${res.error}\n\n${res.hint}` : res.error);
-      }
-    }).catch((err) => {
-      log('link failed', err.message);
-    }).finally(() => {
-      delete button.dataset.busy;
-      refreshChannelButton();
+    const panel = document.createElement('div');
+    panel.className = 'sq-panel';
+
+    const title = document.createElement('div');
+    title.className = 'sq-panel-title';
+    title.textContent = `Repo for #${channel}`;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.spellcheck = false;
+    input.placeholder = '/Users/you/code/checkout';
+
+    const note = document.createElement('div');
+    note.className = 'sq-panel-note';
+    note.textContent = current
+      ? `Linked to ${current}. Enter a new path, or leave empty to unlink.`
+      : 'Absolute path to a git checkout.';
+
+    const error = document.createElement('div');
+    error.className = 'sq-panel-error sq-off';
+
+    const actions = document.createElement('div');
+    actions.className = 'sq-panel-actions';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.textContent = 'Cancel';
+    const submit = document.createElement('button');
+    submit.type = 'button';
+    submit.textContent = current ? 'Save' : 'Link';
+    actions.append(cancel, submit);
+
+    panel.append(title, input, note, error, actions);
+
+    const send = () => {
+      panel.dataset.busy = '1';
+      hide(error);
+      ask({ op: 'link-repo', channel, repoPath: input.value }).then((res) => {
+        if (res.error) {
+          error.textContent = res.hint ? `${res.error} — ${res.hint}` : res.error;
+          show(error);
+          delete panel.dataset.busy;
+          input.focus();
+          return;
+        }
+        closePanel();
+      }).catch((err) => {
+        error.textContent = err.message;
+        show(error);
+        delete panel.dataset.busy;
+      }).finally(() => {
+        schedule();
+      });
+    };
+
+    cancel.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closePanel();
+      schedule();
     });
+    submit.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      send();
+    });
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Enter') send();
+      if (event.key === 'Escape') { closePanel(); schedule(); }
+    });
+
+    panelEl = panel;
+    ui.append(panel);
+    input.focus();
+    schedule();
   }
 
   function refreshChannelButton() {
-    const channel = currentChannel();
+    const anchor = document.querySelector(SEL.channel);
+    const channel = anchor ? anchor.textContent.trim().replace(/^#+/, '') : '';
 
     // Nothing identifiable on screen — a preferences pane, or Slack still
     // starting. A button that cannot say which channel it means should not be
     // offering to link one.
     if (!channel) {
-      channelButton?.remove();
+      hide(channelBtn);
+      closePanel();
       return;
     }
-    const anchor = document.querySelector(SEL.channel);
-    if (!anchor) {
-      channelButton?.remove();
-      return;
-    }
-    const host = anchor.closest(SEL.header) || anchor.parentElement;
-    if (!host) return;
-
-    if (!channelButton) channelButton = buildChannelButton();
-    // Slack rebuilds the header on every channel switch, taking the button
-    // with it. Putting it back is one append, inside the observer callback, so
-    // it is back before the frame is painted.
-    if (channelButton.parentElement !== host) host.appendChild(channelButton);
-    if (channelButton.dataset.channel !== channel) channelButton.dataset.channel = channel;
-
-    // A click in flight owns the wording until the daemon answers.
-    if (channelButton.dataset.busy === '1') return;
+    if (channelBtn.dataset.channel && channelBtn.dataset.channel !== channel) closePanel();
+    channelBtn.dataset.channel = channel;
 
     const linked = isLinked(channel);
     const repo = CONFIG.repoLabels[channelKey(channel)] || '';
     const flag = linked ? '1' : '0';
-    if (channelButton.dataset.linked !== flag) channelButton.dataset.linked = flag;
+    if (channelBtn.dataset.linked !== flag) channelBtn.dataset.linked = flag;
 
-    const label = channelButton.querySelector('.sidequest-channel-label');
+    const label = channelBtn.querySelector('.sq-channel-label');
     const text = linked ? repo || 'Linked' : 'Link a repo';
     if (label.textContent !== text) label.textContent = text;
 
     const title = linked
       ? `#${channel} starts Claude Code sessions in ${repo} — click to change or unlink`
       : `Link #${channel} to a git repo so messages can start Claude Code sessions`;
-    if (channelButton.title !== title) channelButton.title = title;
-  }
+    if (channelBtn.title !== title) channelBtn.title = title;
 
-  /* ------------------------------------------------------------ reconcile */
-
-  const dirty = new Set();
-
-  function flush() {
-    ensureStyle();
-    for (const item of dirty) {
-      if (!item.isConnected) continue;
-      try {
-        decorate(item);
-      } catch (err) {
-        log('decorate failed', err.message);
-      }
-    }
-    dirty.clear();
-    try {
-      refreshChannelButton();
-    } catch (err) {
-      log('channel button failed', err.message);
-    }
-  }
-
-  function sweep() {
-    document.querySelectorAll(SEL.item).forEach((item) => dirty.add(item));
-    flush();
-  }
-
-  function collect(node) {
-    if (!node || node.nodeType !== 1) return;
-    // Our own UI mutating must not schedule another pass over itself.
-    if (node.closest?.('.sidequest-menu, .sidequest-launch, .sidequest-result, .sidequest-channel')) return;
-    const item = node.closest?.(SEL.item);
-    if (item) {
-      dirty.add(item);
+    const rect = anchor.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) {
+      hide(channelBtn);
       return;
     }
-    // A whole slice of the virtual list can land in one mutation.
-    node.querySelectorAll?.(SEL.item).forEach((el) => dirty.add(el));
+    show(channelBtn);
+    placeAt(channelBtn, rect.right + 8, rect.top + (rect.height - channelBtn.offsetHeight) / 2);
+
+    if (panelEl) {
+      const pill = channelBtn.getBoundingClientRect();
+      placeAt(panelEl, pill.left, pill.bottom + 6);
+    }
   }
 
-  const observer = new MutationObserver((records) => {
-    for (const rec of records) {
-      collect(rec.target);
-      rec.addedNodes.forEach(collect);
+  /* ------------------------------------------------------------- placement */
+
+  let hoverRow = null;
+  let frame = 0;
+
+  function schedule() {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      try {
+        place();
+      } catch (err) {
+        log('placement failed', err.message);
+      }
+    });
+  }
+
+  function place() {
+    if (!ensureLayer()) return;
+    pruneResults();
+
+    const rows = messageRows();
+    const bySig = new Map();
+    for (const row of rows) {
+      const sig = rowSignature(row);
+      if (sig && !bySig.has(sig)) bySig.set(sig, row);
     }
-    // Synchronous, so a recycled row never paints someone else's result line.
-    flush();
-  });
+    const clip = rows.length > 0 ? clipRect(rows[0]) : null;
 
-  observer.observe(document.documentElement, { childList: true, subtree: true });
+    // A recycled row is a different message now; the menu it opened is void.
+    if (menuRow && (!menuRow.isConnected || rowSignature(menuRow) !== menuSig)) closeMenu();
+    if (hoverRow && !hoverRow.isConnected) hoverRow = null;
 
-  // Clicking anywhere else dismisses an open menu.
+    const activeRow = menuRow || hoverRow;
+    const activeRect = activeRow ? activeRow.getBoundingClientRect() : null;
+
+    if (activeRect && clip && onScreen(activeRect, clip)) {
+      const flag = isLinked(currentChannel()) ? '1' : '0';
+      if (launchBtn.dataset.linked !== flag) launchBtn.dataset.linked = flag;
+      show(launchBtn);
+      placeAt(launchBtn, activeRect.right - launchBtn.offsetWidth - 8, activeRect.top + 2);
+    } else {
+      hide(launchBtn);
+      if (menuEl) closeMenu();
+    }
+
+    if (menuEl && activeRect) {
+      show(menuEl);
+      placeAt(menuEl, activeRect.right - menuEl.offsetWidth - 8, activeRect.top + 26);
+    }
+
+    for (const [sig, el] of resultEls) {
+      if (!results.has(sig) || !bySig.has(sig)) {
+        el.remove();
+        resultEls.delete(sig);
+      }
+    }
+    for (const [sig, entry] of results) {
+      const row = bySig.get(sig);
+      if (!row) continue;
+      let el = resultEls.get(sig);
+      if (!el) {
+        el = buildResult(sig);
+        resultEls.set(sig, el);
+        ui.append(el);
+      }
+      if (el.textContent !== entry.text) el.textContent = entry.text;
+      if (el.dataset.kind !== entry.kind) el.dataset.kind = entry.kind;
+
+      const rect = row.getBoundingClientRect();
+      if (clip && onScreen(rect, clip)) {
+        show(el);
+        const content = row.querySelector(SEL.content);
+        const left = content ? content.getBoundingClientRect().left : rect.left + 16;
+        placeAt(el, left, rect.bottom - 6);
+      } else {
+        hide(el);
+      }
+    }
+
+    refreshChannelButton();
+  }
+
+  /* -------------------------------------------------------------- triggers */
+
+  const fromOverlay = (target) => Boolean(
+    host && target && target.nodeType === 1 && (target === host || host.contains(target)),
+  );
+
+  document.addEventListener('mouseover', (event) => {
+    const target = event.target;
+    if (!target || target.nodeType !== 1) return;
+    // Events out of the shadow root arrive retargeted to the host, so hovering
+    // the overlay's own UI leaves the row it belongs to selected.
+    if (fromOverlay(target)) return;
+    const row = target.closest?.(SEL.item);
+    const next = row && isMessageRow(row) ? row : null;
+    if (next === hoverRow) return;
+    hoverRow = next;
+    schedule();
+  }, true);
+
+  document.addEventListener('mouseleave', (event) => {
+    if (event.target !== document && event.target !== document.documentElement) return;
+    hoverRow = null;
+    schedule();
+  }, true);
+
   document.addEventListener('click', (event) => {
-    if (event.target.closest?.('.sidequest-menu, .sidequest-launch')) return;
-    closeMenus();
+    if (fromOverlay(event.target)) return;
+    closeMenu();
+    closePanel();
+    schedule();
   }, true);
 
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeMenus();
+    if (event.key !== 'Escape') return;
+    closeMenu();
+    closePanel();
+    schedule();
   }, true);
 
-  // Backstop: the virtual list sometimes settles without a mutation we see.
-  setInterval(() => {
-    try {
-      sweep();
-    } catch (err) {
-      log('sweep failed', err.message);
-    }
-  }, 2000);
+  document.addEventListener('scroll', schedule, true);
+  window.addEventListener('resize', schedule);
+  // Slack moves rows for reasons no event of ours sees: a message arrives, the
+  // list settles, a channel switch rebuilds the header.
+  setInterval(schedule, TICK_MS);
 
-  ensureStyle();
-  sweep();
+  schedule();
   log('overlay ready');
 })();

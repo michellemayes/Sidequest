@@ -1,32 +1,62 @@
 <!doctype html>
 <html>
-  <head><meta charset="utf-8" /><title>sidequest fixture</title></head>
+  <head>
+    <meta charset="utf-8" />
+    <title>sidequest fixture</title>
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; font-size: 15px; }
+      .app { display: flex; height: 100vh; }
+      .sidebar { width: 220px; overflow-y: auto; border-right: 1px solid #ddd; }
+      .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+      .p-view_header { display: flex; align-items: center; padding: 10px 16px; border-bottom: 1px solid #ddd; }
+      #list { flex: 1; overflow-y: auto; }
+      #list [data-qa="virtual-list-item"] { padding: 6px 16px; }
+      .sidebar [data-qa="virtual-list-item"] { padding: 4px 16px; }
+    </style>
+  </head>
   <body>
     <!--
-      A cut-down stand-in for Slack's message list, carrying only the data-qa
-      hooks and class names the overlay actually reads. It is not a replica of
-      Slack's markup — it exists so the overlay's reconciliation, the CDP
-      binding and the session path can be exercised without the Slack app.
-    -->
-    <div class="p-view_header" data-qa="channel_header">
-      <span data-qa="channel_name">eng-alerts</span>
-    </div>
+      A cut-down stand-in for Slack, carrying only the data-qa hooks and class
+      names the overlay actually reads. It is not a replica of Slack's markup —
+      it exists so the overlay's placement, the CDP binding and the session path
+      can be exercised without the Slack app.
 
-    <div id="list">
-      <div data-qa="virtual-list-item" id="row-1">
-        <span data-qa="message_sender_name">michelle</span>
-        <a class="c-timestamp" id="ts-1757430000.000100"
-           href="https://example.slack.com/archives/C0SMOKE/p1757430000000100">2:20 PM</a>
-        <div data-qa="message_content">
-          <div class="p-rich_text_section">Checkout total is wrong for gift cards</div>
+      The sidebar matters as much as the messages: Slack's channel list is a
+      virtual list too, with the same data-qa on its rows, so the overlay must
+      leave it alone.
+    -->
+    <div class="app">
+      <div class="sidebar" id="sidebar">
+        <div data-qa="virtual-list-item" id="sidebar-1">
+          <span class="p-channel_sidebar__name">eng-alerts</span>
+        </div>
+        <div data-qa="virtual-list-item" id="sidebar-2">
+          <span class="p-channel_sidebar__name">random-chatter</span>
         </div>
       </div>
 
-      <div data-qa="virtual-list-item" id="row-2">
-        <a class="c-timestamp" id="ts-1757430060.000200"
-           href="https://example.slack.com/archives/C0SMOKE/p1757430060000200">2:21 PM</a>
-        <div data-qa="message_content">
-          <div class="p-rich_text_section">only on the EU store</div>
+      <div class="main">
+        <div class="p-view_header" data-qa="channel_header">
+          <span data-qa="channel_name">eng-alerts</span>
+        </div>
+
+        <div id="list">
+          <div data-qa="virtual-list-item" id="row-1">
+            <span data-qa="message_sender_name">michelle</span>
+            <a class="c-timestamp" id="ts-1757430000.000100"
+               href="https://example.slack.com/archives/C0SMOKE/p1757430000000100">2:20 PM</a>
+            <div data-qa="message_content">
+              <div class="p-rich_text_section">Checkout total is wrong for gift cards</div>
+            </div>
+          </div>
+
+          <div data-qa="virtual-list-item" id="row-2">
+            <a class="c-timestamp" id="ts-1757430060.000200"
+               href="https://example.slack.com/archives/C0SMOKE/p1757430060000200">2:21 PM</a>
+            <div data-qa="message_content">
+              <div class="p-rich_text_section">only on the EU store</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -42,6 +72,11 @@
       };
       window.__setChannel = (name) => {
         document.querySelector('[data-qa="channel_name"]').textContent = name;
+      };
+      // The overlay reveals its UI on hover, so the tests drive a pointer.
+      window.__hover = (id) => {
+        const el = id ? document.getElementById(id) : document.documentElement;
+        el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
       };
     </script>
   </body>
