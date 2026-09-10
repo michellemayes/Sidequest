@@ -9,6 +9,10 @@
       .sidebar { width: 220px; overflow-y: auto; border-right: 1px solid #ddd; }
       .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
       .p-view_header { display: flex; align-items: center; padding: 10px 16px; border-bottom: 1px solid #ddd; }
+      .name-control { display: inline-flex; align-items: center; gap: 4px; padding: 0; font: inherit; background: none; border: 0; cursor: pointer; }
+      .chevron { font-size: 10px; }
+      /* Stands in for however much of Slack's header is free beside the name. */
+      #header-gap { width: 260px; }
       #list { flex: 1; overflow-y: auto; }
       #list [data-qa="virtual-list-item"] { padding: 6px 16px; }
       .sidebar [data-qa="virtual-list-item"] { padding: 4px 16px; }
@@ -36,8 +40,20 @@
       </div>
 
       <div class="main">
+        <!--
+          Slack wraps the channel name in a button that also holds the dropdown
+          chevron, and puts its own controls immediately after it. Both matter:
+          the overlay's pill has to follow the control rather than the text, and
+          it has to stay off the buttons.
+        -->
         <div class="p-view_header" data-qa="channel_header">
-          <span data-qa="channel_name">eng-alerts</span>
+          <button class="name-control" id="name-control">
+            <span data-qa="channel_name">eng-alerts</span>
+            <span class="chevron" aria-hidden="true">&#9662;</span>
+          </button>
+          <span id="header-gap"></span>
+          <button data-qa="huddle" id="huddle">huddle</button>
+          <button data-qa="more" id="more">&#8942;</button>
         </div>
 
         <div id="list">
@@ -69,6 +85,11 @@
         const anchor = row.querySelector('a.c-timestamp');
         anchor.id = 'ts-' + ts;
         anchor.href = 'https://example.slack.com/archives/C0SMOKE/p' + ts.replace('.', '');
+      };
+      // Narrows the free space beside the channel name, the way a smaller
+      // window does in Slack.
+      window.__crowdHeader = (px) => {
+        document.getElementById('header-gap').style.width = px + 'px';
       };
       window.__setChannel = (name) => {
         document.querySelector('[data-qa="channel_name"]').textContent = name;
