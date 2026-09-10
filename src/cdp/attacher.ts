@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CdpSession, CLOSE_EVENT, listTargets, type CdpTarget } from "./client.js";
+import {
+  CdpSession,
+  CLOSE_EVENT,
+  isAttachableTarget,
+  listTargets,
+  type CdpTarget,
+} from "./client.js";
 import { pageConfig } from "../config/pageConfig.js";
 import { channelKey } from "../config/channels.js";
 import { loadConfig, updateConfig, expandPath } from "../config/store.js";
@@ -29,6 +35,14 @@ export interface AttacherEvent {
   branch?: string;
 }
 
+/** What the most recent sweep saw on the DevTools endpoint. */
+export interface SweepSummary {
+  /** Every target the endpoint reported, of any type. */
+  targets: number;
+  /** Those that look like a Slack window. */
+  matched: number;
+}
+
 /** A request coming up from the injected overlay. */
 interface AskRequest {
   id: string;
@@ -48,6 +62,9 @@ export class Attacher {
   private readonly targetUrl: RegExp;
   private pollTimer: NodeJS.Timeout | null = null;
   private stopped = false;
+  private sweepSummary: SweepSummary = { targets: 0, matched: 0 };
+  /** So a window that never appears is said once, not every four seconds. */
+  private reportedEmpty = false;
 
   constructor(
     private readonly options: {
@@ -75,6 +92,7 @@ export class Attacher {
 
   async start(): Promise<void> {
     this.stopped = false;
+    this.reportedEmpty = false;
     const tick = async (): Promise<void> => {
       if (this.stopped) return;
       try {
@@ -83,8 +101,13 @@ export class Attacher {
         this.emit({ type: "poll-error", message: describeError(err).message });
       }
       if (!this.stopped) {
+        // Deliberately not unref'd: this timer is what keeps `sidequest start`
+        // alive. An attached window holds the event loop open through its
+        // socket, but before the first attach — Slack still starting, a window
+        // that has not been opened yet — there is nothing else running, and an
+        // unref'd poll would let the daemon exit having printed that it was
+        // waiting. `stop()` clears it, so it never outlives a shutdown.
         this.pollTimer = setTimeout(() => void tick(), POLL_MS);
-        this.pollTimer.unref?.();
       }
     };
     await tick();
@@ -100,9 +123,18 @@ export class Attacher {
   /** Attach to any Slack window we are not already driving. */
   private async sweep(): Promise<void> {
     const targets = await listTargets(this.options.cdpPort);
-    const pages = targets.filter(
-      (t) => t.type === "page" && this.targetUrl.test(t.url ?? "") && t.webSocketDebuggerUrl,
-    );
+    const pages = targets.filter((t) => isAttachableTarget(t, this.targetUrl));
+    this.sweepSummary = { targets: targets.length, matched: pages.length };
+
+    if (pages.length === 0 && !this.reportedEmpty) {
+      this.reportedEmpty = true;
+      // Nothing to attach to is the one failure the daemon cannot see from the
+      // outside: the port answers, the poll succeeds, and no overlay appears.
+      // Say what was on the endpoint instead of waiting in silence.
+      this.emit({ type: "no-targets", message: describeTargets(targets) });
+    } else if (pages.length > 0) {
+      this.reportedEmpty = false;
+    }
 
     for (const target of pages) {
       if (this.sessions.has(target.id)) continue;
@@ -123,7 +155,8 @@ export class Attacher {
 
     session.on(CLOSE_EVENT, () => {
       this.sessions.delete(target.id);
-      this.emit({ type: "detached", target: target.url });
+      // A shutdown closes every socket itself; that is not a window going away.
+      if (!this.stopped) this.emit({ type: "detached", target: target.url });
     });
 
     await session.send("Page.enable");
@@ -329,6 +362,25 @@ export class Attacher {
   get attachedCount(): number {
     return [...this.sessions.values()].filter(Boolean).length;
   }
+
+  /** What the last sweep found, for `start`'s status line and for doctor. */
+  get lastSweep(): SweepSummary {
+    return { ...this.sweepSummary };
+  }
+}
+
+/** A one-line census of a DevTools endpoint, by target type. */
+function describeTargets(targets: CdpTarget[]): string {
+  if (targets.length === 0) return "the DevTools endpoint reports no targets at all";
+  const byType = new Map<string, number>();
+  for (const target of targets) {
+    byType.set(target.type, (byType.get(target.type) ?? 0) + 1);
+  }
+  const census = [...byType.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([type, count]) => `${count} ${type}`)
+    .join(", ");
+  return `the DevTools endpoint has ${census}, none of which looks like a Slack window`;
 }
 
 function basename(path: string): string {
