@@ -194,11 +194,16 @@ describeIfChrome("overlay over CDP", () => {
     return { attacher, session };
   }
 
-  async function evaluate(session: CdpSession, expression: string): Promise<unknown> {
+  async function evaluate(
+    session: CdpSession,
+    expression: string,
+    opts: { userGesture?: boolean } = {},
+  ): Promise<unknown> {
     const result = (await session.send("Runtime.evaluate", {
       expression,
       returnByValue: true,
       awaitPromise: true,
+      userGesture: opts.userGesture === true,
     })) as { result?: { value?: unknown }; exceptionDetails?: unknown };
     if (result.exceptionDetails) {
       throw new Error(`evaluate threw: ${JSON.stringify(result.exceptionDetails).slice(0, 300)}`);
@@ -638,6 +643,97 @@ describeIfChrome("overlay over CDP", () => {
       );
       expect(String(panel)).toBe("Repo for #random-chatter");
     } finally {
+      await evaluate(session, "window.__setChannel('eng-alerts')");
+      attacher.stop();
+      session.close();
+    }
+  }, 30_000);
+
+  /**
+   * Slack's own clipboard and key handling sits on the document in capture,
+   * and an event out of the overlay's shadow root arrives there retargeted to
+   * the host — near enough to a paste into the channel that Slack takes it.
+   * The fixture stands in for that, so these two say the path box gets its
+   * paste anyway: once as the key's own editing command, and once for an app
+   * that swallows the shortcut and never lets a paste through at all.
+   */
+  it("takes a paste into the path box before Slack can take it", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, "window.__setChannel('paste-lane')");
+      await sleep(400);
+      await evaluate(session, "window.__composer.length = 0; window.__shortcuts.length = 0");
+      expect(await evaluate(session, `window.__clip(${JSON.stringify(repoPath)})`, {
+        userGesture: true,
+      })).toBe(true);
+
+      await evaluate(session, `${UI}.querySelector('.sq-channel').click()`);
+      await sleep(150);
+      const focused = await evaluate(
+        session,
+        `${UI}.activeElement === ${UI}.querySelector('.sq-panel input')`,
+      );
+      expect(focused).toBe(true);
+
+      const key = { key: "v", code: "KeyV", windowsVirtualKeyCode: 86, modifiers: 2 };
+      // A real paste: the editing command the key would run, not a synthesised
+      // event, so the browser's own insertion is what fills the box.
+      await session.send("Input.dispatchKeyEvent", {
+        ...key,
+        type: "keyDown",
+        commands: ["paste"],
+      });
+      await session.send("Input.dispatchKeyEvent", { ...key, type: "keyUp" });
+      await sleep(200);
+
+      expect(await evaluate(session, `${UI}.querySelector('.sq-panel input').value`))
+        .toBe(repoPath);
+      // And Slack saw neither the paste nor the keystroke behind it.
+      expect(await evaluate(session, "window.__composer.length")).toBe(0);
+      expect(await evaluate(session, "window.__shortcuts.length")).toBe(0);
+    } finally {
+      await evaluate(session, `${UI}.querySelector('.sq-panel-actions button')?.click()`);
+      await evaluate(session, "window.__setChannel('eng-alerts')");
+      attacher.stop();
+      session.close();
+    }
+  }, 30_000);
+
+  it("reads the clipboard itself when the paste never arrives", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, "window.__setChannel('paste-lane')");
+      await sleep(400);
+      await evaluate(session, "window.__composer.length = 0; window.__shortcuts.length = 0");
+      await evaluate(
+        session,
+        `Object.defineProperty(navigator, 'clipboard', {
+           configurable: true,
+           value: { readText: async () => ${JSON.stringify(repoPath)} },
+         })`,
+      );
+
+      await evaluate(session, `${UI}.querySelector('.sq-channel').click()`);
+      await sleep(150);
+
+      // A shortcut with no editing command behind it: the key arrives, the
+      // paste never does.
+      await evaluate(
+        session,
+        `${UI}.querySelector('.sq-panel input').dispatchEvent(new KeyboardEvent('keydown', {
+           key: 'v', code: 'KeyV', ctrlKey: true, bubbles: true, composed: true, cancelable: true,
+         }))`,
+      );
+      await sleep(300);
+
+      expect(await evaluate(session, `${UI}.querySelector('.sq-panel input').value`))
+        .toBe(repoPath);
+      expect(await evaluate(session, "window.__shortcuts.length")).toBe(0);
+    } finally {
+      await evaluate(session, `${UI}.querySelector('.sq-panel-actions button')?.click()`);
+      await evaluate(session, "delete navigator.clipboard");
       await evaluate(session, "window.__setChannel('eng-alerts')");
       attacher.stop();
       session.close();

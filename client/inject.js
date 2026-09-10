@@ -217,6 +217,7 @@
   let menuRow = null;
   let menuSig = '';
   let panelEl = null;
+  let panelKeys = null;
   const resultEls = new Map();
 
   /** Everything drawn lives in here, so losing the host means losing all of it. */
@@ -228,6 +229,7 @@
     menuRow = null;
     menuSig = '';
     panelEl = null;
+    panelKeys = null;
     themeSig = '';
     resultEls.clear();
   }
@@ -686,6 +688,28 @@
   function closePanel() {
     panelEl?.remove();
     panelEl = null;
+    panelKeys = null;
+  }
+
+  /**
+   * The panel's input, while it holds the keyboard. Focus inside a shadow root
+   * reads as the host from the outside, so this is the only way to tell an
+   * event meant for the path box from one meant for Slack.
+   */
+  function panelInput() {
+    if (!panelEl || !ui) return null;
+    const active = ui.activeElement;
+    return active && active.tagName === 'INPUT' && panelEl.contains(active) ? active : null;
+  }
+
+  /** A path is one line, whatever shape the clipboard carried it in. */
+  function insertText(input, text) {
+    const flat = text.replace(/\s*[\r\n]+\s*/g, ' ').trim();
+    if (!flat) return;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    input.setRangeText(flat, start, end, 'end');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
   function openPanel() {
@@ -762,11 +786,14 @@
       event.stopPropagation();
       send();
     });
-    input.addEventListener('keydown', (event) => {
-      event.stopPropagation();
+    // Reached from the window-level claim in the triggers section rather than
+    // from a listener here: that claim has to stop the event before Slack's
+    // own document listeners see it, which is early enough that it never
+    // reaches this input at all.
+    panelKeys = (event) => {
       if (event.key === 'Enter') send();
       if (event.key === 'Escape') { closePanel(); schedule(); }
-    });
+    };
 
     panelEl = panel;
     ui.append(panel);
@@ -1045,6 +1072,58 @@
     closePanel();
     schedule();
   }, true);
+
+  /*
+   * Slack routes clipboard and keyboard events into its own composer from
+   * listeners on the document, and an event out of the shadow root arrives
+   * there retargeted to the host — so a paste into the panel's path box reads
+   * to Slack like a paste into the channel, and the box stays empty. Nothing
+   * bound inside the shadow root can get in front of that: capture runs
+   * outermost first, and the only place earlier than a document listener is
+   * `window`. While the box holds focus the overlay claims these events there
+   * and stops them dead, leaving the browser's own default — insert at the
+   * caret — to do the work.
+   *
+   * Stopping an event during capture means it never reaches the input either,
+   * so anything the panel does with a key is done from here.
+   */
+  let pasteTicket = 0;
+
+  for (const type of ['paste', 'copy', 'cut']) {
+    window.addEventListener(type, (event) => {
+      if (!panelInput()) return;
+      if (event.type === 'paste') pasteTicket = 0;
+      event.stopImmediatePropagation();
+    }, true);
+  }
+
+  window.addEventListener('keydown', (event) => {
+    const input = panelInput();
+    if (!input) return;
+    // The same stop keeps a keystroke meant for the path box from also being a
+    // Slack shortcut, and keeps anything downstream from cancelling the key's
+    // own paste.
+    event.stopImmediatePropagation();
+    panelKeys?.(event);
+    if (!(event.metaKey || event.ctrlKey) || String(event.key).toLowerCase() !== 'v') return;
+
+    // A paste normally follows as that key's default action, and the handler
+    // above clears the ticket when it does. Where the app takes the shortcut
+    // for itself and no paste ever arrives, read the clipboard directly.
+    const ticket = ++pasteTicket;
+    setTimeout(() => {
+      if (pasteTicket !== ticket || panelInput() !== input) return;
+      Promise.resolve(navigator.clipboard?.readText?.()).then((text) => {
+        if (text && pasteTicket === ticket && panelInput() === input) insertText(input, text);
+      }).catch(() => {});
+    }, 0);
+  }, true);
+
+  for (const type of ['keypress', 'keyup']) {
+    window.addEventListener(type, (event) => {
+      if (panelInput()) event.stopImmediatePropagation();
+    }, true);
+  }
 
   document.addEventListener('scroll', schedule, true);
   window.addEventListener('resize', schedule);

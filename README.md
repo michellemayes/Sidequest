@@ -229,7 +229,7 @@ Check with `sidequest sessions`, then use `--force` once you're sure.
 
 ```bash
 npm run dev -- doctor   # run from source
-npm test                # 50 tests
+npm test                # 52 tests
 npm run typecheck
 ```
 
