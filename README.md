@@ -206,10 +206,23 @@ flag at startup. Quit Slack, or run `sidequest start --force` to have Sidequest
 restart it.
 
 **No buttons in Slack.** The message button is drawn on the message under the
-pointer, so hover one first. Then check the terminal running `sidequest start` —
-it prints a line per attached window. If it attached but nothing shows, Slack may have
-changed its `data-qa` attributes; set `verbose: true` and check Slack's devtools
-console.
+pointer, so hover one first. Then check the terminal running `sidequest start`:
+it prints how many windows it attached to, and says so when it has none. Zero
+attached windows means the overlay was never injected, however healthy the rest
+of the output looks — see the next two entries. If it attached but nothing
+shows, Slack may have changed its `data-qa` attributes; set `verbose: true` and
+check Slack's devtools console.
+
+**"waiting for a Slack window".** The DevTools port answers, but nothing on it
+looks like Slack. Sidequest keeps polling, so opening or reloading Slack is
+usually enough. If it never attaches, run `sidequest doctor`: it now says which
+app owns the port and how many Slack windows are on it.
+
+**"Something other than Slack is listening on 127.0.0.1:9222".** A Chrome
+started with `--remote-debugging-port`, another Electron app, or a leftover
+headless browser got there first, and Sidequest would have attached to that
+instead. Quit it, or set `cdpPort` in `~/.sidequest/config.json` to a free port
+and run `sidequest start --force` so Slack is restarted on it.
 
 **"No repo is linked to #channel".** Click **Link a repo** beside the channel
 name, or **Sidequest** → **Link a repo…** on any message. If the pill beside the
@@ -229,7 +242,7 @@ Check with `sidequest sessions`, then use `--force` once you're sure.
 
 ```bash
 npm run dev -- doctor   # run from source
-npm test                # 52 tests
+npm test                # 58 tests
 npm run typecheck
 ```
 

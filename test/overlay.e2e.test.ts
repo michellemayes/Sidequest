@@ -739,4 +739,55 @@ describeIfChrome("overlay over CDP", () => {
       session.close();
     }
   }, 30_000);
+  /*
+   * `sidequest start` normally runs before Slack has finished opening a
+   * workspace, so the first sweep finding nothing is ordinary rather than
+   * fatal: the daemon has to still be polling when the window shows up.
+   */
+  it("attaches to a window that only appears later", async () => {
+    const attacher = new Attacher({ cdpPort: PORT, targetUrlPattern: "late-window" });
+    await attacher.start();
+    expect(attacher.attachedCount).toBe(0);
+    expect(attacher.lastSweep.matched).toBe(0);
+    expect(attacher.lastSweep.targets).toBeGreaterThan(0);
+
+    const browserWs = (await devtoolsVersion(PORT)).webSocketDebuggerUrl;
+    const browser = new CdpSession(browserWs);
+    await browser.connect();
+    let targetId = "";
+
+    try {
+      const created = await browser.send("Target.createTarget", {
+        url: `http://127.0.0.1:${HTTP_PORT}/late-window`,
+      });
+      targetId = String(created.targetId);
+
+      const deadline = Date.now() + 25_000;
+      while (attacher.attachedCount === 0 && Date.now() < deadline) await sleep(250);
+      expect(attacher.attachedCount).toBe(1);
+
+      // Attached is not the claim worth making on its own — the overlay has to
+      // have landed in that window.
+      const page = (await listTargets(PORT)).find((t) => t.id === targetId);
+      const session = new CdpSession(page!.webSocketDebuggerUrl!);
+      await session.connect();
+      await session.send("Runtime.enable");
+      try {
+        let drawn = false;
+        while (!drawn && Date.now() < deadline) {
+          drawn = (await evaluate(session, "!!document.getElementById('sidequest-layer')")) === true;
+          if (!drawn) await sleep(200);
+        }
+        expect(drawn).toBe(true);
+      } finally {
+        session.close();
+      }
+    } finally {
+      // Leave the endpoint as it was found: the other tests pick their page by
+      // URL, and a second one answering to 127.0.0.1 would confuse them.
+      if (targetId) await browser.send("Target.closeTarget", { targetId }).catch(() => undefined);
+      browser.close();
+      attacher.stop();
+    }
+  }, 60_000);
 });
