@@ -9,6 +9,26 @@ export interface CdpTarget {
   webSocketDebuggerUrl?: string;
 }
 
+/**
+ * DevTools target types that can hold Slack's UI. Slack's window is a `page`,
+ * but Electron renders embedded content in `webview` targets, and a build that
+ * puts the workspace in one would otherwise look like an empty browser.
+ */
+const ATTACHABLE_TYPES = new Set(["page", "webview"]);
+
+/**
+ * Whether a sweep would drive this target. Shared with the port inspection in
+ * launch.ts, so what doctor counts is what start would attach to — a service
+ * worker on a Slack URL matches the pattern and is not a window.
+ */
+export function isAttachableTarget(target: CdpTarget, pattern: RegExp): boolean {
+  return (
+    ATTACHABLE_TYPES.has(target.type) &&
+    pattern.test(target.url ?? "") &&
+    Boolean(target.webSocketDebuggerUrl)
+  );
+}
+
 type Handler = (params: Record<string, unknown>) => void;
 
 interface Waiter {

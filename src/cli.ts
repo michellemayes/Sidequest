@@ -16,7 +16,7 @@ import { listWorktrees, pruneWorktrees, removeWorktree } from "./git/worktree.js
 import { shellHookSource } from "./warp/autorun.js";
 import { warpLaunchConfigDir, warpTabConfigDir, platform, uriOpener } from "./util/platform.js";
 import { Attacher } from "./cdp/attacher.js";
-import { findSlackApp, isDebugPortOpen, isSlackRunning, launchSlack } from "./cdp/launch.js";
+import { findSlackApp, inspectDebugPort, isSlackRunning, launchSlack } from "./cdp/launch.js";
 import { channelKey } from "./config/channels.js";
 import { describeError, UserFacingError } from "./util/errors.js";
 import { succeeds } from "./util/exec.js";
@@ -112,7 +112,10 @@ async function start(options: { force: boolean }): Promise<void> {
   const config = await loadConfig();
   const { cdpPort, targetUrlPattern } = config.settings;
 
-  const launch = await launchSlack({ cdpPort, force: options.force });
+  const launch = await launchSlack({ cdpPort, force: options.force, targetUrlPattern });
+  // Until the banner is out, `start` reports the attach state itself; a running
+  // commentary before it would say the same thing twice, out of order.
+  let booted = false;
   const attacher = new Attacher({
     cdpPort,
     targetUrlPattern,
@@ -120,6 +123,19 @@ async function start(options: { force: boolean }): Promise<void> {
       switch (event.type) {
         case "attached":
           console.log(`attached to a Slack window (${attacher.attachedCount} total)`);
+          break;
+        case "no-targets":
+          // Only raised when the state changes, so this is not a per-poll line.
+          if (booted) console.log(`waiting for a Slack window — ${event.message}`);
+          break;
+        case "detached":
+          if (booted) {
+            console.log(
+              attacher.attachedCount === 0
+                ? "the last Slack window went away — waiting for one to come back"
+                : `a Slack window went away (${attacher.attachedCount} left)`,
+            );
+          }
           break;
         case "session":
           console.log(`${event.prompt} in #${event.channel} → ${event.branch}`);
@@ -155,10 +171,23 @@ async function start(options: { force: boolean }): Promise<void> {
   console.log(`  config:    ${configFile()}`);
   console.log(`  worktrees: ${config.settings.worktreesRoot}`);
   console.log(`  channels:  ${linked} linked`);
+  console.log(`  windows:   ${attacher.attachedCount} attached`);
+
+  if (attacher.attachedCount === 0) {
+    const { targets } = attacher.lastSweep;
+    console.log(
+      `\nNo Slack window is attached yet. The DevTools endpoint on ${cdpPort} reports ` +
+        `${targets} target${targets === 1 ? "" : "s"}, none matching /${targetUrlPattern}/.\n` +
+        "Sidequest keeps looking every few seconds, so opening or reloading Slack is enough.\n" +
+        "If it never attaches, Slack is probably not the app on that port — see `sidequest doctor`.",
+    );
+  }
+
   console.log(
     "\nHover a message in Slack and click Claude Code. Ctrl-C to stop.\n" +
       "Stopping leaves Slack running; the overlay disappears on its next reload.",
   );
+  booted = true;
 
   const shutdown = (): void => {
     console.log("\nstopping…");
@@ -445,10 +474,27 @@ async function doctor(): Promise<void> {
     app ?? "not found in /Applications or ~/Applications",
   );
 
-  const portOpen = await isDebugPortOpen(config.settings.cdpPort);
+  const port = await inspectDebugPort(config.settings.cdpPort, config.settings.targetUrlPattern);
   const slackUp = await isSlackRunning();
-  if (portOpen) {
-    check(true, `Slack DevTools port ${config.settings.cdpPort}`, "open — Sidequest can attach");
+  if (port.open && !port.isSlack) {
+    // An open port is not the same as an attachable Slack: whatever answers
+    // here is what `sidequest start` would drive.
+    check(
+      false,
+      `Slack DevTools port ${config.settings.cdpPort}`,
+      `open, but ${port.browser || "something"} is on it, not Slack. Quit that app, or set ` +
+        "settings.cdpPort to a free port and run `sidequest start --force`.",
+    );
+  } else if (port.open) {
+    check(
+      port.matchingTargets > 0,
+      `Slack DevTools port ${config.settings.cdpPort}`,
+      port.matchingTargets > 0
+        ? `open — ${port.matchingTargets} Slack window${port.matchingTargets === 1 ? "" : "s"} to attach to`
+        : `open, but no window matches /${config.settings.targetUrlPattern}/ ` +
+          `(${port.totalTargets} target${port.totalTargets === 1 ? "" : "s"} seen). ` +
+          "Open a workspace in Slack, or widen settings.targetUrlPattern.",
+    );
   } else if (slackUp) {
     check(
       false,
