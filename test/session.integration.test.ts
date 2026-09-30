@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { inspectRepo } from "../src/git/repo.js";
 import { createWorktree, listWorktrees, removeWorktree } from "../src/git/worktree.js";
 import { writeAutorun, autorunPaths } from "../src/warp/autorun.js";
-import { writeLaunchConfig } from "../src/warp/configFiles.js";
+import { writeLaunchConfig, writeTabConfig } from "../src/warp/configFiles.js";
 import { parse as parseYaml } from "yaml";
 
 const exec = promisify(execFile);
@@ -252,6 +252,30 @@ describe("autorun script", () => {
     expect(runs[0]).not.toContain("uid=");
   });
 
+  it("sets the starting tab title, which the agent can replace later", async () => {
+    const repo = await inspectRepo(repoPath);
+    const worktree = await createWorktree({
+      repo,
+      branch: "fix/title",
+      baseBranch: "main",
+      worktreesRoot: join(root, "worktrees"),
+      fetch: false,
+    });
+
+    const receipt = join(root, "receipt.txt");
+    const stub = await writeStubClaude(root, receipt);
+    const files = await writeAutorun({
+      worktreePath: worktree.path,
+      prompt: "Fix it.",
+      agentCommand: stub,
+      agentArgs: [],
+      title: "Ask · it's $(id)\u0007",
+    });
+
+    const { stdout } = await exec("bash", [files.scriptFile]);
+    expect(stdout).toBe("\u001b]0;Ask · it's $(id)\u0007");
+  });
+
   it("claims the pending marker so a second run is a no-op", async () => {
     const repo = await inspectRepo(repoPath);
     const worktree = await createWorktree({
@@ -287,7 +311,6 @@ describe("writeLaunchConfig", () => {
       const name = await writeLaunchConfig(
         {
           name: "sidequest-fix-thing",
-          title: "Fix · repo",
           color: "yellow",
           cwd: "/tmp/wt",
           command: "/tmp/wt/.sidequest/autorun.sh",
@@ -299,10 +322,40 @@ describe("writeLaunchConfig", () => {
       const doc = parseYaml(await readFile(file, "utf8"));
 
       expect(doc.name).toBe("sidequest-fix-thing");
-      expect(doc.windows[0].tabs[0].title).toBe("Fix · repo");
+      // A config title pins the tab, so the running agent could never retitle it.
+      expect(doc.windows[0].tabs[0]).not.toHaveProperty("title");
       expect(doc.windows[0].tabs[0].color).toBe("Yellow");
       expect(doc.windows[0].tabs[0].layout.cwd).toBe("/tmp/wt");
       expect(doc.windows[0].tabs[0].layout.commands[0].exec).toBe("'/tmp/wt/.sidequest/autorun.sh'");
+    } finally {
+      Object.defineProperty(process, "platform", { value: previousPlatform });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+});
+
+describe("writeTabConfig", () => {
+  it("leaves the title to the terminal so the agent can retitle the tab", async () => {
+    const dir = join(root, "warp");
+    process.env.XDG_DATA_HOME = dir;
+    const previousPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "linux" });
+
+    try {
+      const name = await writeTabConfig(
+        {
+          name: "sidequest-fix-thing",
+          color: "yellow",
+          cwd: "/tmp/wt",
+          command: "/tmp/wt/.sidequest/autorun.sh",
+        },
+        false,
+      );
+
+      const toml = await readFile(join(dir, "warp-terminal", "tab_configs", `${name}.toml`), "utf8");
+      expect(toml).toContain('name = "sidequest-fix-thing"');
+      expect(toml).toContain('color = "yellow"');
+      expect(toml).not.toMatch(/^title\s*=/m);
     } finally {
       Object.defineProperty(process, "platform", { value: previousPlatform });
       delete process.env.XDG_DATA_HOME;

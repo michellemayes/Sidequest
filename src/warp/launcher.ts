@@ -74,7 +74,7 @@ export function strategyOrder(preferred: WarpStrategy): ConcreteStrategy[] {
 /**
  * Open Warp on a prepared worktree.
  *
- * `tab_config` and `launch_config` give a titled, coloured tab and ask Warp to
+ * `tab_config` and `launch_config` give a coloured tab and ask Warp to
  * run the command itself. `new_tab` only sets the directory — the shell hook
  * starts the agent there. Strategies are tried in order with the preferred one
  * first; `auto` tries them in the order most likely to work.

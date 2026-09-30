@@ -36,7 +36,6 @@ let pendingFile: string;
 
 const spec = () => ({
   name: "sidequest-test",
-  title: "Test",
   color: "blue" as const,
   cwd: root,
   command: "true",

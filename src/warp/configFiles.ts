@@ -10,12 +10,17 @@ export type WarpColor = "red" | "green" | "yellow" | "blue" | "magenta" | "cyan"
 export interface WarpSessionSpec {
   /** Unique, lowercase name; the deeplink resolves against this. */
   name: string;
-  title: string;
   color: WarpColor;
   cwd: string;
   /** Executable run when the tab opens; quoted for the shell when written. */
   command: string;
 }
+
+/*
+ * Neither config sets a tab title: Warp treats one as a rename and pins it,
+ * which drops every title the agent sets later. The autorun script sets the
+ * starting title instead.
+ */
 
 /**
  * Write a Launch Configuration YAML.
@@ -33,7 +38,6 @@ export async function writeLaunchConfig(spec: WarpSessionSpec, preview: boolean)
       {
         tabs: [
           {
-            title: spec.title,
             // Launch configs take capitalised color names.
             color: capitalize(spec.color),
             layout: {
@@ -61,7 +65,6 @@ export async function writeTabConfig(spec: WarpSessionSpec, preview: boolean): P
 
   const toml = [
     `name = ${tomlString(spec.name)}`,
-    `title = ${tomlString(spec.title)}`,
     `color = ${tomlString(spec.color)}`,
     "",
     "[[panes]]",
