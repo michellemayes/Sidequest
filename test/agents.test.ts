@@ -89,3 +89,21 @@ describe("agent config migration", () => {
     expect(resolveAgent(config.settings.agent).id).toBe("claude");
   });
 });
+
+describe("warp strategy migration", () => {
+  it("moves the old launch_config default to auto", async () => {
+    await writeFile(
+      join(home, "config.json"),
+      JSON.stringify({ settings: { warpStrategy: "launch_config" } }),
+    );
+    expect((await loadConfig()).settings.warpStrategy).toBe("auto");
+  });
+
+  it("keeps any other strategy", async () => {
+    await writeFile(
+      join(home, "config.json"),
+      JSON.stringify({ settings: { warpStrategy: "new_tab" } }),
+    );
+    expect((await loadConfig()).settings.warpStrategy).toBe("new_tab");
+  });
+});

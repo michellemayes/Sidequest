@@ -34,7 +34,7 @@ export const repoLinkSchema = z.object({
 
 export type RepoLink = z.infer<typeof repoLinkSchema>;
 
-export const warpStrategySchema = z.enum(["launch_config", "tab_config", "new_tab"]);
+export const warpStrategySchema = z.enum(["auto", "tab_config", "launch_config", "new_tab"]);
 export type WarpStrategy = z.infer<typeof warpStrategySchema>;
 
 export const agentConfigSchema = z.object({
@@ -52,11 +52,11 @@ export const settingsSchema = z.object({
   /** Parent directory that holds every generated worktree. */
   worktreesRoot: z.string().default(defaultWorktreesRoot()),
   /**
-   * How to open Warp. `launch_config` gives a titled tab and tries to run the
-   * command itself; `new_tab` is the most compatible and leans on the shell
-   * hook to run the command.
+   * How to open Warp. `auto` tries a tab config, then a launch config, then a
+   * plain new tab, until the agent starts. The others put that strategy first;
+   * `new_tab` only sets the directory and leans on the shell hook.
    */
-  warpStrategy: warpStrategySchema.default("launch_config"),
+  warpStrategy: warpStrategySchema.default("auto"),
   /** Use the Warp Preview build (warppreview:// scheme). */
   warpPreview: z.boolean().default(false),
   /** Which coding agent to launch in Warp; command/args override its defaults. */

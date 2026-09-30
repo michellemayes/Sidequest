@@ -90,6 +90,10 @@ ${command} "$(cat "$session_dir/prompt.md")"
 /**
  * The snippet users add to their shell rc. It runs the autorun script when a
  * shell starts inside a worktree that still has an unclaimed session.
+ *
+ * It waits for the first prompt rather than running while the rc file is
+ * sourced: Warp finishes setting a session up after the rc files, and an
+ * agent started before then takes over the terminal mid-bootstrap.
  */
 export function shellHookSource(): string {
   return `# sidequest shell hook
@@ -97,11 +101,22 @@ export function shellHookSource(): string {
 # Added by: sidequest install-hook
 _sidequest_autorun() {
   [ -n "\${SIDEQUEST_AUTORUN_RAN:-}" ] && return 0
+  SIDEQUEST_AUTORUN_RAN=1
   [ -f "$PWD/${SESSION_DIR}/pending" ] || return 0
   [ -x "$PWD/${SESSION_DIR}/autorun.sh" ] || return 0
-  SIDEQUEST_AUTORUN_RAN=1
   "$PWD/${SESSION_DIR}/autorun.sh"
 }
-_sidequest_autorun
+if [ -n "\${ZSH_VERSION:-}" ]; then
+  autoload -Uz add-zsh-hook
+  _sidequest_first_prompt() {
+    add-zsh-hook -d precmd _sidequest_first_prompt
+    _sidequest_autorun
+  }
+  add-zsh-hook precmd _sidequest_first_prompt
+elif [ -n "\${BASH_VERSION:-}" ]; then
+  PROMPT_COMMAND="_sidequest_autorun\${PROMPT_COMMAND:+;\$PROMPT_COMMAND}"
+else
+  _sidequest_autorun
+fi
 `;
 }

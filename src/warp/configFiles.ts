@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 import { warpLaunchConfigDir, warpTabConfigDir } from "../util/platform.js";
+import { shellQuote } from "./autorun.js";
 
 /** Colors Warp accepts for a tab. */
 export type WarpColor = "red" | "green" | "yellow" | "blue" | "magenta" | "cyan";
@@ -12,7 +13,7 @@ export interface WarpSessionSpec {
   title: string;
   color: WarpColor;
   cwd: string;
-  /** Command run when the tab opens. */
+  /** Executable run when the tab opens; quoted for the shell when written. */
   command: string;
 }
 
@@ -38,7 +39,7 @@ export async function writeLaunchConfig(spec: WarpSessionSpec, preview: boolean)
             layout: {
               cwd: spec.cwd,
               is_focused: true,
-              commands: [{ exec: spec.command }],
+              commands: [{ exec: shellQuote(spec.command) }],
             },
           },
         ],
@@ -67,7 +68,7 @@ export async function writeTabConfig(spec: WarpSessionSpec, preview: boolean): P
     `id = "main"`,
     `type = "terminal"`,
     `directory = ${tomlString(spec.cwd)}`,
-    `commands = [${tomlString(spec.command)}]`,
+    `commands = [${tomlString(shellQuote(spec.command))}]`,
     `is_focused = true`,
     "",
   ].join("\n");

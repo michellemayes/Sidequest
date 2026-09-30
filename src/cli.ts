@@ -16,6 +16,7 @@ import {
 import { assertGitAvailable, inspectRepo, isMergedInto } from "./git/repo.js";
 import { listWorktrees, pruneWorktrees, removeWorktree } from "./git/worktree.js";
 import { shellHookSource } from "./warp/autorun.js";
+import { strategyOrder } from "./warp/launcher.js";
 import { findSession, openSession } from "./session/reopen.js";
 import { computeStats, latestSession, loadHistory, MILESTONES } from "./session/history.js";
 import { AGENT_DEFINITIONS, agentDefinition, resolveAgent } from "./agents/agents.js";
@@ -68,9 +69,9 @@ export async function runCli(argv: string[]): Promise<void> {
     .action(() => wrap(status));
 
   program
-    .command("agents")
-    .description("list the coding agents Sidequest can launch")
-    .action(() => wrap(agents));
+    .command("agents [id]")
+    .description("list the coding agents Sidequest can launch, or switch to one (claude, codex)")
+    .action((id: string | undefined) => wrap(() => agents(id)));
 
   program
     .command("reopen [ref]")
@@ -155,6 +156,7 @@ async function wrap(action: () => Promise<void>): Promise<void> {
 
 async function start(options: { force: boolean; foreground: boolean }): Promise<void> {
   await assertGitAvailable();
+  await refreshShellHook();
   const config = await loadConfig();
   const { cdpPort, targetUrlPattern } = config.settings;
 
@@ -302,7 +304,24 @@ async function lastAttachedCount(logFile: string): Promise<number | null> {
   }
 }
 
-async function agents(): Promise<void> {
+async function agents(id?: string): Promise<void> {
+  const wanted = id?.trim().toLowerCase();
+  if (wanted) {
+    const def = AGENT_DEFINITIONS.find((d) => d.id === wanted);
+    if (!def) {
+      throw new UserFacingError(
+        `Unknown agent "${id}".`,
+        `Pick one of: ${AGENT_DEFINITIONS.map((d) => d.id).join(", ")}.`,
+      );
+    }
+    await updateConfig((config) => {
+      // A custom command belongs to the previous agent; don't carry it over.
+      if (config.settings.agent.id !== def.id) config.settings.agent = { id: def.id, command: "", args: [] };
+    });
+    console.log(`New sessions will use ${def.label}. A running daemon picks this up on the next click.`);
+    return;
+  }
+
   const config = await loadConfig();
   const activeId = resolveAgent(config.settings.agent).id;
   console.log("Agents Sidequest can launch:\n");
@@ -311,7 +330,7 @@ async function agents(): Promise<void> {
     console.log(`  ${def.id}${marker}`);
     console.log(`    ${def.label} — ${[def.command, ...def.defaultArgs].join(" ")}`);
   }
-  console.log(`\nSwitch in ${configFile()}:`);
+  console.log("\nSwitch with `sidequest agents <id>`, or in " + `${configFile()}:`);
   console.log(`  { "settings": { "agent": { "id": "codex" } } }`);
   console.log("`command` and `args` override the agent's executable and flags.");
 }
@@ -710,6 +729,19 @@ async function installHook(options: { rc?: string; print: boolean }): Promise<vo
   console.log("\nOpen a new terminal for it to take effect.");
 }
 
+/**
+ * An installed hook is a copy of shellHookSource() from whichever version
+ * wrote it; bring it up to date so fixes reach people who installed earlier.
+ */
+async function refreshShellHook(): Promise<void> {
+  const hookPath = shellHookFile();
+  if (!(await fileExists(hookPath))) return;
+  const snippet = shellHookSource();
+  if ((await readFileOrEmpty(hookPath)) === snippet) return;
+  await writeFile(hookPath, snippet, "utf8");
+  console.log(`Updated the shell hook at ${hookPath}. Open a new Warp tab for it to take effect.`);
+}
+
 /** Pick the rc file for the user's login shell. */
 function detectRcFile(): string {
   const shell = basename(process.env.SHELL ?? "zsh");
@@ -720,7 +752,7 @@ function detectRcFile(): string {
       // The fish snippet is POSIX-ish enough to fail loudly rather than silently.
       throw new UserFacingError(
         "fish is not supported by the generated hook.",
-        `Run \`sidequest install-hook --print\` and translate it, or set warpStrategy to "launch_config".`,
+        `Run \`sidequest install-hook --print\` and translate it, or set warpStrategy to "tab_config".`,
       );
     default:
       return join(homedir(), ".zshrc");
@@ -785,12 +817,10 @@ async function doctor(): Promise<void> {
     opener ? `${opener.command}` : "no known way to open warp:// links on this platform",
   );
 
-  const warpDir =
-    config.settings.warpStrategy === "tab_config"
-      ? warpTabConfigDir(config.settings.warpPreview)
-      : warpLaunchConfigDir(config.settings.warpPreview);
-  console.log(`  ok   warp strategy: ${config.settings.warpStrategy}`);
-  console.log(`       writes to ${warpDir}`);
+  const order = strategyOrder(config.settings.warpStrategy);
+  console.log(`  ok   warp strategy: ${config.settings.warpStrategy} (tries ${order.join(" → ")})`);
+  if (order.includes("tab_config")) console.log(`       tab configs in ${warpTabConfigDir(config.settings.warpPreview)}`);
+  if (order.includes("launch_config")) console.log(`       launch configs in ${warpLaunchConfigDir(config.settings.warpPreview)}`);
 
   const hookInstalled = await fileExists(shellHookFile());
   console.log(`  ${hookInstalled ? "ok " : "-- "}  shell hook`);
