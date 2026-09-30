@@ -6,9 +6,11 @@ Someone reports a bug in Slack. You hover the message and click **Sidequest → 
 A few seconds later a Warp tab is open on a fresh git worktree, and Claude Code (or
 Codex) is already working on it, with the message and its thread as the prompt.
 
-![Sidequest demo: hover a Slack message, pick Fix, and get a branch back](docs/demo/demo.gif)
+![Sidequest demo: pick Fix on a Slack message, watch Claude Code fix it in a Warp tab on a new worktree, and find the branch linked back in Slack](docs/demo/demo.gif)
 
-<sub>The overlay running over a mock channel. See [`docs/demo`](docs/demo) to re-record it.</sub>
+<sub>End to end: the real overlay over a mock channel, then the Warp tab it opens and the
+agent committing a fix on the new branch (the terminal is scripted for the recording).
+See [`docs/demo`](docs/demo) to re-record it.</sub>
 
 - **No Slack app, no bot token, no workspace install.** Sidequest attaches to the
   Slack desktop app you already use.

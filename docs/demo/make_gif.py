@@ -1,16 +1,32 @@
-"""frames/*.png -> demo.gif. Holds the first and last frames longer."""
+"""frames/ + manifest.json -> demo.gif at full capture resolution (2x), each
+frame held for its own duration.
+
+Needs ffmpeg on PATH (or FFMPEG=/path/to/ffmpeg). The palette is built from
+every frame, so the Slack and terminal colours both survive quantisation.
+"""
+import json
+import os
+import subprocess
 from pathlib import Path
-from PIL import Image
 
 here = Path(__file__).parent
-paths = sorted((here / "frames").glob("*.png"))
-frames = [Image.open(p).convert("RGB") for p in paths]
-# Captured at 2x; the GIF is 1x to stay small.
-frames = [f.resize((f.width // 2, f.height // 2), Image.LANCZOS) for f in frames]
-pal = frames[-1].quantize(colors=256, method=Image.Quantize.MEDIANCUT)
-frames = [f.quantize(palette=pal, dither=Image.Dither.NONE) for f in frames]
-durations = [70] * len(frames)
-durations[-1] = 2500
-frames[0].save(here / "demo.gif", save_all=True, append_images=frames[1:],
-               duration=durations, loop=0, optimize=True, disposal=1)
-print(len(frames), "frames ->", (here / "demo.gif").stat().st_size // 1024, "KB")
+frames = here / "frames"
+manifest = json.loads((frames / "manifest.json").read_text())
+width = int(os.environ.get("WIDTH", "2560"))
+
+concat = frames / "concat.txt"
+lines = []
+for f in manifest:
+    lines += [f"file '{f['file']}'", f"duration {f['ms'] / 1000:.3f}"]
+lines.append(f"file '{manifest[-1]['file']}'")  # the concat demuxer drops the last duration otherwise
+concat.write_text("\n".join(lines) + "\n")
+
+ffmpeg = os.environ.get("FFMPEG", "ffmpeg")
+scale = f"scale={width}:-1:flags=lanczos"
+subprocess.run([
+    ffmpeg, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(concat),
+    "-vf", f"{scale},split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];"
+           f"[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle",
+    "-vsync", "vfr", str(here / "demo.gif"),
+], check=True)
+print(len(manifest), "frames ->", (here / "demo.gif").stat().st_size // 1024, "KB")
