@@ -43,6 +43,8 @@ let chrome: ChildProcess | null = null;
 let server: Server | null = null;
 let profileDir = "";
 let baseline = "";
+/** Bodies of what the overlay posted to the fixture's stand-in for Slack's API. */
+const posts: string[] = [];
 
 /**
  * These exercise the real CDP path — a real browser, the real injected
@@ -59,7 +61,17 @@ describeIfChrome("overlay over CDP", () => {
 
   beforeAll(async () => {
     const fixture = await readFile(join(HERE, "fixture.html"), "utf8");
-    server = createServer((_req, res) => {
+    server = createServer((req, res) => {
+      if (req.method === "POST" && req.url === "/api/chat.postMessage") {
+        let body = "";
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", () => {
+          posts.push(body);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: true }));
+        });
+        return;
+      }
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(fixture);
     });
@@ -136,6 +148,7 @@ describeIfChrome("overlay over CDP", () => {
   });
 
   beforeEach(async () => {
+    posts.length = 0;
     root = await mkdtemp(join(tmpdir(), "sidequest-e2e-"));
     configHome = join(root, "config");
     repoPath = join(root, "repo");
@@ -921,6 +934,8 @@ describeIfChrome("overlay over CDP", () => {
       // The history for this test is fresh, so this is the first one ever.
       const toast = await evaluate(session, `${UI}.querySelector('.sq-toast-title')?.textContent || ''`);
       expect(String(toast)).toBe("Your first sidequest is underway");
+      // Thread replies are off unless asked for.
+      expect(posts).toEqual([]);
 
       // Once the line is dismissed, the message keeps a quiet mark instead…
       await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
@@ -948,6 +963,44 @@ describeIfChrome("overlay over CDP", () => {
       await sleep(100);
       expect(await evaluate(session, `!!${UI}.querySelector('.sq-menu')`)).toBe(false);
     } finally {
+      attacher.stop();
+      session.close();
+    }
+  }, 45_000);
+
+  it("replies in the message's thread, as you, when autoReply is on", async () => {
+    const file = join(configHome, "config.json");
+    const config = JSON.parse(await readFile(file, "utf8"));
+    config.settings.autoReply = true;
+    config.prompts = { review: { reply: "Reviewing this in {{repo}}." } };
+    await writeFile(file, JSON.stringify(config));
+
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      // Slack's client keeps the workspace and its session token here.
+      await evaluate(session, `localStorage.setItem('localConfig_v2', JSON.stringify({
+        teams: { T0SMOKE: { url: location.origin + '/', token: 'xoxc-test' } },
+      }))`);
+
+      await hover(session, "row-1");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      await press(session, "3", "Digit3", 51);
+      expect(await settledResult(session)).toContain("review/checkout-total-is-wrong-for-gift-cards");
+
+      const deadline = Date.now() + 5000;
+      while (posts.length === 0 && Date.now() < deadline) await sleep(100);
+      expect(posts).toHaveLength(1);
+      const field = (name: string) =>
+        posts[0]!.match(new RegExp(`name="${name}"\\r\\n\\r\\n([^\\r]*)`))?.[1];
+      expect(field("token")).toBe("xoxc-test");
+      expect(field("channel")).toBe("C0SMOKE");
+      expect(field("thread_ts")).toBe("1757430000.000100");
+      expect(field("text")).toBe("Reviewing this in repo.");
+    } finally {
+      await evaluate(session, "localStorage.removeItem('localConfig_v2')").catch(() => undefined);
       attacher.stop();
       session.close();
     }

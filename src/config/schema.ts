@@ -15,6 +15,12 @@ export const promptSchema = z.object({
     .string()
     .regex(/^[a-z0-9][a-z0-9-]*$/, "branchPrefix must be lowercase alphanumeric with dashes")
     .default("claude"),
+  /**
+   * What to post in the message's thread when a session starts, if
+   * settings.autoReply is on. Takes the same {{tokens}} as the template.
+   * Empty means this prompt never replies.
+   */
+  reply: z.string().default(""),
 });
 
 export type PromptConfig = z.infer<typeof promptSchema>;
@@ -86,6 +92,12 @@ export const settingsSchema = z.object({
   relaunchSlack: z.boolean().default(true),
   /** Which DevTools targets count as a Slack window. */
   targetUrlPattern: z.string().default("app\\.slack\\.com|/client/"),
+  /**
+   * Post a short reply as you in the thread of the message a session starts
+   * from ("Investigating this."), so whoever asked knows it is being handled.
+   * Each prompt's `reply` sets the text.
+   */
+  autoReply: z.boolean().default(false),
   /** Log what the injected overlay is doing to the Slack devtools console. */
   verbose: z.boolean().default(false),
 });
@@ -104,6 +116,8 @@ export const promptOverrideSchema = z.object({
     .string()
     .regex(/^[a-z0-9][a-z0-9-]*$/, "branchPrefix must be lowercase alphanumeric with dashes")
     .optional(),
+  /** Empty turns the thread reply off for this prompt alone. */
+  reply: z.string().optional(),
 });
 
 export type PromptOverride = z.infer<typeof promptOverrideSchema>;

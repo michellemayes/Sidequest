@@ -68,6 +68,15 @@ describe("default prompts", () => {
     expect(renderPrompt(DEFAULT_PROMPTS.ask.template, CONTEXT)).not.toContain("My question");
   });
 
+  it("replies in plain words, with no emoji and no leftover tokens", () => {
+    for (const key of PROMPT_KEYS) {
+      const reply = renderPrompt(DEFAULT_PROMPTS[key].reply, CONTEXT);
+      expect(reply, `${key} left a token unrendered`).not.toMatch(/\{\{\s*[a-zA-Z]+\s*\}\}/);
+      expect(reply, `${key} has an emoji`).not.toMatch(/:[a-z0-9_+-]+:|\p{Extended_Pictographic}/u);
+    }
+    expect(renderPrompt(DEFAULT_PROMPTS.linear.reply, CONTEXT)).toBe("Picking up DATA-3051.");
+  });
+
   it("uses branch prefixes that are valid git ref fragments", () => {
     for (const key of PROMPT_KEYS) {
       expect(DEFAULT_PROMPTS[key].branchPrefix).toMatch(/^[a-z0-9][a-z0-9-]*$/);

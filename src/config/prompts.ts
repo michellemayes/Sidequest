@@ -11,6 +11,7 @@ export const DEFAULT_PROMPTS: Record<PromptKey, PromptConfig> = {
     label: "Investigate",
     emoji: "mag",
     branchPrefix: "investigate",
+    reply: "Investigating this.",
     template: `You are investigating an issue reported in Slack. Do NOT change any code yet.
 
 ## The report
@@ -31,6 +32,7 @@ Report back in the terminal. Leave the working tree clean.`,
     label: "Fix",
     emoji: "wrench",
     branchPrefix: "fix",
+    reply: "Working on a fix.",
     template: `You are fixing an issue reported in Slack.
 
 ## The report
@@ -52,6 +54,7 @@ If the report turns out to be wrong or the fix needs a decision I should make, s
     label: "Review",
     emoji: "eyes",
     branchPrefix: "review",
+    reply: "Reviewing this.",
     template: `You are reviewing work referenced in Slack.
 
 ## The request
@@ -72,6 +75,7 @@ Give me findings ordered most severe first, each with the file, the line, and wh
     label: "Ask",
     emoji: "speech_balloon",
     branchPrefix: "ask",
+    reply: "",
     template: `From @{{author}} in #{{channel}} on {{date}}:
 {{message}}
 {{thread}}
@@ -83,6 +87,7 @@ Read this and the code it touches. If I asked something above, answer it; otherw
     label: "Linear",
     emoji: "ticket",
     branchPrefix: "linear",
+    reply: "Picking up {{ticketId}}.",
     template: `You are working a Linear ticket shared in Slack.
 
 ## The ticket

@@ -317,6 +317,8 @@ export class Attacher {
         worktree: result.worktreePath,
         repo: result.repoLabel,
         stats,
+        // Posted by the overlay, which is signed in to Slack; empty means don't.
+        reply: result.reply,
         // The overlay says so on the message rather than failing silently.
         warning: result.launchError,
       });
