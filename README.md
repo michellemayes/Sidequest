@@ -69,6 +69,16 @@ Messages you've already started a session from keep a small **✦ Fix** mark.
 Click it to jump back into that session. Its menu also leads with **Back to Fix**,
 so you don't cut a duplicate branch by accident.
 
+Press **⌃⇧S** anywhere in Slack (or click **Sessions ›** in the repo button's
+panel) for your recent sessions that still have a worktree, newest first. Each
+shows its branch, the prompt, repo and channel it came from, how long ago, and
+what git says about it: commits the base doesn't have yet, uncommitted files,
+whether the agent has started, or that the worktree was deleted. Click one (or
+**↑**/**↓** and **Enter**) to reopen it in Warp. **×** (or **Delete**) removes a
+finished one by the same rules as `sidequest clean`: the branch stays if it has
+unmerged commits, and a worktree with uncommitted changes is only removed once
+you've been told how many and clicked **Discard and remove**.
+
 | | What the agent does |
 | --- | --- |
 | **Investigate** | Reproduces the problem, traces it to the code, explains it and recommends a fix. Changes nothing. |
@@ -102,7 +112,7 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest start` / `stop` / `status` | Run the background daemon (logs in `~/.sidequest/sidequest.log`) |
 | `sidequest update` | Pull the latest and rebuild, reinstalling dependencies only if they changed; restarts a running daemon (`--no-restart` to skip) |
 | `sidequest doctor` | Check git, Warp, the agent, Slack.app, the debug port, and whether the build is current |
-| `sidequest sessions` | List every worktree Sidequest created |
+| `sidequest sessions` | List every worktree Sidequest created (in Slack, **⌃⇧S** shows your recent ones) |
 | `sidequest reopen [ref]` | Reopen Warp on a session (the latest if you name none) |
 | `sidequest stats` | Your total, today's count, current and best streak |
 | `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force` |
@@ -174,7 +184,7 @@ without a heading). With nothing typed in the Ask box, its reply is
 | `fetchBeforeCreate` | `true` | Fetch the base branch first. A fetch slower than 3 seconds doesn't hold up the session: it's cut from the local ref while the fetch finishes in the background |
 | `repoSearchRoots` | `[]` | Where to look for repos to suggest. Empty means `~/code`, `~/src`, `~/Developer`, `~/projects` and similar, two levels deep |
 | `threadContextLimit` | `10` | How many earlier messages go into the prompt |
-| `pruneBranchesOnClean` | `true` | Delete merged branches on `clean` |
+| `pruneBranchesOnClean` | `true` | Delete merged branches on `clean`, and when you remove a session from the sessions panel |
 | `cdpPort` | `9222` | DevTools port for Slack |
 | `relaunchSlack` | `true` | While Sidequest runs, relaunch a Slack reopened from the Dock (without the DevTools port) so the overlay comes back |
 | `targetUrlPattern` | `app\.slack\.com\|/client/` | Which windows count as Slack |
@@ -217,7 +227,8 @@ Sidequest runs commands from argv arrays, never through a shell, and passes the
 prompt in a file, so message text can't inject commands. The overlay runs inside
 Slack's window, so what the daemon sends it is visible there: channel links,
 prompt labels, past sessions' branch names, and (only while a link menu or panel
-is open) the paths of the repos it suggests. Session history is kept in
+is open) the paths of the repos it suggests. The sessions panel adds each
+session's repo label, channel and git counts, but not its path. Session history is kept in
 `~/.sidequest/history.json`. The DevTools port is
 bound to `127.0.0.1`, which means other processes running as your user can reach
 it, as with any Electron app that has remote debugging on.
