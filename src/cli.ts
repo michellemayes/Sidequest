@@ -13,12 +13,13 @@ import {
   saveConfig,
   updateConfig,
 } from "./config/store.js";
-import { assertGitAvailable, inspectRepo, isMergedInto } from "./git/repo.js";
-import { listWorktrees, pruneWorktrees, removeWorktree } from "./git/worktree.js";
+import { assertGitAvailable, inspectRepo } from "./git/repo.js";
+import { listWorktrees } from "./git/worktree.js";
 import { shellHookSource } from "./warp/autorun.js";
 import { strategyOrder } from "./warp/launcher.js";
 import { findSession, openSession } from "./session/reopen.js";
 import { computeStats, latestSession, loadHistory, MILESTONES } from "./session/history.js";
+import { AutoCleaner, finishedWorktrees, PILE_UP_AT, sweepWorktrees } from "./session/cleanup.js";
 import { AGENT_DEFINITIONS, agentDefinition, describeInvocation, resolveAgent } from "./agents/agents.js";
 import {
   clearDaemonRecord,
@@ -32,7 +33,6 @@ import { SlackKeeper } from "./cdp/keeper.js";
 import { findSlackApp, inspectDebugPort, isSlackRunning, launchSlack, sleep } from "./cdp/launch.js";
 import {
   addLink,
-  allLinks,
   channelKey,
   linkLabel,
   linkedRepoPaths,
@@ -274,6 +274,8 @@ async function startTips(config: Config): Promise<string[]> {
   if (!(await fileExists(shellHookFile()))) {
     tips.push("run `sidequest install-hook` so the agent starts even when Warp ignores the launch config.");
   }
+  const pile = await pileUpNudge(config);
+  if (pile) tips.push(pile);
   return tips;
 }
 
@@ -319,6 +321,18 @@ async function status(): Promise<void> {
         (s.streak > 1 ? `, ${s.streak}-day streak` : "") +
         ") — `sidequest stats` for more",
     );
+  }
+  const { autoClean, autoCleanAfterDays } = config.settings;
+  if (autoClean) {
+    console.log(`Auto-clean: on (merged worktrees idle over ${autoCleanAfterDays} days)`);
+  } else {
+    const finished = (await finishedWorktrees(config).catch(() => [])).length;
+    if (finished > 0) {
+      console.log(
+        `Finished worktrees: ${finished} (merged, untouched for ${autoCleanAfterDays}+ days) — ` +
+          "`sidequest clean` removes them, or turn on settings.autoClean",
+      );
+    }
   }
 }
 
@@ -653,6 +667,11 @@ async function runAttacherLoop(options: {
   });
   if (config.settings.relaunchSlack) keeper.start();
 
+  // Always started: it reads the config each tick, so turning autoClean on
+  // later needs no restart, and while it is off a tick does nothing else.
+  const cleaner = new AutoCleaner({ loadConfig });
+  cleaner.start();
+
   const linked = Object.keys(config.channels).length;
   console.log(
     launch.started
@@ -662,6 +681,9 @@ async function runAttacherLoop(options: {
   console.log(`  config:    ${configFile()}`);
   console.log(`  worktrees: ${config.settings.worktreesRoot}`);
   console.log(`  channels:  ${linked} linked`);
+  if (config.settings.autoClean) {
+    console.log(`  cleanup:   merged worktrees idle over ${config.settings.autoCleanAfterDays} days are removed`);
+  }
   console.log(`  windows:   ${attacher.attachedCount} attached`);
 
   if (attacher.attachedCount === 0) {
@@ -687,6 +709,7 @@ async function runAttacherLoop(options: {
   const shutdown = (): void => {
     console.log("\nstopping…");
     keeper.stop();
+    cleaner.stop();
     attacher.stop();
     if (daemonized) void clearDaemonRecord().finally(() => process.exit(0));
     else process.exit(0);
@@ -749,6 +772,9 @@ async function list(): Promise<void> {
   console.log(`  warpStrategy:   ${config.settings.warpStrategy}${config.settings.warpPreview ? " (preview)" : ""}`);
   console.log(`  agent:          ${agent.label} (${describeInvocation(agent)})`);
   console.log(`  threadContext:  ${config.settings.threadContextLimit} messages`);
+  console.log(
+    `  autoClean:      ${config.settings.autoClean ? `on, after ${config.settings.autoCleanAfterDays} idle days` : "off"}`,
+  );
 
   console.log("\nlinked channels");
   if (entries.length === 0) {
@@ -788,65 +814,59 @@ async function sessions(): Promise<void> {
 
 async function clean(options: { force: boolean; all: boolean }): Promise<void> {
   const config = await loadConfig();
-  const repos = linkedRepoPaths(config);
-  if (repos.length === 0) {
+  if (linkedRepoPaths(config).length === 0) {
     console.log("No repos are linked yet.");
     return;
   }
 
-  let removed = 0;
-  let kept = 0;
-
-  for (const repoPath of repos) {
-    await pruneWorktrees(repoPath);
-    const repo = await inspectRepo(repoPath);
-    const base = baseBranchFor(config, repoPath) || repo.defaultBranch;
-
-    // Only ever touch worktrees sidequest created, never a worktree the user made
-    // by hand elsewhere in the same repo.
-    const worktrees = (await listWorktrees(repoPath)).filter(
-      (w) => !w.isMain && w.path.startsWith(config.settings.worktreesRoot),
-    );
-
-    for (const w of worktrees) {
-      if (!options.all && !(await isMergedInto(repoPath, w.branch, base))) {
-        console.log(`keep    ${w.branch} — not merged into ${base} (use --all to remove anyway)`);
-        kept += 1;
-        continue;
+  // The rules themselves live in sweepWorktrees, shared with the daemon's
+  // autoClean; this only says what happened.
+  const outcomes = await sweepWorktrees(config, {
+    force: options.force,
+    all: options.all,
+    onOutcome: (o) => {
+      switch (o.kind) {
+        case "removed":
+          console.log(
+            o.removedBranch ? `removed ${o.branch} and its worktree` : `removed worktree for ${o.branch}, kept the branch`,
+          );
+          break;
+        case "not-merged":
+          console.log(`keep    ${o.branch} — not merged into ${o.base} (use --all to remove anyway)`);
+          break;
+        case "dirty":
+          console.log(`skip    ${o.path} — uncommitted changes (use --force)`);
+          break;
+        case "recent":
+          // Only an idle threshold produces this, and clean never sets one.
+          break;
+        case "repo-error":
+          console.log(`skip    ${o.repoPath} — ${o.message}`);
+          break;
       }
+    },
+  });
 
-      const result = await removeWorktree(repoPath, w.path, {
-        force: options.force,
-        deleteBranch: config.settings.pruneBranchesOnClean ? w.branch : undefined,
-      });
-
-      if (!result.removedWorktree) {
-        console.log(`skip    ${w.path} — uncommitted changes (use --force)`);
-        kept += 1;
-        continue;
-      }
-
-      removed += 1;
-      console.log(
-        result.removedBranch
-          ? `removed ${w.branch} and its worktree`
-          : `removed worktree for ${w.branch}, kept the branch`,
-      );
-    }
-  }
-
+  const removed = outcomes.filter((o) => o.kind === "removed").length;
+  const kept = outcomes.filter((o) => o.kind === "not-merged" || o.kind === "dirty").length;
   console.log(
     `\nRemoved ${removed} worktree${removed === 1 ? "" : "s"}` +
       (kept > 0 ? `, kept ${kept}.` : "."),
   );
 }
 
-/** The base branch configured for whichever channel links this repo. */
-function baseBranchFor(config: Config, repoPath: string): string {
-  for (const link of allLinks(config)) {
-    if (link.repoPath === repoPath && link.baseBranch.trim()) return link.baseBranch.trim();
-  }
-  return "";
+/**
+ * A line on finished worktrees piling up, or null while there's no pile. Only
+ * said when autoClean is off; with it on, the daemon takes care of them.
+ */
+async function pileUpNudge(config: Config): Promise<string | null> {
+  if (config.settings.autoClean) return null;
+  const finished = await finishedWorktrees(config).catch(() => []);
+  if (finished.length < PILE_UP_AT) return null;
+  return (
+    `${finished.length} merged worktrees have sat untouched for over ${config.settings.autoCleanAfterDays} days. ` +
+    'Run `sidequest clean`, or set settings.autoClean to true and the daemon removes them for you.'
+  );
 }
 
 async function init(options: { quiet?: boolean } = {}): Promise<void> {
@@ -1057,6 +1077,15 @@ async function doctor(): Promise<void> {
       console.log(`       ${describeError(err).message}`);
       problems += 1;
     }
+  }
+
+  // Not a problem, so it doesn't fail the check; just worth knowing.
+  const pile = await pileUpNudge(config);
+  if (pile) {
+    console.log("\n  --   worktrees");
+    console.log(`       ${pile}`);
+  } else if (config.settings.autoClean) {
+    console.log(`\n  ok   worktrees: auto-clean removes merged ones idle over ${config.settings.autoCleanAfterDays} days`);
   }
 
   console.log(

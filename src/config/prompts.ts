@@ -1,8 +1,9 @@
 import type { PromptConfig, PromptKey } from "./schema.js";
 
 /**
- * The prompts on a Slack message: the first four on every one, and Linear
- * only on a message that links a Linear issue. Users can override any
+ * The prompts on a Slack message: the first four on every one, and Linear,
+ * GitHub and Jira only on a message that links one of their issues (see
+ * src/config/tickets.ts). Users can override any
  * field per prompt in ~/.sidequest/config.json; anything they omit falls back to
  * the definition here.
  */
@@ -108,26 +109,57 @@ Slack permalink: {{permalink}}
 
 If the ticket is wrong, already fixed, or needs a decision I should make, stop and say so instead of guessing.`,
   },
+  github: {
+    label: "GitHub",
+    emoji: "ticket",
+    branchPrefix: "issue",
+    reply: "Picking up {{ticketId}}.",
+    template: `You are working a GitHub issue shared in Slack.
+
+## The issue
+{{ticketId}}: {{ticket}}
+
+## Where it came up
+From @{{author}} in #{{channel}} on {{date}}:
+{{message}}
+{{thread}}
+Slack permalink: {{permalink}}
+
+## What I need
+1. Read the issue in full first: description, comments, linked PRs. Use \`gh issue view {{ticket}} --comments\` if the gh CLI is available; if you cannot reach GitHub, say so and work from the Slack context above.
+2. Find the root cause before changing anything — do not patch the symptom.
+3. Make the smallest change that actually fixes it, and add or update a test that fails without it.
+4. Run the repo's own lint, typecheck and test commands and get them green.
+5. Commit on this branch ({{branch}}) explaining the cause, not just the change, and end the message with "Fixes {{ticketId}}" so GitHub closes the issue when it merges.
+
+If the issue is wrong, already fixed, or needs a decision I should make, stop and say so instead of guessing.`,
+  },
+  jira: {
+    label: "Jira",
+    emoji: "ticket",
+    branchPrefix: "jira",
+    reply: "Picking up {{ticketId}}.",
+    template: `You are working a Jira ticket shared in Slack.
+
+## The ticket
+{{ticketId}}: {{ticket}}
+
+## Where it came up
+From @{{author}} in #{{channel}} on {{date}}:
+{{message}}
+{{thread}}
+Slack permalink: {{permalink}}
+
+## What I need
+1. Read the ticket in full first: description, comments, linked issues. Use your Jira tools if you have them; if you cannot reach Jira, say so and work from the Slack context above.
+2. Find the root cause before changing anything — do not patch the symptom.
+3. Make the smallest change that actually fixes it, and add or update a test that fails without it.
+4. Run the repo's own lint, typecheck and test commands and get them green.
+5. Commit on this branch ({{branch}}) with {{ticketId}} at the start of the message, explaining the cause, not just the change.
+
+If the ticket is wrong, already fixed, or needs a decision I should make, stop and say so instead of guessing.`,
+  },
 };
-
-/** A Linear issue link, with the issue identifier (e.g. DATA-3051) captured. */
-export const LINEAR_ISSUE =
-  /https?:\/\/linear\.app\/[^/\s]+\/issue\/([A-Za-z][A-Za-z0-9]*-\d+)(?:\/([a-z0-9-]+))?[^\s<>|]*/i;
-
-export interface LinearTicket {
-  url: string;
-  /** Issue identifier, e.g. DATA-3051. */
-  id: string;
-  /** The title slug Linear puts in its URLs, when the link carries one. */
-  slug: string;
-}
-
-/** The first Linear issue in a string. */
-export function linearTicket(text: string): LinearTicket | null {
-  const match = LINEAR_ISSUE.exec(text);
-  if (!match) return null;
-  return { url: match[0], id: match[1]!.toUpperCase(), slug: match[2] ?? "" };
-}
 
 export interface PromptContext {
   author: string;
@@ -140,9 +172,9 @@ export interface PromptContext {
   baseBranch: string;
   repo: string;
   worktree: string;
-  /** Linear issue URL, when the session is for one; empty otherwise. */
+  /** Linear, GitHub or Jira issue URL, when the session is for one; empty otherwise. */
   ticket: string;
-  /** Linear issue identifier, e.g. DATA-3051; empty otherwise. */
+  /** The tracker's name for it (DATA-3051, owner/repo#123, ABC-123); empty otherwise. */
   ticketId: string;
   /** What the user typed into the Ask box, as its own section; empty otherwise. */
   question: string;

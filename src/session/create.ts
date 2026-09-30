@@ -1,6 +1,7 @@
 import { loadConfig, promptFor } from "../config/store.js";
 import { linksForChannel, repoForChannelName } from "../config/channels.js";
-import { linearTicket, renderPrompt, renderReply, type LinearTicket, type PromptContext } from "../config/prompts.js";
+import { renderPrompt, renderReply, type PromptContext } from "../config/prompts.js";
+import { firstTicket, isTicketPrompt, keepsBranchCase, ticketFor, type Ticket } from "../config/tickets.js";
 import { resolveAgent } from "../agents/agents.js";
 import type { Config, PromptKey } from "../config/schema.js";
 import { inspectRepo } from "../git/repo.js";
@@ -28,7 +29,7 @@ export interface MessageContext {
   permalink: string;
   /** Surrounding thread replies, oldest first, already trimmed to the limit. */
   threadMessages: Array<{ author: string; text: string }>;
-  /** Linear issue URL the message links; only the Linear prompt needs it. */
+  /** Linear, GitHub or Jira issue URL the message links; only their prompts need it. */
   ticket?: string;
   /** What the user typed into the Ask box, if anything. */
   question?: string;
@@ -82,11 +83,12 @@ export async function createSession(
     );
   }
 
-  // Checked before anything is cut: a Linear session with no ticket is
+  // Checked before anything is cut: a ticket session with no ticket is
   // just a Fix with the wrong name.
-  const ticket = linearTicket(message.ticket ?? "");
-  if (promptKey === "linear" && !ticket) {
-    throw new UserFacingError("That message has no Linear issue link to work from.");
+  const ticketPrompt = isTicketPrompt(promptKey) ? promptKey : null;
+  const ticket = ticketPrompt ? ticketFor(ticketPrompt, message.ticket ?? "") : firstTicket(message.ticket ?? "");
+  if (ticketPrompt && !ticket) {
+    throw new UserFacingError(`That message has no ${TRACKER_NAMES[ticketPrompt]} issue link to work from.`);
   }
 
   const repo = await inspectRepo(link.repoPath);
@@ -98,10 +100,11 @@ export async function createSession(
   const branch = branchNameFor({
     promptKey,
     branchPrefix: prompt.branchPrefix,
-    // A Linear branch is named for the ticket, which Linear then links it to.
-    messageText: promptKey === "linear" && ticket?.slug ? ticket.slug : message.text,
+    // A ticket's branch is named for it, which the tracker then links it to.
+    messageText: ticketPrompt && ticket?.slug ? ticket.slug : message.text,
     messageTs: message.ts,
-    ticketId: promptKey === "linear" ? ticket?.id : undefined,
+    ticketId: ticketPrompt ? ticket?.branchKey : undefined,
+    keepTicketCase: ticketPrompt ? keepsBranchCase(ticketPrompt) : false,
   });
 
   const title = tabTitle(prompt.label, repoLabel);
@@ -209,6 +212,9 @@ export async function createSession(
   }
 }
 
+/** For the error when a ticket prompt arrives without its link. */
+const TRACKER_NAMES = { linear: "Linear", github: "GitHub", jira: "Jira" } as const;
+
 /**
  * Warp opened on the worktree, but nothing ran autorun.sh: Warp ignored the
  * launch config and the shell hook that would catch that is not installed.
@@ -222,7 +228,7 @@ interface ContextExtras {
   repo: string;
   worktree: string;
   threadLimit: number;
-  ticket: LinearTicket | null;
+  ticket: Ticket | null;
 }
 
 function buildContext(message: MessageContext, extras: ContextExtras): PromptContext {

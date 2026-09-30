@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defaultWorktreesRoot } from "./paths.js";
 
-export const PROMPT_KEYS = ["investigate", "fix", "review", "ask", "linear"] as const;
+export const PROMPT_KEYS = ["investigate", "fix", "review", "ask", "linear", "github", "jira"] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 
 export const promptSchema = z.object({
@@ -78,6 +78,20 @@ export const settingsSchema = z.object({
   repoSearchRoots: z.array(z.string()).default([]),
   /** Delete the worktree's branch too when running `sidequest clean`. */
   pruneBranchesOnClean: z.boolean().default(true),
+  /**
+   * Let the running daemon remove finished worktrees on its own, by the same
+   * rules as `sidequest clean` (never uncommitted or unmerged work). Off by
+   * default: deleting directories unasked should be something you opt into;
+   * until then `status` and `doctor` say when finished worktrees pile up.
+   */
+  autoClean: z.boolean().default(false),
+  /**
+   * How long a merged worktree must go untouched before autoClean removes it.
+   * Sessions that commit nothing count as merged the moment they start, so
+   * this is what keeps an Investigate you are still reading from vanishing.
+   * A week clears what is really done and outlasts any weekend.
+   */
+  autoCleanAfterDays: z.number().min(0).max(365).default(7),
 
   /**
    * DevTools port Slack is launched with. Slack only accepts the flag at
@@ -147,6 +161,8 @@ export const configSchema = z.object({
       review: promptOverrideSchema.optional(),
       ask: promptOverrideSchema.optional(),
       linear: promptOverrideSchema.optional(),
+      github: promptOverrideSchema.optional(),
+      jira: promptOverrideSchema.optional(),
     })
     .default({}),
 });

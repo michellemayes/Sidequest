@@ -220,6 +220,8 @@ export function colorForPrompt(key: string): WarpColor {
     case "ask":
       return "cyan";
     case "linear":
+    case "github":
+    case "jira":
       return "green";
     default:
       return "cyan";
