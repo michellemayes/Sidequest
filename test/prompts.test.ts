@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PROMPTS, linearTicket, renderPrompt, renderReply, type PromptContext } from "../src/config/prompts.js";
+import { DEFAULT_PROMPTS, renderPrompt, renderReply, type PromptContext } from "../src/config/prompts.js";
 import { PROMPT_KEYS } from "../src/config/schema.js";
 import { shellQuote } from "../src/warp/autorun.js";
 import { tomlString } from "../src/warp/configFiles.js";
@@ -75,6 +75,30 @@ describe("default prompts", () => {
       expect(reply, `${key} has an emoji`).not.toMatch(/:[a-z0-9_+-]+:|\p{Extended_Pictographic}/u);
     }
     expect(renderPrompt(DEFAULT_PROMPTS.linear.reply, CONTEXT)).toBe("Picking up DATA-3051.");
+    expect(renderPrompt(DEFAULT_PROMPTS.github.reply, { ...CONTEXT, ticketId: "acme/web#123" })).toBe(
+      "Picking up acme/web#123.",
+    );
+    expect(renderPrompt(DEFAULT_PROMPTS.jira.reply, { ...CONTEXT, ticketId: "ABC-123" })).toBe("Picking up ABC-123.");
+  });
+
+  it("tells the agent how to close a GitHub issue and link a Jira ticket from the commit", () => {
+    const github = renderPrompt(DEFAULT_PROMPTS.github.template, {
+      ...CONTEXT,
+      ticket: "https://github.com/acme/web/issues/123",
+      ticketId: "acme/web#123",
+    });
+    expect(github).toContain("acme/web#123: https://github.com/acme/web/issues/123");
+    expect(github).toContain("gh issue view https://github.com/acme/web/issues/123 --comments");
+    expect(github).toContain('"Fixes acme/web#123"');
+
+    const jira = renderPrompt(DEFAULT_PROMPTS.jira.template, {
+      ...CONTEXT,
+      ticket: "https://acme.atlassian.net/browse/ABC-123",
+      ticketId: "ABC-123",
+    });
+    expect(jira).toContain("ABC-123: https://acme.atlassian.net/browse/ABC-123");
+    expect(jira).toContain("with ABC-123 at the start of the message");
+    for (const rendered of [github, jira]) expect(rendered).not.toMatch(/\{\{\s*[a-zA-Z]+\s*\}\}/);
   });
 
   it("says in the Ask reply what you are looking into", () => {
@@ -93,32 +117,6 @@ describe("default prompts", () => {
     for (const key of PROMPT_KEYS) {
       expect(DEFAULT_PROMPTS[key].branchPrefix).toMatch(/^[a-z0-9][a-z0-9-]*$/);
     }
-  });
-});
-
-describe("linearTicket", () => {
-  it("reads the identifier and title slug off an issue link", () => {
-    expect(
-      linearTicket("see https://linear.app/pushnami/issue/DATA-3051/textnami-quiet-the-flapping for it"),
-    ).toEqual({
-      url: "https://linear.app/pushnami/issue/DATA-3051/textnami-quiet-the-flapping",
-      id: "DATA-3051",
-      slug: "textnami-quiet-the-flapping",
-    });
-  });
-
-  it("takes a link with no slug, and upper-cases the identifier", () => {
-    expect(linearTicket("<https://linear.app/acme/issue/eng-12|eng-12>")).toEqual({
-      url: "https://linear.app/acme/issue/eng-12",
-      id: "ENG-12",
-      slug: "",
-    });
-  });
-
-  it("ignores anything that is not a Linear issue", () => {
-    expect(linearTicket("https://linear.app/acme/project/big-thing")).toBeNull();
-    expect(linearTicket("https://example.com/issue/DATA-1")).toBeNull();
-    expect(linearTicket("")).toBeNull();
   });
 });
 
