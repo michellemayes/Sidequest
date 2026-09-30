@@ -52,6 +52,7 @@ so you don't cut a duplicate branch by accident.
 | **Investigate** | Reproduces the problem, traces it to the code, explains it and recommends a fix. Changes nothing. |
 | **Fix** | Finds the root cause, makes the smallest fix, adds a test, gets lint and tests passing, and commits. |
 | **Review** | Reviews the referenced PR, branch or diff, bugs first. Changes nothing. |
+| **Linear** | Only on a message that links a Linear issue, and named for it (**Linear DATA-3051**). Reads the ticket, fixes it, and commits with the issue ID on a `linear/data-3051-…` branch, so Linear links the branch back. |
 
 ## How it works
 

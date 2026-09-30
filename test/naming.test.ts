@@ -102,6 +102,32 @@ describe("branchNameFor", () => {
   });
 });
 
+describe("branchNameFor with a Linear ticket", () => {
+  it("leads with the ticket id so Linear links the branch", () => {
+    const branch = branchNameFor({
+      promptKey: "linear",
+      branchPrefix: "linear",
+      messageText: "quiet-the-flapping-alarm",
+      messageTs: "1757430000.000100",
+      ticketId: "DATA-3051",
+      now: NOW,
+    });
+    expect(branch).toBe("linear/data-3051-quiet-the-flapping-alarm-20260909-1432");
+  });
+
+  it("names the branch for the ticket alone when there are no words", () => {
+    const branch = branchNameFor({
+      promptKey: "linear",
+      branchPrefix: "linear",
+      messageText: "",
+      messageTs: "1757430000.000100",
+      ticketId: "DATA-3051",
+      now: NOW,
+    });
+    expect(branch).toBe("linear/data-3051-20260909-1432");
+  });
+});
+
 describe("warpConfigName", () => {
   it("produces a filename-safe, lowercase name", () => {
     expect(warpConfigName("fix/Total-Wrong-20260909-1432")).toBe(

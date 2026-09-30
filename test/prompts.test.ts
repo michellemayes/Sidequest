@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PROMPTS, renderPrompt, type PromptContext } from "../src/config/prompts.js";
+import { DEFAULT_PROMPTS, linearTicket, renderPrompt, type PromptContext } from "../src/config/prompts.js";
 import { PROMPT_KEYS } from "../src/config/schema.js";
 import { shellQuote } from "../src/warp/autorun.js";
 import { tomlString } from "../src/warp/configFiles.js";
@@ -15,6 +15,8 @@ const CONTEXT: PromptContext = {
   baseBranch: "main",
   repo: "/Users/m/code/storefront",
   worktree: "/Users/m/.sidequest/worktrees/fix-checkout",
+  ticket: "https://linear.app/acme/issue/DATA-3051/checkout-is-broken",
+  ticketId: "DATA-3051",
 };
 
 describe("renderPrompt", () => {
@@ -45,7 +47,7 @@ describe("renderPrompt", () => {
 });
 
 describe("default prompts", () => {
-  it("defines all three keys", () => {
+  it("defines every key", () => {
     expect(Object.keys(DEFAULT_PROMPTS).sort()).toEqual([...PROMPT_KEYS].sort());
   });
 
@@ -60,6 +62,32 @@ describe("default prompts", () => {
     for (const key of PROMPT_KEYS) {
       expect(DEFAULT_PROMPTS[key].branchPrefix).toMatch(/^[a-z0-9][a-z0-9-]*$/);
     }
+  });
+});
+
+describe("linearTicket", () => {
+  it("reads the identifier and title slug off an issue link", () => {
+    expect(
+      linearTicket("see https://linear.app/pushnami/issue/DATA-3051/textnami-quiet-the-flapping for it"),
+    ).toEqual({
+      url: "https://linear.app/pushnami/issue/DATA-3051/textnami-quiet-the-flapping",
+      id: "DATA-3051",
+      slug: "textnami-quiet-the-flapping",
+    });
+  });
+
+  it("takes a link with no slug, and upper-cases the identifier", () => {
+    expect(linearTicket("<https://linear.app/acme/issue/eng-12|eng-12>")).toEqual({
+      url: "https://linear.app/acme/issue/eng-12",
+      id: "ENG-12",
+      slug: "",
+    });
+  });
+
+  it("ignores anything that is not a Linear issue", () => {
+    expect(linearTicket("https://linear.app/acme/project/big-thing")).toBeNull();
+    expect(linearTicket("https://example.com/issue/DATA-1")).toBeNull();
+    expect(linearTicket("")).toBeNull();
   });
 });
 

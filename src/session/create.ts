@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { loadConfig, promptFor } from "../config/store.js";
 import { repoForChannelName } from "../config/channels.js";
-import { renderPrompt, type PromptContext } from "../config/prompts.js";
+import { linearTicket, renderPrompt, type LinearTicket, type PromptContext } from "../config/prompts.js";
 import { resolveAgent } from "../agents/agents.js";
 import type { Config, PromptKey, RepoLink } from "../config/schema.js";
 import { inspectRepo } from "../git/repo.js";
@@ -22,6 +22,8 @@ export interface MessageContext {
   permalink: string;
   /** Surrounding thread replies, oldest first, already trimmed to the limit. */
   threadMessages: Array<{ author: string; text: string }>;
+  /** Linear issue URL the message links; only the Linear prompt needs it. */
+  ticket?: string;
 }
 
 export interface SessionResult {
@@ -58,6 +60,13 @@ export async function createSession(
     );
   }
 
+  // Checked before anything is cut: a Linear session with no ticket is
+  // just a Fix with the wrong name.
+  const ticket = linearTicket(message.ticket ?? "");
+  if (promptKey === "linear" && !ticket) {
+    throw new UserFacingError("That message has no Linear issue link to work from.");
+  }
+
   const repo = await inspectRepo(link.repoPath);
   const baseBranch = link.baseBranch.trim() || repo.defaultBranch;
   const repoLabel = link.label.trim() || repo.name;
@@ -67,8 +76,10 @@ export async function createSession(
   const branch = branchNameFor({
     promptKey,
     branchPrefix: prompt.branchPrefix,
-    messageText: message.text,
+    // A Linear branch is named for the ticket, which Linear then links it to.
+    messageText: promptKey === "linear" && ticket?.slug ? ticket.slug : message.text,
     messageTs: message.ts,
+    ticketId: promptKey === "linear" ? ticket?.id : undefined,
   });
 
   const worktree = await createWorktree({
@@ -85,6 +96,7 @@ export async function createSession(
     repo: repo.root,
     worktree: worktree.path,
     threadLimit: config.settings.threadContextLimit,
+    ticket,
   }));
 
   const files = await writeAutorun({
@@ -145,6 +157,7 @@ interface ContextExtras {
   repo: string;
   worktree: string;
   threadLimit: number;
+  ticket: LinearTicket | null;
 }
 
 function buildContext(message: MessageContext, extras: ContextExtras): PromptContext {
@@ -159,6 +172,8 @@ function buildContext(message: MessageContext, extras: ContextExtras): PromptCon
     baseBranch: extras.baseBranch,
     repo: extras.repo,
     worktree: extras.worktree,
+    ticket: extras.ticket?.url ?? "",
+    ticketId: extras.ticket?.id ?? "",
   };
 }
 
