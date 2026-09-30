@@ -235,7 +235,7 @@ async function startTips(config: Config): Promise<string[]> {
         "repos it suggests — it looks for checkouts that match the channel's name.",
     );
   }
-  if (!(await fileExists(shellHookFile())) && config.settings.warpStrategy !== "launch_config") {
+  if (!(await fileExists(shellHookFile()))) {
     tips.push("run `sidequest install-hook` so the agent starts even when Warp ignores the launch config.");
   }
   return tips;
@@ -345,8 +345,11 @@ async function reopen(ref: string | undefined): Promise<void> {
       "Pass a branch name or worktree path from `sidequest sessions`.",
     );
   }
-  const strategy = await openSession(config, found);
-  console.log(`Opened Warp on ${found.worktree.path} (${strategy}).`);
+  const launch = await openSession(config, found);
+  console.log(`Opened Warp on ${found.worktree.path} (${launch.strategy}).`);
+  if (launch.agentStarted === false) {
+    console.log("The agent did not start. Run `sidequest install-hook`, open a new Warp tab there, or run .sidequest/autorun.sh.");
+  }
 }
 
 async function stats(): Promise<void> {
