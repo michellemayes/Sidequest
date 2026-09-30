@@ -663,7 +663,7 @@ describeIfChrome("overlay over CDP", () => {
       expect(await evaluate(session, `!!${UI}.querySelector('.sq-panel')`)).toBe(false);
 
       const stored = JSON.parse(await readFile(join(configHome, "config.json"), "utf8"));
-      expect(stored.channels["release-train"].repoPath).toBe(repoPath);
+      expect(stored.channels["release-train"][0].repoPath).toBe(repoPath);
     } finally {
       await evaluate(session, "window.__setChannel('eng-alerts')");
       attacher.stop();
@@ -1057,7 +1057,7 @@ describeIfChrome("overlay over CDP", () => {
       // Linked, and the menu came back on the same message ready to go.
       expect(prompts).toBe(4);
       const stored = JSON.parse(await readFile(join(configHome, "config.json"), "utf8"));
-      expect(stored.channels["repo-eng"].repoPath).toBe(repoPath);
+      expect(stored.channels["repo-eng"][0].repoPath).toBe(repoPath);
     } finally {
       await evaluate(session, `${UI}.querySelector('.sq-menu') && document.body.click()`);
       await evaluate(session, "window.__setChannel('eng-alerts')");
@@ -1119,6 +1119,143 @@ describeIfChrome("overlay over CDP", () => {
     } finally {
       await evaluate(session, `${UI}.querySelector('.sq-panel-actions button')?.click()`);
       await evaluate(session, "window.__setChannel('eng-alerts')");
+      attacher.stop();
+      session.close();
+    }
+  }, 30_000);
+
+  /** A second checkout next to the test repo, linked to #eng-alerts after it. */
+  async function linkSecondRepo(): Promise<string> {
+    const apiPath = join(root, "api");
+    await mkdir(apiPath, { recursive: true });
+    const env = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+    };
+    await exec("git", ["init", "--initial-branch=main"], { cwd: apiPath, env });
+    await writeFile(join(apiPath, "README.md"), "# api\n");
+    await exec("git", ["add", "."], { cwd: apiPath, env });
+    await exec("git", ["commit", "-m", "initial"], { cwd: apiPath, env });
+
+    const file = join(configHome, "config.json");
+    const config = JSON.parse(await readFile(file, "utf8"));
+    config.channels["eng-alerts"] = [
+      config.channels["eng-alerts"],
+      { repoPath: apiPath, channel: "eng-alerts", baseBranch: "", label: "" },
+    ];
+    await writeFile(file, JSON.stringify(config));
+    return apiPath;
+  }
+
+  it("asks which repo in a channel with several, and starts the session there", async () => {
+    const apiPath = await linkSecondRepo();
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      // The fixture page outlives each test, overlay and all; hand it this config.
+      await attacher.broadcastConfig();
+      await sleep(150);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+
+      // The pill says there is more than one.
+      expect(await evaluate(session, `${UI}.querySelector('.sq-channel .sq-channel-label').textContent`))
+        .toBe("repo +1");
+
+      await hover(session, "row-1");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+
+      const chips = () => evaluate(
+        session,
+        `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-repo')).map(b => [b.textContent, b.dataset.on === '1']))`,
+      ).then((v) => JSON.parse(String(v)));
+      // The default is picked until the reader picks another.
+      expect(await chips()).toEqual([["repo", true], ["api", false]]);
+      // Picking a repo is not a prompt: the digits still mean the same prompts.
+      const keys = await evaluate(
+        session,
+        `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-menu-prompt')).map(b => b.dataset.key))`,
+      );
+      expect(JSON.parse(String(keys))).toEqual(["1", "2", "3", "4"]);
+
+      await press(session, "ArrowRight", "ArrowRight", 39);
+      expect(await chips()).toEqual([["repo", false], ["api", true]]);
+      expect(await evaluate(session, `!!${UI}.querySelector('.sq-menu')`)).toBe(true);
+
+      await press(session, "2", "Digit2", 50);
+      const text = await settledResult(session);
+      expect(text).toContain("Fix in api");
+      expect(text).toContain("fix/checkout-total-is-wrong-for-gift-cards");
+
+      // Cut in the picked repo, and only there.
+      const api = await exec("git", ["branch", "--list"], { cwd: apiPath });
+      expect(api.stdout).toContain("fix/checkout-total-is-wrong-for-gift-cards");
+      const main = await exec("git", ["branch", "--list"], { cwd: repoPath });
+      expect(main.stdout).not.toContain("fix/checkout-total-is-wrong-for-gift-cards");
+
+      // The next menu in this channel opens on the repo just used.
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await hover(session, "row-2");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      expect(await chips()).toEqual([["repo", false], ["api", true]]);
+      await press(session, "Escape", "Escape", 27);
+    } finally {
+      attacher.stop();
+      session.close();
+    }
+  }, 45_000);
+
+  it("lists a channel's repos in its panel, and unlinks one without the others", async () => {
+    const apiPath = await linkSecondRepo();
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      // The fixture page outlives each test, overlay and all; hand it this config.
+      await attacher.broadcastConfig();
+      await sleep(150);
+      await evaluate(session, `${UI}.querySelector('.sq-channel').click()`);
+      await sleep(150);
+
+      const rows = await evaluate(
+        session,
+        `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-linked-name')).map(n => n.textContent))`,
+      );
+      expect(JSON.parse(String(rows))).toEqual(["repo", "api"]);
+      // Adding, not replacing, is what the box is for now.
+      expect(await evaluate(session, `Array.from(${UI}.querySelectorAll('.sq-panel-actions button')).map(b => b.textContent).join(',')`))
+        .toBe("Cancel,Add");
+
+      await evaluate(
+        session,
+        `Array.from(${UI}.querySelectorAll('.sq-linked-row')).find(r => r.textContent.includes('api')).querySelector('.sq-linked-x').click()`,
+      );
+
+      let label = "";
+      const deadline = Date.now() + 10_000;
+      while (label !== "repo" && Date.now() < deadline) {
+        await sleep(200);
+        label = String(
+          (await evaluate(session, `${UI}.querySelector('.sq-channel .sq-channel-label').textContent`)) ?? "",
+        );
+      }
+      expect(label).toBe("repo");
+
+      const stored = JSON.parse(await readFile(join(configHome, "config.json"), "utf8"));
+      expect(stored.channels["eng-alerts"].map((l: { repoPath: string }) => l.repoPath)).toEqual([repoPath]);
+      expect(stored.channels["eng-alerts"].some((l: { repoPath: string }) => l.repoPath === apiPath)).toBe(false);
+
+      // The panel stays open on what is left.
+      const left = await evaluate(
+        session,
+        `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-linked-name')).map(n => n.textContent))`,
+      );
+      expect(JSON.parse(String(left))).toEqual(["repo"]);
+    } finally {
+      await evaluate(session, `${UI}.querySelector('.sq-panel-actions button')?.click()`);
       attacher.stop();
       session.close();
     }

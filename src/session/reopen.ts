@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { Config } from "../config/schema.js";
+import { linkedRepoPaths } from "../config/channels.js";
 import { listWorktrees, type WorktreeRecord } from "../git/worktree.js";
 import { colorForPrompt, launchWarp, type LaunchResult } from "../warp/launcher.js";
 import { warpConfigName } from "./naming.js";
@@ -9,10 +10,6 @@ import { UserFacingError } from "../util/errors.js";
 export interface FoundSession {
   worktree: WorktreeRecord;
   repoPath: string;
-}
-
-function uniqueRepoPaths(config: Config): string[] {
-  return [...new Set(Object.values(config.channels).map((l) => l.repoPath))];
 }
 
 /**
@@ -24,7 +21,7 @@ export async function findSession(
   ref: string,
   extraRepos: string[] = [],
 ): Promise<FoundSession | null> {
-  const repos = [...new Set([...uniqueRepoPaths(config), ...extraRepos])];
+  const repos = [...new Set([...linkedRepoPaths(config), ...extraRepos])];
   const wanted = resolve(ref);
   for (const repoPath of repos) {
     let worktrees: WorktreeRecord[];

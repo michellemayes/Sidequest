@@ -9,7 +9,6 @@ import {
   type Config,
   type PromptConfig,
   type PromptKey,
-  type RepoLink,
   type Settings,
 } from "./schema.js";
 import { UserFacingError } from "../util/errors.js";
@@ -120,10 +119,6 @@ export async function ensureConfigRoot(): Promise<string> {
 
 export function settingsOf(config: Config): Settings {
   return config.settings;
-}
-
-export function repoForChannel(config: Config, channelId: string): RepoLink | undefined {
-  return config.channels[channelId];
 }
 
 /** A user override merged over the built-in default for one prompt. */

@@ -111,8 +111,20 @@ export type PromptOverride = z.infer<typeof promptOverrideSchema>;
 export const configSchema = z.object({
   version: z.literal(1).default(1),
   settings: settingsSchema.default({}),
-  /** Lowercased channel name -> repo link. */
-  channels: z.record(z.string(), repoLinkSchema).default({}),
+  /**
+   * Lowercased channel name -> the repos it is linked to, the default first.
+   * Configs from before a channel could hold more than one stored a single
+   * link here; those are read as a list of one.
+   */
+  channels: z
+    .record(
+      z.string(),
+      z.preprocess(
+        (value) => (Array.isArray(value) || value === undefined ? value : [value]),
+        z.array(repoLinkSchema),
+      ),
+    )
+    .default({}),
   /** Per-prompt overrides of the built-in defaults. */
   prompts: z
     .object({

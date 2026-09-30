@@ -1,9 +1,8 @@
-import { basename } from "node:path";
 import { loadConfig, promptFor } from "../config/store.js";
-import { repoForChannelName } from "../config/channels.js";
+import { linksForChannel, repoForChannelName } from "../config/channels.js";
 import { linearTicket, renderPrompt, type LinearTicket, type PromptContext } from "../config/prompts.js";
 import { resolveAgent } from "../agents/agents.js";
-import type { Config, PromptKey, RepoLink } from "../config/schema.js";
+import type { Config, PromptKey } from "../config/schema.js";
 import { inspectRepo } from "../git/repo.js";
 import { createWorktree } from "../git/worktree.js";
 import { writeAutorun } from "../warp/autorun.js";
@@ -26,6 +25,8 @@ export interface MessageContext {
   ticket?: string;
   /** What the user typed into the Ask box, if anything. */
   question?: string;
+  /** Which of the channel's repos to work in, by label or path; empty means its default. */
+  repo?: string;
 }
 
 export interface SessionResult {
@@ -53,9 +54,15 @@ export async function createSession(
   configOverride?: Config,
 ): Promise<SessionResult> {
   const config = configOverride ?? (await loadConfig());
-  const link = repoForChannelName(config, message.channelName);
+  const link = repoForChannelName(config, message.channelName, message.repo ?? "");
 
   if (!link) {
+    if (linksForChannel(config, message.channelName).length > 0) {
+      throw new UserFacingError(
+        `${message.repo} is no longer linked to #${message.channelName}.`,
+        "Pick one of the channel's other repos, or link it again.",
+      );
+    }
     throw new UserFacingError(
       `No repo is linked to #${message.channelName}.`,
       "Click the repo button in the channel header, or run `sidequest link <path> -c <channel>`.",
@@ -227,9 +234,4 @@ function formatQuestion(text: string): string {
   const trimmed = text.trim();
   if (trimmed.length === 0) return "";
   return `\n## My question\n${trimmed}\n`;
-}
-
-/** Human-readable repo label for a link, without touching the filesystem. */
-export function labelForLink(link: RepoLink): string {
-  return link.label.trim() || basename(link.repoPath);
 }
