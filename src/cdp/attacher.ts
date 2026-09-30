@@ -17,13 +17,15 @@ import {
   linksForChannel,
   removeLink,
 } from "../config/channels.js";
-import { loadConfig, updateConfig, expandPath } from "../config/store.js";
+import { loadConfig, updateConfig, expandPath, promptFor } from "../config/store.js";
 import { inspectRepo } from "../git/repo.js";
 import { createSession, type MessageContext } from "../session/create.js";
-import { computeStats, loadHistory, recordSession } from "../session/history.js";
+import { computeStats, loadHistory, recordSession, updateSession } from "../session/history.js";
+import { StatusWatcher, type SessionStatus } from "../session/status.js";
+import { readResult, resultReply } from "../session/result.js";
+import type { IncomingAttachment } from "../session/attachments.js";
 import { findSession, openSession } from "../session/reopen.js";
 import { discoverRepos } from "../git/discover.js";
-import { PROMPT_KEYS, type PromptKey } from "../config/schema.js";
 import { describeError } from "../util/errors.js";
 import { log } from "../util/log.js";
 
@@ -34,6 +36,7 @@ const INJECT_PATH = join(HERE, "..", "..", "client", "inject.js");
 
 const BINDING = "__sidequestAsk";
 const RESULT_FN = "__sidequestResult";
+const POST_RESULT_FN = "__sidequestPostResult";
 const POLL_MS = 4000;
 /** Plenty for a question; a paste of a whole log belongs in the terminal. */
 const MAX_QUESTION = 4000;
@@ -75,6 +78,12 @@ interface AskRequest {
   /** Which of the channel's repos: the one to start in, or the one to unlink. */
   repo?: string;
   branch?: string;
+  /** Files attached to the message, fetched by the overlay. */
+  attachments?: IncomingAttachment[];
+  /** For result-posted: which write of result.md was posted, and whether it failed or was dismissed. */
+  resultMs?: number;
+  error?: string;
+  dismissed?: boolean;
 }
 
 export class Attacher {
@@ -85,12 +94,19 @@ export class Attacher {
   private sweepSummary: SweepSummary = { targets: 0, matched: 0 };
   /** So a window that never appears is said once, not every four seconds. */
   private reportedEmpty = false;
+  /** Follows the recent sessions, for the marks on their messages and their replies. */
+  private watcher: StatusWatcher | null = null;
+  private statuses = new Map<string, SessionStatus>();
+  /** Results already handed to a window to post, as branch + mtime, so each is posted once. */
+  private readonly autoPosted = new Set<string>();
 
   constructor(
     private readonly options: {
       cdpPort: number;
       targetUrlPattern: string;
       onEvent?: (event: AttacherEvent) => void;
+      /** How often to look in on sessions; false to not follow them at all. */
+      watchIntervalMs?: number | false;
     },
   ) {
     this.targetUrl = new RegExp(options.targetUrlPattern, "i");
@@ -106,13 +122,14 @@ export class Attacher {
    */
   private async source(): Promise<string> {
     const script = readFileSync(INJECT_PATH, "utf8");
-    const config = pageConfig(await loadConfig(), await loadHistory());
+    const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses);
     return `window.__SIDEQUEST_CONFIG = ${JSON.stringify(config)};\n${script}`;
   }
 
   async start(): Promise<void> {
     this.stopped = false;
     this.reportedEmpty = false;
+    await this.startWatcher();
     const tick = async (): Promise<void> => {
       if (this.stopped) return;
       try {
@@ -145,6 +162,8 @@ export class Attacher {
 
   stop(): void {
     this.stopped = true;
+    this.watcher?.stop();
+    this.watcher = null;
     if (this.pollTimer) clearTimeout(this.pollTimer);
     for (const session of this.sessions.values()) session?.close();
     this.sessions.clear();
@@ -203,16 +222,97 @@ export class Attacher {
     const source = await this.source();
     // Covers navigations and workspace switches...
     await session.send("Page.addScriptToEvaluateOnNewDocument", { source });
-    // ...and the window that is already open right now.
-    await session.send("Runtime.evaluate", { expression: source, awaitPromise: false });
+    // ...and the window that is already open right now. A window that ran the
+    // overlay before (the daemon restarted under a Slack that stayed open)
+    // keeps its overlay, so hand it the config as it is now.
+    await session.send("Runtime.evaluate", {
+      expression: `${source}\n;window.__sidequestSetConfig && window.__sidequestSetConfig(JSON.stringify(window.__SIDEQUEST_CONFIG));`,
+      awaitPromise: false,
+    });
 
     this.emit({ type: "attached", target: target.url });
     return session;
   }
 
+  /**
+   * Follow the recent sessions when either thing that needs it is on: their
+   * progress on the Slack marks, or the replies their agents leave.
+   */
+  private async startWatcher(): Promise<void> {
+    if (this.options.watchIntervalMs === false || this.watcher) return;
+    let settings;
+    try {
+      settings = (await loadConfig()).settings;
+    } catch {
+      return;
+    }
+    if (!settings.trackStatus && settings.postResults === "off") return;
+    this.watcher = new StatusWatcher({
+      intervalMs: this.options.watchIntervalMs ?? 15_000,
+      pullRequests: settings.trackStatus,
+      history: loadHistory,
+      onChange: (statuses) => {
+        this.statuses = statuses;
+        void this.broadcastConfig();
+        void this.autoPostResults().catch((err) => {
+          this.emit({ type: "result-error", message: describeError(err).message });
+        });
+      },
+    });
+    this.watcher.start();
+  }
+
+  /** Look in on the sessions now rather than on the next tick. */
+  async refreshStatuses(): Promise<void> {
+    await this.watcher?.refresh();
+  }
+
+  /**
+   * With postResults on auto, hand each new reply to one Slack window to
+   * post. Only the page can post (it holds the Slack session), and only one
+   * of them should, so the daemon picks the window rather than every window
+   * racing to it.
+   */
+  private async autoPostResults(): Promise<void> {
+    const config = await loadConfig();
+    if (config.settings.postResults !== "auto") return;
+    const history = await loadHistory();
+    for (const [branch, status] of this.statuses) {
+      if (!status.resultPending || status.resultMs === null) continue;
+      const key = `${branch}\0${status.resultMs}`;
+      if (this.autoPosted.has(key)) continue;
+      const entry = [...history].reverse().find((h) => h.branch === branch);
+      if (!entry?.permalink) continue;
+      const result = await readResult(entry.worktreePath);
+      if (!result) continue;
+      const payload = JSON.stringify({
+        branch,
+        resultMs: status.resultMs,
+        permalink: entry.permalink,
+        label: entry.promptLabel,
+        text: resultReply(result.text, { prUrl: status.pr?.url }),
+      });
+      for (const session of this.sessions.values()) {
+        if (!session) continue;
+        try {
+          const res = (await session.send("Runtime.evaluate", {
+            expression: `window.${POST_RESULT_FN} ? window.${POST_RESULT_FN}(${JSON.stringify(payload)}) : false`,
+            returnByValue: true,
+          })) as { result?: { value?: unknown } };
+          if (res.result?.value === true) {
+            this.autoPosted.add(key);
+            break;
+          }
+        } catch {
+          // That window is going away; try the next.
+        }
+      }
+    }
+  }
+
   /** Push fresh config to every attached window after a link changes. */
   async broadcastConfig(): Promise<void> {
-    const config = pageConfig(await loadConfig(), await loadHistory());
+    const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses);
     const payload = JSON.stringify(JSON.stringify(config));
     for (const session of this.sessions.values()) {
       if (!session) continue;
@@ -255,6 +355,12 @@ export class Attacher {
       case "reopen":
         await this.handleReopen(session, contextId, request);
         return;
+      case "get-result":
+        await this.handleGetResult(session, contextId, request);
+        return;
+      case "result-posted":
+        await this.handleResultPosted(session, contextId, request);
+        return;
       default:
         await this.reply(session, contextId, { id: request.id, error: `unknown op ${request.op}` });
     }
@@ -265,8 +371,8 @@ export class Attacher {
     contextId: number | undefined,
     request: AskRequest,
   ): Promise<void> {
-    const promptKey = request.promptKey as PromptKey;
-    if (!PROMPT_KEYS.includes(promptKey)) {
+    const promptKey = String(request.promptKey ?? "");
+    if (!promptFor(await loadConfig(), promptKey)) {
       await this.reply(session, contextId, { id: request.id, error: "unknown prompt" });
       return;
     }
@@ -281,6 +387,7 @@ export class Attacher {
       ticket: request.ticket ?? "",
       question: typeof request.question === "string" ? request.question.slice(0, MAX_QUESTION) : "",
       repo: typeof request.repo === "string" ? request.repo : "",
+      attachments: Array.isArray(request.attachments) ? request.attachments : [],
     };
 
     try {
@@ -305,6 +412,8 @@ export class Attacher {
           repoPath: result.repoPath,
           repoLabel: result.repoLabel,
           createdAt: new Date().toISOString(),
+          permalink: context.permalink,
+          baseBranch: result.baseBranch,
         });
         stats = computeStats(history);
       } catch (err) {
@@ -321,8 +430,10 @@ export class Attacher {
         reply: result.reply,
         // The overlay says so on the message rather than failing silently.
         warning: result.launchError,
+        attachments: result.attachments,
       });
       await this.broadcastConfig();
+      void this.refreshStatuses();
     } catch (err) {
       const { message, hint } = describeError(err);
       this.emit({ type: "session-error", channel: context.channelName, message });
@@ -455,6 +566,60 @@ export class Attacher {
       await openSession(config, found);
       this.emit({ type: "reopen", branch });
       await this.reply(session, contextId, { id: request.id, ok: true, branch });
+    } catch (err) {
+      const { message, hint } = describeError(err);
+      await this.reply(session, contextId, { id: request.id, error: message, hint });
+    }
+  }
+
+  /** A session's reply for the thread, ready to read, edit and post. */
+  private async handleGetResult(
+    session: CdpSession,
+    contextId: number | undefined,
+    request: AskRequest,
+  ): Promise<void> {
+    const branch = (request.branch ?? "").trim();
+    const entry = (await loadHistory()).reverse().find((h) => h.branch === branch);
+    const result = entry ? await readResult(entry.worktreePath) : null;
+    if (!entry || !result) {
+      await this.reply(session, contextId, { id: request.id, error: `${branch || "That session"} has no reply to post.` });
+      return;
+    }
+    const status = this.statuses.get(branch);
+    await this.reply(session, contextId, {
+      id: request.id,
+      ok: true,
+      branch,
+      label: entry.promptLabel,
+      channel: entry.channel,
+      permalink: entry.permalink ?? "",
+      resultMs: result.mtimeMs,
+      text: resultReply(result.text, { prUrl: status?.pr?.url }),
+    });
+  }
+
+  /**
+   * The page posted a reply (or was told not to): remember which write of
+   * result.md that was, so it is not offered again unless the agent rewrites it.
+   */
+  private async handleResultPosted(
+    session: CdpSession,
+    contextId: number | undefined,
+    request: AskRequest,
+  ): Promise<void> {
+    const branch = (request.branch ?? "").trim();
+    if (request.error) {
+      this.emit({ type: "result-error", branch, message: request.error });
+      await this.reply(session, contextId, { id: request.id, ok: true });
+      return;
+    }
+    try {
+      const resultMs = typeof request.resultMs === "number" ? request.resultMs : Date.now();
+      await updateSession(branch, { resultPostedMs: resultMs });
+      this.emit({ type: request.dismissed ? "result-dismissed" : "result-posted", branch });
+      await this.reply(session, contextId, { id: request.id, ok: true });
+      await this.refreshStatuses();
+      await this.broadcastConfig();
     } catch (err) {
       const { message, hint } = describeError(err);
       await this.reply(session, contextId, { id: request.id, error: message, hint });
