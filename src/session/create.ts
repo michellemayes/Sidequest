@@ -24,6 +24,8 @@ export interface MessageContext {
   threadMessages: Array<{ author: string; text: string }>;
   /** Linear issue URL the message links; only the Linear prompt needs it. */
   ticket?: string;
+  /** What the user typed into the Ask box, if anything. */
+  question?: string;
 }
 
 export interface SessionResult {
@@ -183,6 +185,7 @@ function buildContext(message: MessageContext, extras: ContextExtras): PromptCon
     worktree: extras.worktree,
     ticket: extras.ticket?.url ?? "",
     ticketId: extras.ticket?.id ?? "",
+    question: formatQuestion(message.question ?? ""),
   };
 }
 
@@ -217,6 +220,13 @@ function formatThread(
     .map((m) => `**@${m.author}:** ${stripSlackMarkup(m.text).trim()}`)
     .join("\n\n");
   return `\n### Thread replies\n${body}\n`;
+}
+
+/** The Ask box's text, set apart like the thread so it reads as mine, not the report's. */
+function formatQuestion(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return "";
+  return `\n## My question\n${trimmed}\n`;
 }
 
 /** Human-readable repo label for a link, without touching the filesystem. */

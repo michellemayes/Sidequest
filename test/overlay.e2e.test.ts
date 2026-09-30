@@ -953,6 +953,76 @@ describeIfChrome("overlay over CDP", () => {
     }
   }, 45_000);
 
+  it("takes a question for Ask in the menu itself, and hands it to the agent", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, "window.__shortcuts.length = 0");
+
+      await hover(session, "row-1");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+
+      // Picking Ask opens a box in the menu rather than starting straight away.
+      await press(session, "4", "Digit4", 52);
+      await sleep(100);
+      const state = await evaluate(session, `JSON.stringify({
+        box: !!${UI}.querySelector('.sq-menu .sq-ask-input'),
+        focused: ${UI}.activeElement?.className || '',
+        prompts: ${UI}.querySelectorAll('.sq-menu-prompt').length,
+      })`);
+      expect(JSON.parse(String(state))).toEqual({ box: true, focused: "sq-ask-input", prompts: 0 });
+
+      // A digit typed into the box is part of the question, not a menu pick,
+      // and none of it reaches Slack.
+      await session.send("Input.dispatchKeyEvent", {
+        type: "keyDown", key: "2", code: "Digit2", windowsVirtualKeyCode: 50, text: "2",
+      });
+      await session.send("Input.dispatchKeyEvent", { type: "keyUp", key: "2", code: "Digit2", windowsVirtualKeyCode: 50 });
+      await session.send("Input.insertText", { text: " gift cards at once — why is the total off?" });
+      expect(await evaluate(session, `${UI}.querySelector('.sq-ask-input').value`))
+        .toBe("2 gift cards at once — why is the total off?");
+      expect(await evaluate(session, `!!${UI}.querySelector('.sq-menu')`)).toBe(true);
+
+      await press(session, "Enter", "Enter", 13);
+      expect(await evaluate(session, `!!${UI}.querySelector('.sq-menu')`)).toBe(false);
+      expect(await evaluate(session, "window.__shortcuts.length")).toBe(0);
+      expect(await settledResult(session)).toContain("Ask → ask/checkout-total-is-wrong-for-gift-cards");
+
+      const worktrees = await exec("git", ["worktree", "list"], { cwd: repoPath });
+      const line = worktrees.stdout.split("\n").find((l) => l.includes("ask-checkout"));
+      const prompt = await readFile(join(line!.split(/\s+/)[0]!, ".sidequest", "prompt.md"), "utf8");
+      expect(prompt).toContain("## My question\n2 gift cards at once — why is the total off?");
+      expect(prompt).toContain("Checkout total is wrong for gift cards");
+    } finally {
+      attacher.stop();
+      session.close();
+    }
+  }, 45_000);
+
+  it("closes the Ask box on Escape without starting anything", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await hover(session, "row-2");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      await evaluate(session, `Array.from(${UI}.querySelectorAll('.sq-menu-prompt')).find(b => b.textContent === 'Ask').click()`);
+      await sleep(100);
+      expect(await evaluate(session, `!!${UI}.querySelector('.sq-ask-input')`)).toBe(true);
+
+      await press(session, "Escape", "Escape", 27);
+      await sleep(100);
+      expect(await evaluate(session, `!!${UI}.querySelector('.sq-menu')`)).toBe(false);
+      expect(await evaluate(session, `${UI}.querySelectorAll('.sq-result').length`)).toBe(0);
+    } finally {
+      attacher.stop();
+      session.close();
+    }
+  }, 30_000);
+
   it("offers the channel's own repo in the menu and goes straight on to the prompts", async () => {
     const { attacher, session } = await attachAndEval();
     try {

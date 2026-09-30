@@ -76,8 +76,8 @@ Give me findings ordered most severe first, each with the file, the line, and wh
 {{message}}
 {{thread}}
 Slack permalink: {{permalink}}
-
-Read this and the code it touches, then wait for my instructions.`,
+{{question}}
+Read this and the code it touches. If I asked something above, answer it; otherwise wait for my instructions.`,
   },
   linear: {
     label: "Linear",
@@ -139,6 +139,8 @@ export interface PromptContext {
   ticket: string;
   /** Linear issue identifier, e.g. DATA-3051; empty otherwise. */
   ticketId: string;
+  /** What the user typed into the Ask box, as its own section; empty otherwise. */
+  question: string;
 }
 
 const TOKEN = /\{\{\s*([a-zA-Z]+)\s*\}\}/g;

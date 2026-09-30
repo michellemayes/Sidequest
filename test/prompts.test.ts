@@ -17,6 +17,7 @@ const CONTEXT: PromptContext = {
   worktree: "/Users/m/.sidequest/worktrees/fix-checkout",
   ticket: "https://linear.app/acme/issue/DATA-3051/checkout-is-broken",
   ticketId: "DATA-3051",
+  question: "",
 };
 
 describe("renderPrompt", () => {
@@ -56,6 +57,15 @@ describe("default prompts", () => {
       const rendered = renderPrompt(DEFAULT_PROMPTS[key].template, CONTEXT);
       expect(rendered, `${key} left a token unrendered`).not.toMatch(/\{\{\s*[a-zA-Z]+\s*\}\}/);
     }
+  });
+
+  it("puts what was typed into the Ask box ahead of the closing instruction", () => {
+    const question = "\n## My question\nwhy does this only happen on Safari?\n";
+    const rendered = renderPrompt(DEFAULT_PROMPTS.ask.template, { ...CONTEXT, question });
+    expect(rendered).toContain("## My question\nwhy does this only happen on Safari?");
+    expect(rendered.indexOf("My question")).toBeLessThan(rendered.indexOf("Read this and the code"));
+    // With nothing typed there is no empty heading, just the message.
+    expect(renderPrompt(DEFAULT_PROMPTS.ask.template, CONTEXT)).not.toContain("My question");
   });
 
   it("uses branch prefixes that are valid git ref fragments", () => {

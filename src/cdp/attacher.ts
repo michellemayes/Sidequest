@@ -28,6 +28,8 @@ const INJECT_PATH = join(HERE, "..", "..", "client", "inject.js");
 const BINDING = "__sidequestAsk";
 const RESULT_FN = "__sidequestResult";
 const POLL_MS = 4000;
+/** Plenty for a question; a paste of a whole log belongs in the terminal. */
+const MAX_QUESTION = 4000;
 
 export interface AttacherEvent {
   type: string;
@@ -59,6 +61,8 @@ interface AskRequest {
   thread?: Array<{ author: string; text: string }>;
   /** Linear issue URL the message links, for the Linear prompt. */
   ticket?: string;
+  /** What the user typed into the Ask box. */
+  question?: string;
   repoPath?: string;
   branch?: string;
 }
@@ -265,6 +269,7 @@ export class Attacher {
       permalink: request.permalink ?? "",
       threadMessages: request.thread ?? [],
       ticket: request.ticket ?? "",
+      question: typeof request.question === "string" ? request.question.slice(0, MAX_QUESTION) : "",
     };
 
     try {
