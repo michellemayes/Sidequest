@@ -51,8 +51,8 @@ edits in the checkout. Then, in Slack:
 1. Hover any message → **Sidequest**. In a channel with no repo yet, the menu
    suggests the checkouts on your machine that match the channel's name (for
    `#storefront-eng`, that's `storefront`). One click links it and shows the prompts.
-2. Pick **Investigate**, **Fix** or **Review**, or press **1**/**2**/**3**
-   (or **I**/**F**/**R**).
+2. Pick **Investigate**, **Fix**, **Review** or **Ask**, or press **1**–**4**
+   (or **I**/**F**/**R**/**A**).
 
 A toast confirms the launch with your running count, today's count and your
 day streak. The branch name, or the error if something went wrong, shows up
@@ -67,6 +67,7 @@ so you don't cut a duplicate branch by accident.
 | **Investigate** | Reproduces the problem, traces it to the code, explains it and recommends a fix. Changes nothing. |
 | **Fix** | Finds the root cause, makes the smallest fix, adds a test, gets lint and tests passing, and commits. |
 | **Review** | Reviews the referenced PR, branch or diff, bugs first. Changes nothing. |
+| **Ask** | A short, open prompt: just the message and thread. The agent reads the relevant code and waits for you to say what you want. |
 | **Linear** | Only on a message that links a Linear issue, and named for it (**Linear DATA-3051**). Reads the ticket, fixes it, and commits with the issue ID on a `linear/data-3051-…` branch, so Linear links the branch back. |
 
 ## How it works
@@ -106,7 +107,7 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 
 Everything lives in `~/.sidequest/config.json`.
 
-**Prompts.** Override any of the three templates or labels. Anything you leave out
+**Prompts.** Override any of the templates or labels. Anything you leave out
 keeps its default:
 
 ```json
