@@ -27,17 +27,25 @@ on your `PATH`.
 git clone https://github.com/michellemayes/Sidequest.git
 cd Sidequest
 npm install && npm run build && npm link
-sidequest init           # creates ~/.sidequest/config.json
-sidequest install-hook   # starts the agent when the Warp tab opens
-sidequest start          # relaunches Slack with the overlay (--force if Slack is open)
+sidequest setup          # config, shell hook, checks, then relaunches Slack with the overlay
 ```
 
-Then, in Slack:
+`setup` runs `init`, `install-hook`, `doctor` and `start` in turn, and is safe to
+run again. Then, in Slack:
 
-1. Click **Link a repo** beside a channel name and paste the path to a git checkout.
-2. Hover any message → **Sidequest** → **Investigate**, **Fix** or **Review**.
+1. Hover any message → **Sidequest**. In a channel with no repo yet, the menu
+   suggests the checkouts on your machine that match the channel's name (for
+   `#storefront-eng`, that's `storefront`). One click links it and shows the prompts.
+2. Pick **Investigate**, **Fix** or **Review**, or press **1**/**2**/**3**
+   (or **I**/**F**/**R**).
 
-The branch name, or the error if something went wrong, shows up under the message.
+A toast confirms the launch with your running count, today's count and your
+day streak. The branch name, or the error if something went wrong, shows up
+under the message; click it to reopen the session, or **×** to dismiss it.
+
+Messages you've already started a session from keep a small **✦ Fix** mark.
+Click it to jump back into that session. Its menu also leads with **Back to Fix**,
+so you don't cut a duplicate branch by accident.
 
 | | What the agent does |
 | --- | --- |
@@ -66,10 +74,12 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 
 | Command | What it does |
 | --- | --- |
+| `sidequest setup` | First run in one command: config, shell hook, checks, start |
 | `sidequest start` / `stop` / `status` | Run the background daemon (logs in `~/.sidequest/sidequest.log`) |
 | `sidequest doctor` | Check git, Warp, the agent, Slack.app and the debug port |
 | `sidequest sessions` | List every worktree Sidequest created |
-| `sidequest reopen <ref>` | Reopen Warp on a session |
+| `sidequest reopen [ref]` | Reopen Warp on a session (the latest if you name none) |
+| `sidequest stats` | Your total, today's count, current and best streak |
 | `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force` |
 | `sidequest link <path> -c <channel>` / `unlink` | Link or unlink a channel from the terminal |
 | `sidequest list` / `prompts` / `agents` | Show linked channels, prompt templates and available agents |
@@ -105,6 +115,7 @@ leaves unknown tokens in the prompt as written, so typos are easy to spot.
 | `warpStrategy` | `launch_config` | `launch_config`, `tab_config` or `new_tab` |
 | `warpPreview` | `false` | Use Warp Preview |
 | `fetchBeforeCreate` | `true` | Fetch the base branch first |
+| `repoSearchRoots` | `[]` | Where to look for repos to suggest. Empty means `~/code`, `~/src`, `~/Developer`, `~/projects` and similar, two levels deep |
 | `threadContextLimit` | `10` | How many earlier messages go into the prompt |
 | `pruneBranchesOnClean` | `true` | Delete merged branches on `clean` |
 | `cdpPort` | `9222` | DevTools port for Slack |
@@ -121,8 +132,10 @@ Start with `sidequest doctor`.
   attached windows, the overlay wasn't injected.
 - **"Something other than Slack is listening on 127.0.0.1:9222"**: quit that
   app, or set `cdpPort` to a free port and run `start --force`.
+- **The repo I want isn't suggested**: add its parent folder to
+  `repoSearchRoots`, or paste the path into the channel pill's panel.
 - **Warp opens but the agent doesn't start**: run `sidequest install-hook` and
-  open a new terminal, or run `sidequest reopen <branch>`.
+  open a new terminal, or run `sidequest reopen` (latest) / `sidequest reopen <branch>`.
 - **Warp doesn't open**: the worktree still exists. `cd` into it and run
   `.sidequest/autorun.sh`.
 
@@ -130,7 +143,11 @@ Start with `sidequest doctor`.
 
 The overlay makes no network requests and only talks to the local daemon.
 Sidequest runs commands from argv arrays, never through a shell, and passes the
-prompt in a file, so message text can't inject commands. The DevTools port is
+prompt in a file, so message text can't inject commands. The overlay runs inside
+Slack's window, so what the daemon sends it is visible there: channel links,
+prompt labels, past sessions' branch names, and (only while a link menu or panel
+is open) the paths of the repos it suggests. Session history is kept in
+`~/.sidequest/history.json`. The DevTools port is
 bound to `127.0.0.1`, which means other processes running as your user can reach
 it, as with any Electron app that has remote debugging on.
 

@@ -13,6 +13,9 @@ import { channelKey } from "../config/channels.js";
 import { loadConfig, updateConfig, expandPath } from "../config/store.js";
 import { inspectRepo } from "../git/repo.js";
 import { createSession, type MessageContext } from "../session/create.js";
+import { computeStats, loadHistory, recordSession } from "../session/history.js";
+import { findSession, openSession } from "../session/reopen.js";
+import { discoverRepos } from "../git/discover.js";
 import { PROMPT_KEYS, type PromptKey } from "../config/schema.js";
 import { describeError } from "../util/errors.js";
 import { log } from "../util/log.js";
@@ -55,6 +58,7 @@ interface AskRequest {
   permalink?: string;
   thread?: Array<{ author: string; text: string }>;
   repoPath?: string;
+  branch?: string;
 }
 
 export class Attacher {
@@ -86,7 +90,7 @@ export class Attacher {
    */
   private async source(): Promise<string> {
     const script = readFileSync(INJECT_PATH, "utf8");
-    const config = pageConfig(await loadConfig());
+    const config = pageConfig(await loadConfig(), await loadHistory());
     return `window.__SIDEQUEST_CONFIG = ${JSON.stringify(config)};\n${script}`;
   }
 
@@ -182,7 +186,7 @@ export class Attacher {
 
   /** Push fresh config to every attached window after a link changes. */
   async broadcastConfig(): Promise<void> {
-    const config = pageConfig(await loadConfig());
+    const config = pageConfig(await loadConfig(), await loadHistory());
     const payload = JSON.stringify(JSON.stringify(config));
     for (const session of this.sessions.values()) {
       if (!session) continue;
@@ -219,6 +223,12 @@ export class Attacher {
       case "channel-status":
         await this.handleChannelStatus(session, contextId, request);
         return;
+      case "suggest-repos":
+        await this.handleSuggestRepos(session, contextId, request);
+        return;
+      case "reopen":
+        await this.handleReopen(session, contextId, request);
+        return;
       default:
         await this.reply(session, contextId, { id: request.id, error: `unknown op ${request.op}` });
     }
@@ -252,15 +262,36 @@ export class Attacher {
         prompt: promptKey,
         branch: result.branch,
       });
+      // The session exists whatever happens next; a history that cannot be
+      // written costs the streak, not the session.
+      let stats = null;
+      try {
+        const history = await recordSession({
+          ts: context.ts,
+          channel: channelKey(context.channelName),
+          promptKey,
+          promptLabel: result.promptLabel,
+          branch: result.branch,
+          worktreePath: result.worktreePath,
+          repoPath: result.repoPath,
+          repoLabel: result.repoLabel,
+          createdAt: new Date().toISOString(),
+        });
+        stats = computeStats(history);
+      } catch (err) {
+        this.emit({ type: "history-error", message: describeError(err).message });
+      }
       await this.reply(session, contextId, {
         id: request.id,
         ok: true,
         branch: result.branch,
         worktree: result.worktreePath,
         repo: result.repoLabel,
+        stats,
         // The overlay says so on the message rather than failing silently.
         warning: result.launchError,
       });
+      await this.broadcastConfig();
     } catch (err) {
       const { message, hint } = describeError(err);
       this.emit({ type: "session-error", channel: context.channelName, message });
@@ -315,6 +346,58 @@ export class Attacher {
         });
       }
       await this.broadcastConfig();
+    } catch (err) {
+      const { message, hint } = describeError(err);
+      await this.reply(session, contextId, { id: request.id, error: message, hint });
+    }
+  }
+
+  /** Repos worth offering for this channel, best match first. */
+  private async handleSuggestRepos(
+    session: CdpSession,
+    contextId: number | undefined,
+    request: AskRequest,
+  ): Promise<void> {
+    try {
+      const config = await loadConfig();
+      const repos = await discoverRepos({
+        channel: channelKey(request.channel ?? ""),
+        linkedRepos: [...new Set(Object.values(config.channels).map((l) => l.repoPath))],
+        worktreesRoot: config.settings.worktreesRoot,
+        roots: config.settings.repoSearchRoots.length > 0
+          ? config.settings.repoSearchRoots.map(expandPath)
+          : undefined,
+      });
+      await this.reply(session, contextId, { id: request.id, ok: true, repos });
+    } catch (err) {
+      const { message, hint } = describeError(err);
+      await this.reply(session, contextId, { id: request.id, error: message, hint, repos: [] });
+    }
+  }
+
+  /** Back into a session started earlier, from the mark on its message. */
+  private async handleReopen(
+    session: CdpSession,
+    contextId: number | undefined,
+    request: AskRequest,
+  ): Promise<void> {
+    try {
+      const branch = (request.branch ?? "").trim();
+      const config = await loadConfig();
+      const history = await loadHistory();
+      const known = history.filter((h) => h.branch === branch).map((h) => h.repoPath);
+      const found = branch ? await findSession(config, branch, known) : null;
+      if (!found) {
+        await this.reply(session, contextId, {
+          id: request.id,
+          error: `${branch || "That session"} is gone.`,
+          hint: "It was probably cleaned up — start a new one from the menu.",
+        });
+        return;
+      }
+      await openSession(config, found);
+      this.emit({ type: "reopen", branch });
+      await this.reply(session, contextId, { id: request.id, ok: true, branch });
     } catch (err) {
       const { message, hint } = describeError(err);
       await this.reply(session, contextId, { id: request.id, error: message, hint });
