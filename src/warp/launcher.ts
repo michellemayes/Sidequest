@@ -132,7 +132,7 @@ export async function launchWarp(options: LaunchOptions): Promise<LaunchResult> 
   throw lastError;
 }
 
-const CLAIM_TIMEOUT_MS = 6_000;
+export const CLAIM_TIMEOUT_MS = 6_000;
 const CLAIM_POLL_MS = 50;
 const TAB_CONFIG_SETTLE_MS = 750;
 
@@ -141,7 +141,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** True once the pending marker is gone, i.e. autorun.sh has claimed it. */
-async function waitForClaim(pendingFile: string, timeoutMs: number): Promise<boolean> {
+export async function waitForClaim(pendingFile: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (!(await exists(pendingFile))) return true;
@@ -150,7 +150,7 @@ async function waitForClaim(pendingFile: string, timeoutMs: number): Promise<boo
   }
 }
 
-async function exists(path: string): Promise<boolean> {
+export async function exists(path: string): Promise<boolean> {
   try {
     await access(path);
     return true;

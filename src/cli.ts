@@ -18,6 +18,9 @@ import { listWorktrees, pruneWorktrees, removeWorktree } from "./git/worktree.js
 import { shellHookSource } from "./warp/autorun.js";
 import { strategyOrder } from "./warp/launcher.js";
 import { findSession, openSession } from "./session/reopen.js";
+import { agentDidNotStart } from "./terminals/launch.js";
+import { findTerminalApp, TERMINAL_DEFINITIONS, terminalDefinition } from "./terminals/registry.js";
+import { tmuxHasSessionArgv, TMUX_FALLBACK_SESSION } from "./terminals/commands.js";
 import { computeStats, latestSession, loadHistory, MILESTONES } from "./session/history.js";
 import { AGENT_DEFINITIONS, agentDefinition, resolveAgent } from "./agents/agents.js";
 import {
@@ -63,7 +66,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .name("sidequest")
-    .description("Turn any Slack message into an agent session in a fresh git worktree, opened in Warp.")
+    .description("Turn any Slack message into an agent session in a fresh git worktree, opened in your terminal.")
     .version("0.1.0");
 
   program
@@ -95,13 +98,18 @@ export async function runCli(argv: string[]): Promise<void> {
     .action((id: string | undefined) => wrap(() => agents(id)));
 
   program
+    .command("terminal [name]")
+    .description("show the terminals sessions can open in, or switch to one (warp, iterm2, ghostty, terminal, tmux, headless)")
+    .action((name: string | undefined) => wrap(() => terminal(name)));
+
+  program
     .command("replies [state]")
     .description("show the thread replies sessions post, or turn them on or off")
     .action((state: string | undefined) => wrap(() => replies(state)));
 
   program
     .command("reopen [ref]")
-    .description("open Warp on a session again (branch name or path; default: the latest)")
+    .description("open a session's terminal again (branch name or path; default: the latest)")
     .action((ref: string | undefined) => wrap(() => reopen(ref)));
 
   program
@@ -169,7 +177,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("doctor")
-    .description("check that git, Warp, the agent and Slack are all usable")
+    .description("check that git, your terminal, the agent and Slack are all usable")
     .action(() => wrap(doctor));
 
   await program.parseAsync(argv);
@@ -271,7 +279,7 @@ async function startTips(config: Config): Promise<string[]> {
         "repos it suggests — it looks for checkouts that match the channel's name.",
     );
   }
-  if (!(await fileExists(shellHookFile()))) {
+  if (config.settings.terminal === "warp" && !(await fileExists(shellHookFile()))) {
     tips.push("run `sidequest install-hook` so the agent starts even when Warp ignores the launch config.");
   }
   return tips;
@@ -311,6 +319,7 @@ async function status(): Promise<void> {
     console.log(`Log: ${daemonLogFile()}`);
   }
   console.log(`Agent: ${agent.label} (${[agent.command, ...agent.args].join(" ")})`);
+  console.log(`Terminal: ${terminalDefinition(config.settings.terminal).label}`);
   console.log(`Linked channels: ${Object.keys(config.channels).length}`);
   const s = computeStats(await loadHistory());
   if (s.total > 0) {
@@ -369,6 +378,48 @@ async function agents(id?: string): Promise<void> {
   console.log("`command` and `args` override the agent's executable and flags.");
 }
 
+async function terminal(name?: string): Promise<void> {
+  const wanted = name?.trim().toLowerCase();
+  if (wanted) {
+    const def = TERMINAL_DEFINITIONS.find((d) => d.id === wanted);
+    if (!def) {
+      throw new UserFacingError(
+        `Unknown terminal "${name}".`,
+        `Pick one of: ${TERMINAL_DEFINITIONS.map((d) => d.id).join(", ")}.`,
+      );
+    }
+    const config = await loadConfig();
+    const agent = resolveAgent(config.settings.agent);
+    // Refused here rather than on the next click, which would fail in Slack.
+    if (def.id === "headless" && !agent.headless) {
+      throw new UserFacingError(
+        `${agent.label} has no headless mode.`,
+        "Switch agents with `sidequest agents` first.",
+      );
+    }
+    await updateConfig((c) => {
+      c.settings.terminal = def.id;
+    });
+    console.log(
+      def.id === "headless"
+        ? "New sessions will run in the background, with no terminal. A running daemon picks this up on the next click."
+        : `New sessions will open in ${def.label}. A running daemon picks this up on the next click.`,
+    );
+    console.log("`sidequest doctor` checks it's usable.");
+    return;
+  }
+
+  const config = await loadConfig();
+  console.log("Terminals sessions can open in:\n");
+  for (const def of TERMINAL_DEFINITIONS) {
+    const marker = def.id === config.settings.terminal ? "  (active)" : "";
+    console.log(`  ${def.id}${marker}`);
+    console.log(`    ${def.label} — ${def.summary}`);
+  }
+  console.log("\nSwitch with `sidequest terminal <name>`, or in " + `${configFile()}:`);
+  console.log(`  { "settings": { "terminal": "iterm2" } }`);
+}
+
 async function replies(state?: string): Promise<void> {
   const wanted = state?.trim().toLowerCase();
   if (wanted) {
@@ -398,8 +449,8 @@ async function replies(state?: string): Promise<void> {
 }
 
 /**
- * Open Warp on a worktree Sidequest created earlier, by branch name or path —
- * or, with nothing named, the most recent one. Handy when Warp opened in the
+ * Open the terminal on a worktree Sidequest created earlier, by branch name or
+ * path — or, with nothing named, the most recent one. Handy when it opened in the
  * wrong place or the agent never started: if the session's pending marker is
  * still unclaimed, the shell hook starts the agent on arrival.
  */
@@ -427,9 +478,22 @@ async function reopen(ref: string | undefined): Promise<void> {
     );
   }
   const launch = await openSession(config, found);
-  console.log(`Opened Warp on ${found.worktree.path} (${launch.strategy}).`);
+  if (launch.terminal === "headless") {
+    console.log(
+      launch.agentStarted === null
+        ? `${found.worktree.path} has already run. ${launch.note ?? ""}`.trim()
+        : `Started the agent in the background in ${found.worktree.path}; it logs to .sidequest/agent.log.`,
+    );
+  } else {
+    console.log(`Opened ${terminalDefinition(launch.terminal).label} on ${found.worktree.path} (${launch.strategy}).`);
+    if (launch.note) console.log(launch.note);
+  }
   if (launch.agentStarted === false) {
-    console.log("The agent did not start. Run `sidequest install-hook`, open a new Warp tab there, or run .sidequest/autorun.sh.");
+    console.log(
+      launch.terminal === "warp"
+        ? "The agent did not start. Run `sidequest install-hook`, open a new Warp tab there, or run .sidequest/autorun.sh."
+        : agentDidNotStart(launch.terminal),
+    );
   }
 }
 
@@ -745,7 +809,10 @@ async function list(): Promise<void> {
   console.log(`config: ${configFile()}\n`);
   console.log("settings");
   console.log(`  worktreesRoot:  ${config.settings.worktreesRoot}`);
-  console.log(`  warpStrategy:   ${config.settings.warpStrategy}${config.settings.warpPreview ? " (preview)" : ""}`);
+  console.log(`  terminal:       ${terminalDefinition(config.settings.terminal).label}`);
+  if (config.settings.terminal === "warp") {
+    console.log(`  warpStrategy:   ${config.settings.warpStrategy}${config.settings.warpPreview ? " (preview)" : ""}`);
+  }
   console.log(`  agent:          ${agent.label} (${[agent.command, ...agent.args].join(" ")})`);
   console.log(`  threadContext:  ${config.settings.threadContextLimit} messages`);
 
@@ -858,6 +925,7 @@ async function init(options: { quiet?: boolean } = {}): Promise<void> {
   console.log(`Config lives in ${root}.`);
   console.log("\nNext:");
   console.log("  1. sidequest install-hook   (so sessions start when the Warp tab opens)");
+  console.log("     sidequest terminal       (if you'd rather use iTerm2, Ghostty, Terminal, tmux or none)");
   console.log("  2. sidequest start          (launches Slack with the overlay attached)");
   console.log("  3. In Slack, click 'Link a repo' in a channel header.");
 }
@@ -973,25 +1041,29 @@ async function doctor(): Promise<void> {
     agentOk ? "" : agentDefinition(agent.id).installHint,
   );
 
-  const opener = uriOpener();
-  check(
-    opener !== null,
-    `URI opener for ${platform()}`,
-    opener ? `${opener.command}` : "no known way to open warp:// links on this platform",
-  );
+  if (config.settings.terminal === "warp") {
+    const opener = uriOpener();
+    check(
+      opener !== null,
+      `URI opener for ${platform()}`,
+      opener ? `${opener.command}` : "no known way to open warp:// links on this platform",
+    );
 
-  const order = strategyOrder(config.settings.warpStrategy);
-  console.log(`  ok   warp strategy: ${config.settings.warpStrategy} (tries ${order.join(" → ")})`);
-  if (order.includes("tab_config")) console.log(`       tab configs in ${warpTabConfigDir(config.settings.warpPreview)}`);
-  if (order.includes("launch_config")) console.log(`       launch configs in ${warpLaunchConfigDir(config.settings.warpPreview)}`);
+    const order = strategyOrder(config.settings.warpStrategy);
+    console.log(`  ok   warp strategy: ${config.settings.warpStrategy} (tries ${order.join(" → ")})`);
+    if (order.includes("tab_config")) console.log(`       tab configs in ${warpTabConfigDir(config.settings.warpPreview)}`);
+    if (order.includes("launch_config")) console.log(`       launch configs in ${warpLaunchConfigDir(config.settings.warpPreview)}`);
 
-  const hookInstalled = await fileExists(shellHookFile());
-  console.log(`  ${hookInstalled ? "ok " : "-- "}  shell hook`);
-  console.log(
-    hookInstalled
-      ? `       installed at ${shellHookFile()}`
-      : `       not installed. Run \`sidequest install-hook\` so sessions start even when Warp ignores the launch config.`,
-  );
+    const hookInstalled = await fileExists(shellHookFile());
+    console.log(`  ${hookInstalled ? "ok " : "-- "}  shell hook`);
+    console.log(
+      hookInstalled
+        ? `       installed at ${shellHookFile()}`
+        : `       not installed. Run \`sidequest install-hook\` so sessions start even when Warp ignores the launch config.`,
+    );
+  } else {
+    await doctorTerminal(config, check);
+  }
 
   const root = installRoot();
   const head = await run("git", ["rev-parse", "HEAD"], { cwd: root }).then((r) => r.stdout.trim(), () => "");
@@ -1064,6 +1136,70 @@ async function doctor(): Promise<void> {
       : `\n${problems} problem${problems === 1 ? "" : "s"} to fix.\n`,
   );
   if (problems > 0) process.exitCode = 1;
+}
+
+/** Doctor's checks for every terminal but Warp, which has its own above. */
+async function doctorTerminal(
+  config: Config,
+  check: (ok: boolean, label: string, detail: string) => void,
+): Promise<void> {
+  const id = config.settings.terminal;
+  const def = terminalDefinition(id);
+  const onMac = platform() === "darwin";
+
+  switch (id) {
+    case "iterm2":
+    case "terminal": {
+      const app = onMac ? findTerminalApp(id) : null;
+      check(
+        app !== null,
+        `terminal: ${def.label}`,
+        !onMac
+          ? `only on macOS. Pick another with \`sidequest terminal\`.`
+          : app
+            ? `${app}. The first session asks to let Sidequest control it; allow it under ` +
+              "System Settings → Privacy & Security → Automation."
+            : def.installHint,
+      );
+      if (app) check(await succeeds("osascript", ["-e", "return"]), "osascript", "drives the terminal over AppleScript");
+      return;
+    }
+    case "ghostty": {
+      const app = onMac ? findTerminalApp(id) : null;
+      const ok = onMac ? app !== null : await succeeds("ghostty", ["--version"]);
+      check(ok, `terminal: ${def.label}`, ok ? (app ?? "ghostty on PATH") + " (1.2 or later)" : def.installHint);
+      return;
+    }
+    case "tmux": {
+      const ok = await succeeds("tmux", ["-V"]);
+      check(ok, `terminal: ${def.label}`, ok ? "" : def.installHint);
+      if (!ok) return;
+      const target = config.settings.tmuxSession.trim();
+      const has = tmuxHasSessionArgv(target);
+      const running = await succeeds(has.command, has.args);
+      console.log(`  ${running ? "ok " : "-- "}  tmux session${target ? ` "${target}"` : ""}`);
+      console.log(
+        running
+          ? `       sessions open as new windows in ${target ? `"${target}"` : "the session you used last"}`
+          : `       none running, so the first session starts a detached "${target || TMUX_FALLBACK_SESSION}" session to attach to`,
+      );
+      return;
+    }
+    case "headless": {
+      const agent = resolveAgent(config.settings.agent);
+      check(
+        agent.headless !== undefined,
+        `terminal: ${def.label}`,
+        agent.headless
+          ? `runs ${[agent.command, ...agent.headless.args].join(" ")} "<prompt>"; ` +
+            "logs to .sidequest/agent.log, answers in .sidequest/result.md"
+          : `${agent.label} has no headless mode. Switch with \`sidequest agents\` or \`sidequest terminal\`.`,
+      );
+      return;
+    }
+    case "warp":
+      return;
+  }
 }
 
 async function fileExists(path: string): Promise<boolean> {

@@ -1,5 +1,5 @@
 /**
- * The coding agents Sidequest can launch in a Warp tab.
+ * The coding agents Sidequest can launch in a terminal.
  *
  * Every agent is driven the same way: a terminal opens in the fresh worktree
  * and runs `<command> [...args] "<prompt>"`, with the rendered prompt as one
@@ -18,6 +18,28 @@ export interface AgentDefinition {
   defaultArgs: string[];
   /** Shown by `sidequest doctor` when the command is not usable. */
   installHint: string;
+  /**
+   * How to run the agent with no terminal (settings.terminal "headless"),
+   * or absent when it has no non-interactive mode.
+   */
+  headless?: HeadlessInvocation;
+}
+
+/**
+ * A non-interactive run: `<command> [...args] [...user args] "<prompt>"` in
+ * the worktree, with nobody there to approve anything. The flags keep what
+ * the agent may do to the worktree, since the prompt carries Slack text.
+ */
+export interface HeadlessInvocation {
+  /** Placed before the user's own args and the prompt. */
+  args: string[];
+  /**
+   * Where the final answer comes out. `stdout`: the agent prints only its
+   * answer, and the runner saves it to .sidequest/result.md. `file`: `args`
+   * already make the agent write .sidequest/result.md itself, and all of its
+   * output is progress for the log.
+   */
+  result: "stdout" | "file";
 }
 
 export const AGENT_DEFINITIONS: AgentDefinition[] = [
@@ -26,6 +48,9 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     label: "Claude Code",
     command: "claude",
     defaultArgs: [],
+    // Print mode answers on stdout. acceptEdits lets it change files in the
+    // worktree; anything else it would need a person to approve is refused.
+    headless: { args: ["-p", "--permission-mode", "acceptEdits"], result: "stdout" },
     installHint:
       "Install Claude Code (https://claude.com/claude-code), or point settings.agent.command at its executable.",
   },
@@ -34,6 +59,12 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     label: "Codex",
     command: "codex",
     defaultArgs: [],
+    // exec streams progress on stdout; --full-auto is its workspace-write
+    // sandbox, and the last message is the answer.
+    headless: {
+      args: ["exec", "--full-auto", "--output-last-message", ".sidequest/result.md"],
+      result: "file",
+    },
     installHint:
       "Install the Codex CLI (npm install -g @openai/codex), or point settings.agent.command at its executable.",
   },
@@ -55,6 +86,8 @@ export interface ResolvedAgent {
   label: string;
   command: string;
   args: string[];
+  /** The agent's non-interactive mode, if it has one. */
+  headless?: HeadlessInvocation;
 }
 
 /**
@@ -68,5 +101,6 @@ export function resolveAgent(config: AgentConfig): ResolvedAgent {
     label: def.label,
     command: config.command.trim() || def.command,
     args: config.args.length > 0 ? config.args : def.defaultArgs,
+    ...(def.headless ? { headless: def.headless } : {}),
   };
 }

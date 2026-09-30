@@ -1,10 +1,12 @@
 import { stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import type { Config } from "../config/schema.js";
 import { linkedRepoPaths } from "../config/channels.js";
 import { listWorktrees, type WorktreeRecord } from "../git/worktree.js";
-import { colorForPrompt, launchWarp, type LaunchResult } from "../warp/launcher.js";
-import { warpConfigName } from "./naming.js";
+import { colorForPrompt } from "../warp/launcher.js";
+import { headlessPaths } from "../terminals/headless.js";
+import { launchTerminal, type TerminalLaunchResult } from "../terminals/launch.js";
+import { tabTitle, warpConfigName } from "./naming.js";
 import { UserFacingError } from "../util/errors.js";
 
 export interface FoundSession {
@@ -39,10 +41,11 @@ export async function findSession(
 }
 
 /**
- * Open Warp on a session again. If the session's pending marker is still
- * unclaimed, the agent starts on arrival; otherwise it is just a tab there.
+ * Open the terminal on a session again. If the session's pending marker is
+ * still unclaimed, the agent starts on arrival; otherwise it is just a tab
+ * there (or, headless, the session's answer or log).
  */
-export async function openSession(config: Config, found: FoundSession): Promise<LaunchResult> {
+export async function openSession(config: Config, found: FoundSession): Promise<TerminalLaunchResult> {
   const { worktree, repoPath } = found;
   try {
     await stat(worktree.path);
@@ -53,7 +56,10 @@ export async function openSession(config: Config, found: FoundSession): Promise<
     );
   }
 
-  const scriptFile = join(worktree.path, ".sidequest", "autorun.sh");
+  const scriptFile =
+    config.settings.terminal === "headless"
+      ? headlessPaths(worktree.path).scriptFile
+      : join(worktree.path, ".sidequest", "autorun.sh");
   let scriptExists = false;
   try {
     await stat(scriptFile);
@@ -63,16 +69,15 @@ export async function openSession(config: Config, found: FoundSession): Promise<
   }
 
   const prefix = worktree.branch.split("/")[0] ?? "";
-  const launch = await launchWarp({
-    strategy: scriptExists ? config.settings.warpStrategy : "new_tab",
-    preview: config.settings.warpPreview,
-    spec: {
+  return launchTerminal({
+    settings: config.settings,
+    session: {
       name: warpConfigName(worktree.branch),
       color: colorForPrompt(prefix),
+      title: tabTitle(prefix || "sidequest", basename(repoPath)),
       cwd: worktree.path,
-      command: scriptExists ? scriptFile : "true",
+      script: scriptExists ? scriptFile : null,
+      pendingFile: join(worktree.path, ".sidequest", "pending"),
     },
-    pendingFile: join(worktree.path, ".sidequest", "pending"),
   });
-  return launch;
 }

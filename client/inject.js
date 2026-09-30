@@ -41,10 +41,17 @@
     repoLabels: {},
     lastRepos: {},
     agentLabel: 'Claude Code',
+    terminalLabel: 'Warp',
+    headless: false,
     sessions: {},
     stats: { total: 0, today: 0, streak: 0 },
     verbose: false,
   }, window.__SIDEQUEST_CONFIG || {});
+
+  /* What clicking a past session does, for tooltips: headless has no window to reopen. */
+  const reopenHint = (what) => CONFIG.headless
+    ? `see ${what === 'it' ? 'its' : `${what}'s`} result`
+    : `open ${what} in ${CONFIG.terminalLabel} again`;
 
   const ASK = '__sidequestAsk';
   const LAYER_ID = 'sidequest-layer';
@@ -1089,7 +1096,7 @@
           reopen(entry.branch, sig);
           schedule();
         });
-        again.title = `Open ${entry.branch} in Warp again`;
+        again.title = reopenHint(entry.branch).replace(/^./, (c) => c.toUpperCase());
         spans(again, [['sq-glyph', '↩'], ['', `Back to ${entry.label || 'session'}`], ['sq-sub', shortBranch(entry.branch)]]);
         menu.append(again);
       }
@@ -1538,8 +1545,8 @@
   function celebrate(prompt, res) {
     const s = res.stats;
     const where = res.warning
-      ? 'Worktree ready — Warp did not open'
-      : `${CONFIG.agentLabel} is starting in Warp`;
+      ? (CONFIG.headless ? 'Worktree ready — the agent did not start' : `Worktree ready — ${CONFIG.terminalLabel} did not open`)
+      : (CONFIG.headless ? `${CONFIG.agentLabel} is working in the background` : `${CONFIG.agentLabel} is starting in ${CONFIG.terminalLabel}`);
     if (!s) {
       toast({ title: `${prompt.label} is underway`, sub: where, burst: true });
       return;
@@ -2180,7 +2187,7 @@
         text.textContent = entry.text;
         // The line is one line wide; the tooltip is where all of it lives.
         el.title = entry.branch
-          ? `${entry.text}\n\nClick to open ${entry.branch} in Warp again.`
+          ? `${entry.text}\n\nClick to ${reopenHint(entry.branch)}.`
           : entry.text;
       }
       if (el.dataset.kind !== entry.kind) el.dataset.kind = entry.kind;
@@ -2227,7 +2234,7 @@
         const last = list[list.length - 1];
         el.title = `Sidequested → ${last.branch}` +
           (list.length > 1 ? ` (and ${list.length - 1} more)` : '') +
-          '\nClick to open it in Warp again.';
+          `\nClick to ${reopenHint('it')}.`;
       }
       const rect = row.getBoundingClientRect();
       if (clip && onScreen(rect, clip)) {

@@ -6,14 +6,11 @@ import type { Config, PromptKey } from "../config/schema.js";
 import { inspectRepo } from "../git/repo.js";
 import { createWorktree } from "../git/worktree.js";
 import { autorunPaths, writeAutorun } from "../warp/autorun.js";
-import {
-  colorForPrompt,
-  launchWarp,
-  prepareTabConfig,
-  strategyOrder,
-  type PreparedTabConfig,
-} from "../warp/launcher.js";
+import { colorForPrompt, prepareTabConfig, strategyOrder, type PreparedTabConfig } from "../warp/launcher.js";
 import { removeTabConfig, type WarpSessionSpec } from "../warp/configFiles.js";
+import { writeHeadlessRunner } from "../terminals/headless.js";
+import { agentDidNotStart, launchTerminal } from "../terminals/launch.js";
+import { terminalDefinition } from "../terminals/registry.js";
 import { branchNameFor, tabTitle, warpConfigName } from "./naming.js";
 import { describeError, UserFacingError } from "../util/errors.js";
 import { stripSlackMarkup } from "../util/slug.js";
@@ -44,6 +41,8 @@ export interface SessionResult {
   baseBranch: string;
   promptLabel: string;
   agentLabel: string;
+  /** The terminal the session opened in, e.g. "iTerm2". */
+  terminalLabel: string;
   launchStrategy: string;
   fellBackToNewTab: boolean;
   promptFile: string;
@@ -52,13 +51,13 @@ export interface SessionResult {
    * settings.autoReply is off or the prompt has no reply.
    */
   reply: string;
-  /** Set when the worktree is ready but Warp could not be opened, or the agent did not start. */
+  /** Set when the worktree is ready but the terminal could not be opened, or the agent did not start. */
   launchError?: string;
 }
 
 /**
  * The whole flow behind one button click: resolve the channel's repo, cut a
- * worktree, render the prompt into it, and open Warp there.
+ * worktree, render the prompt into it, and open the terminal there.
  */
 export async function createSession(
   promptKey: PromptKey,
@@ -94,6 +93,15 @@ export async function createSession(
   const repoLabel = link.label.trim() || repo.name;
   const prompt = promptFor(config, promptKey);
   const agent = resolveAgent(config.settings.agent);
+  const terminal = config.settings.terminal;
+
+  // Checked before anything is cut, like the Linear ticket above.
+  if (terminal === "headless" && !agent.headless) {
+    throw new UserFacingError(
+      `${agent.label} has no headless mode.`,
+      "Pick another agent with `sidequest agents`, or a terminal with `sidequest terminal`.",
+    );
+  }
 
   const branch = branchNameFor({
     promptKey,
@@ -116,7 +124,8 @@ export async function createSession(
   // write it while git checks the worktree out rather than after.
   let preparedTabConfig: PreparedTabConfig | undefined;
   const preview = config.settings.warpPreview;
-  const tabConfigFirst = strategyOrder(config.settings.warpStrategy)[0] === "tab_config";
+  const tabConfigFirst =
+    terminal === "warp" && strategyOrder(config.settings.warpStrategy)[0] === "tab_config";
 
   let tabConfigName: string | undefined;
   const worktree = await createWorktree({
@@ -164,6 +173,17 @@ export async function createSession(
     agentLabel: agent.label,
     title,
   });
+  const headless =
+    terminal === "headless" && agent.headless
+      ? await writeHeadlessRunner({
+          worktreePath: worktree.path,
+          agentCommand: agent.command,
+          agentArgs: config.settings.agent.args,
+          headless: agent.headless,
+          agentLabel: agent.label,
+        })
+      : null;
+  const terminalLabel = terminalDefinition(terminal).label;
 
   const base = {
     branch: worktree.branch,
@@ -174,17 +194,25 @@ export async function createSession(
     promptLabel: prompt.label,
     promptFile: files.promptFile,
     agentLabel: agent.label,
+    terminalLabel,
     reply,
   };
 
-  // The worktree and prompt are already on disk and usable. If Warp will not
-  // open, say so and hand back the path rather than throwing away the work.
+  // The worktree and prompt are already on disk and usable. If the terminal
+  // will not open, say so and hand back the path rather than throwing away
+  // the work.
   try {
-    const launch = await launchWarp({
-      strategy: config.settings.warpStrategy,
-      preview,
-      spec: specFor(worktree),
-      pendingFile: files.pendingFile,
+    const spec = specFor(worktree);
+    const launch = await launchTerminal({
+      settings: config.settings,
+      session: {
+        name: spec.name,
+        color: spec.color,
+        title,
+        cwd: worktree.path,
+        script: headless?.scriptFile ?? files.scriptFile,
+        pendingFile: files.pendingFile,
+      },
       preparedTabConfig,
     });
 
@@ -193,26 +221,19 @@ export async function createSession(
       ...base,
       launchStrategy: launch.strategy,
       fellBackToNewTab: launch.fellBack,
-      ...(launch.agentStarted === false ? { launchError: AGENT_DID_NOT_START } : {}),
+      ...(launch.agentStarted === false ? { launchError: agentDidNotStart(terminal) } : {}),
     };
   } catch (err) {
     const { message } = describeError(err);
-    log.error(`worktree ready at ${worktree.path} but Warp did not open: ${message}`);
+    log.error(`worktree ready at ${worktree.path} but ${terminalLabel} did not open: ${message}`);
     return {
       ...base,
-      launchStrategy: config.settings.warpStrategy,
+      launchStrategy: terminal === "warp" ? config.settings.warpStrategy : terminal,
       fellBackToNewTab: false,
       launchError: message,
     };
   }
 }
-
-/**
- * Warp opened on the worktree, but nothing ran autorun.sh: Warp ignored the
- * launch config and the shell hook that would catch that is not installed.
- */
-const AGENT_DID_NOT_START =
-  "Warp opened but the agent did not start. Run `sidequest install-hook`, then `sidequest reopen`.";
 
 interface ContextExtras {
   branch: string;

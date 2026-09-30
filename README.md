@@ -3,8 +3,10 @@
 **Turn any Slack message into a coding-agent session in one click.**
 
 Someone reports a bug in Slack. You hover the message and click **Sidequest → Fix**.
-A few seconds later a Warp tab is open on a fresh git worktree, and Claude Code (or
+A few seconds later a terminal tab is open on a fresh git worktree, and Claude Code (or
 Codex) is already working on it, with the message and its thread as the prompt.
+That's Warp out of the box; iTerm2, Ghostty, Terminal and tmux work too, or skip the
+terminal and let the agent run in the background.
 
 ![Sidequest demo: pick Fix on a Slack message, watch Claude Code fix it in a Warp tab on a new worktree, and find the branch linked back in Slack](docs/demo/demo.gif)
 
@@ -21,9 +23,10 @@ See [`docs/demo`](docs/demo) to re-record it.</sub>
 
 ## Quick start
 
-You'll need macOS, Node 20+, git, [Warp](https://www.warp.dev/), and
+You'll need macOS, Node 20+, git, and
 [Claude Code](https://claude.com/claude-code) or [Codex](https://github.com/openai/codex)
-on your `PATH`.
+on your `PATH`. Sessions open in [Warp](https://www.warp.dev/) unless you pick
+another terminal (see [Terminals](#terminals)).
 
 ```bash
 git clone https://github.com/michellemayes/Sidequest.git
@@ -87,7 +90,8 @@ and a local daemon then:
 
 1. creates `git worktree add -b <branch> <path> origin/<base>`,
 2. writes the prompt to `<worktree>/.sidequest/prompt.md` (git-excluded),
-3. opens Warp on the worktree and starts your agent.
+3. opens your terminal on the worktree and starts your agent (or, headless,
+   runs it in the background).
 
 <img src="docs/demo/menu.png" width="720" alt="The Sidequest menu open on a message, with Investigate, Fix and Review">
 
@@ -101,16 +105,47 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest setup` | First run in one command: config, shell hook, checks, start |
 | `sidequest start` / `stop` / `status` | Run the background daemon (logs in `~/.sidequest/sidequest.log`) |
 | `sidequest update` | Pull the latest and rebuild, reinstalling dependencies only if they changed; restarts a running daemon (`--no-restart` to skip) |
-| `sidequest doctor` | Check git, Warp, the agent, Slack.app, the debug port, and whether the build is current |
+| `sidequest doctor` | Check git, your terminal, the agent, Slack.app, the debug port, and whether the build is current |
 | `sidequest sessions` | List every worktree Sidequest created |
-| `sidequest reopen [ref]` | Reopen Warp on a session (the latest if you name none) |
+| `sidequest reopen [ref]` | Reopen a session's terminal (the latest if you name none). Headless, it opens the answer, or the log while it's still running |
 | `sidequest stats` | Your total, today's count, current and best streak |
 | `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force` |
 | `sidequest link <path> -c <channel>` | Link a repo to a channel from the terminal. Linking a second repo adds it; the first stays the default |
 | `sidequest unlink [repo] -c <channel>` | Unlink one repo (by path or label) from a channel, or all of them if you name none |
 | `sidequest replies [on\|off]` | Show the thread replies sessions post, or turn them on or off |
 | `sidequest agents [claude\|codex]` | Show the available agents, or switch the one new sessions use |
+| `sidequest terminal [name]` | Show the terminals sessions can open in, or switch: `warp`, `iterm2`, `ghostty`, `terminal`, `tmux` or `headless` |
 | `sidequest list` / `prompts` | Show linked channels and prompt templates |
+
+## Terminals
+
+Sessions open in Warp unless you say otherwise. Switch with
+`sidequest terminal <name>` (a running daemon picks it up on the next click),
+and run `sidequest doctor` to check the new one works:
+
+| | What a session opens |
+| --- | --- |
+| `warp` (default) | A coloured Warp tab, via a tab config, a launch config or the shell hook. See `warpStrategy` below |
+| `iterm2` | A new tab in iTerm2's front window, or a new window if none is open |
+| `ghostty` | A new Ghostty window. Needs Ghostty 1.2 or later |
+| `terminal` | A new Terminal.app window |
+| `tmux` | A new window in your running tmux server (the session you used last, or `tmuxSession`). With no server running, a detached `sidequest` session: `tmux attach -t sidequest` |
+| `headless` | No terminal at all. See below |
+
+iTerm2 and Terminal are driven over AppleScript, so the first session makes
+macOS ask whether Sidequest may control them. Every terminal runs the same
+`.sidequest/autorun.sh` in the worktree, which reads the prompt from its file,
+and leaves you a shell there when the agent exits.
+
+**Headless.** `sidequest terminal headless` runs the agent non-interactively in
+the background: `claude -p` or `codex exec`, with the prompt as its one
+argument. Everything it prints goes to `.sidequest/agent.log` in the worktree,
+and its final answer to `.sidequest/result.md` (only when it finishes cleanly).
+Nobody is there to approve anything, so each agent runs with limits: Claude
+Code may edit files in the worktree (`--permission-mode acceptEdits`) but not
+run commands, and Codex runs in its workspace-write sandbox (`--full-auto`).
+Your `agent.args` go after those flags. Clicking the session later (or
+`sidequest reopen`) opens `result.md`, or `agent.log` while it's still working.
 
 ## Configuration
 
@@ -169,8 +204,10 @@ without a heading). With nothing typed in the Ask box, its reply is
 | --- | --- | --- |
 | `agent` | `{ "id": "claude" }` | `claude` or `codex` (or run `sidequest agents codex`). Use `command`/`args` to override the executable |
 | `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees go |
-| `warpStrategy` | `auto` | `auto` tries a tab config, then a launch config, then a plain new tab, until the agent starts. `tab_config`, `launch_config` or `new_tab` puts that one first |
-| `warpPreview` | `false` | Use Warp Preview |
+| `terminal` | `warp` | `warp`, `iterm2`, `ghostty`, `terminal`, `tmux` or `headless` (or run `sidequest terminal <name>`). See Terminals above |
+| `tmuxSession` | `""` | The tmux session new windows go into. Empty means the one you used last |
+| `warpStrategy` | `auto` | Warp only. `auto` tries a tab config, then a launch config, then a plain new tab, until the agent starts. `tab_config`, `launch_config` or `new_tab` puts that one first |
+| `warpPreview` | `false` | Warp only. Use Warp Preview |
 | `fetchBeforeCreate` | `true` | Fetch the base branch first. A fetch slower than 3 seconds doesn't hold up the session: it's cut from the local ref while the fetch finishes in the background |
 | `repoSearchRoots` | `[]` | Where to look for repos to suggest. Empty means `~/code`, `~/src`, `~/Developer`, `~/projects` and similar, two levels deep |
 | `threadContextLimit` | `10` | How many earlier messages go into the prompt |
@@ -204,8 +241,18 @@ Start with `sidequest doctor`.
   worktree, where the shell hook takes over: run `sidequest install-hook` and
   open a new Warp tab. `~/.sidequest/sidequest.log` shows which strategy was
   tried. Then retry, or run `sidequest reopen` (latest) / `sidequest reopen <branch>`.
-- **Warp doesn't open**: the worktree still exists. `cd` into it and run
-  `.sidequest/autorun.sh`.
+- **Warp (or your terminal) doesn't open**: the worktree still exists. `cd`
+  into it and run `.sidequest/autorun.sh`.
+- **iTerm2 or Terminal doesn't open, and the log says "Not authorized"**: macOS
+  blocked the AppleScript. Allow Sidequest's terminal (the one you ran
+  `sidequest start` from) to control it under System Settings → Privacy &
+  Security → Automation, then `sidequest reopen`.
+- **A tmux session opened but you can't see it**: with no tmux server running,
+  Sidequest starts a detached `sidequest` session. `tmux attach -t sidequest`.
+- **Headless: no `result.md`**: the agent failed or is still going. The last
+  line of `.sidequest/agent.log` says which, with its exit code. A session
+  only runs once; to run it again, `touch .sidequest/pending` in the worktree
+  and `sidequest reopen <branch>`.
 
 ## Security
 
@@ -214,7 +261,10 @@ reply, which is off unless you turn on `autoReply`: the overlay then posts it
 to your workspace's own Slack API with the session Slack's window is already
 signed in with. That token stays in the window and never reaches the daemon.
 Sidequest runs commands from argv arrays, never through a shell, and passes the
-prompt in a file, so message text can't inject commands. The overlay runs inside
+prompt in a file, so message text can't inject commands. That holds for every
+terminal: the AppleScript for iTerm2 and Terminal takes the worktree and script
+paths as arguments and quotes them itself, and a headless run passes the prompt
+to the agent as one argument read from the file. The overlay runs inside
 Slack's window, so what the daemon sends it is visible there: channel links,
 prompt labels, past sessions' branch names, and (only while a link menu or panel
 is open) the paths of the repos it suggests. Session history is kept in

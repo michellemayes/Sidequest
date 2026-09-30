@@ -43,6 +43,15 @@ export type RepoLink = z.infer<typeof repoLinkSchema>;
 export const warpStrategySchema = z.enum(["auto", "tab_config", "launch_config", "new_tab"]);
 export type WarpStrategy = z.infer<typeof warpStrategySchema>;
 
+/**
+ * Where a session runs. The macOS terminals open a tab or window in the
+ * worktree; `tmux` opens a window in a running tmux server; `headless` runs
+ * the agent in the background with no terminal at all.
+ */
+export const TERMINAL_IDS = ["warp", "iterm2", "ghostty", "terminal", "tmux", "headless"] as const;
+export const terminalSchema = z.enum(TERMINAL_IDS);
+export type TerminalId = z.infer<typeof terminalSchema>;
+
 export const agentConfigSchema = z.object({
   /** Which built-in agent to launch; see src/agents/agents.ts for the registry. */
   id: z.string().default("claude"),
@@ -57,6 +66,8 @@ export type AgentConfig = z.infer<typeof agentConfigSchema>;
 export const settingsSchema = z.object({
   /** Parent directory that holds every generated worktree. */
   worktreesRoot: z.string().default(defaultWorktreesRoot()),
+  /** Which terminal sessions open in; see src/terminals/registry.ts. */
+  terminal: terminalSchema.default("warp"),
   /**
    * How to open Warp. `auto` tries a tab config, then a launch config, then a
    * plain new tab, until the agent starts. The others put that strategy first;
@@ -65,7 +76,12 @@ export const settingsSchema = z.object({
   warpStrategy: warpStrategySchema.default("auto"),
   /** Use the Warp Preview build (warppreview:// scheme). */
   warpPreview: z.boolean().default(false),
-  /** Which coding agent to launch in Warp; command/args override its defaults. */
+  /**
+   * The tmux session new windows go into. Empty means whichever session was
+   * used last, or a detached `sidequest` session when no server is running.
+   */
+  tmuxSession: z.string().default(""),
+  /** Which coding agent to launch; command/args override its defaults. */
   agent: agentConfigSchema.default({}),
   /** Pull the base branch before cutting the worktree. */
   fetchBeforeCreate: z.boolean().default(true),

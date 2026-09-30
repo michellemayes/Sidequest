@@ -1,6 +1,7 @@
 import { allPrompts } from "./store.js";
 import { linkLabel } from "./channels.js";
 import { resolveAgent } from "../agents/agents.js";
+import { terminalDefinition } from "../terminals/registry.js";
 import type { Config } from "./schema.js";
 import { computeStats, type HistoryEntry } from "../session/history.js";
 
@@ -37,6 +38,10 @@ export interface PageConfig {
   lastRepos: Record<string, string>;
   /** Human label of the agent sessions launch, e.g. "Claude Code". */
   agentLabel: string;
+  /** Where sessions run, e.g. "Warp"; the overlay names it in toasts and tooltips. */
+  terminalLabel: string;
+  /** True when sessions run with no terminal, so there is no window to reopen. */
+  headless: boolean;
   /** Message ts -> sessions started from it, oldest first. */
   sessions: Record<string, PageSession[]>;
   stats: { total: number; today: number; streak: number };
@@ -59,6 +64,8 @@ export function pageConfig(config: Config, history: HistoryEntry[] = []): PageCo
     repoLabels,
     lastRepos: lastRepos(config, history),
     agentLabel: resolveAgent(config.settings.agent).label,
+    terminalLabel: terminalDefinition(config.settings.terminal).label,
+    headless: config.settings.terminal === "headless",
     sessions: sessionsByMessage(history),
     stats: (({ total, today, streak }) => ({ total, today, streak }))(computeStats(history)),
     verbose: config.settings.verbose,
