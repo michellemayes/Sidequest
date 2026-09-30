@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import type { Config } from "../config/schema.js";
 import { linkedRepoPaths } from "../config/channels.js";
 import { listWorktrees, type WorktreeRecord } from "../git/worktree.js";
@@ -68,7 +68,6 @@ export async function openSession(config: Config, found: FoundSession): Promise<
     preview: config.settings.warpPreview,
     spec: {
       name: warpConfigName(worktree.branch),
-      title: `${worktree.branch} · ${basename(repoPath)}`,
       color: colorForPrompt(prefix),
       cwd: worktree.path,
       command: scriptExists ? scriptFile : "true",

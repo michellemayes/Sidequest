@@ -107,7 +107,6 @@ export async function createSession(
   const title = tabTitle(prompt.label, repoLabel);
   const specFor = (names: { branch: string; path: string }): WarpSessionSpec => ({
     name: warpConfigName(names.branch),
-    title,
     color: colorForPrompt(promptKey),
     cwd: names.path,
     command: autorunPaths(names.path).scriptFile,
@@ -163,6 +162,7 @@ export async function createSession(
     agentCommand: agent.command,
     agentArgs: agent.args,
     agentLabel: agent.label,
+    title,
   });
 
   const base = {
