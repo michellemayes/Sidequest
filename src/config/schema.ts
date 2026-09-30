@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defaultWorktreesRoot } from "./paths.js";
 
-export const PROMPT_KEYS = ["investigate", "fix", "review", "ask", "linear"] as const;
+export const PROMPT_KEYS = ["investigate", "fix", "review", "ask", "linear", "github", "jira"] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 
 export const promptSchema = z.object({
@@ -161,6 +161,8 @@ export const configSchema = z.object({
       review: promptOverrideSchema.optional(),
       ask: promptOverrideSchema.optional(),
       linear: promptOverrideSchema.optional(),
+      github: promptOverrideSchema.optional(),
+      jira: promptOverrideSchema.optional(),
     })
     .default({}),
 });

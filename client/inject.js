@@ -52,8 +52,6 @@
   // A result outlives a scroll away and back, not a working session.
   const RESULT_TTL_MS = 10 * 60 * 1000;
   const MAX_RESULTS = 20;
-  /* The prompt that works a Linear issue; shown only when a message links one. */
-  const LINEAR_KEY = 'linear';
   const ASK_KEY = 'ask';
   const TICK_MS = 250;
   const TOAST_MS = 5200;
@@ -764,26 +762,53 @@
   }
 
   /*
-   * A Linear issue link, with its identifier. Mirrors LINEAR_ISSUE in
-   * src/config/prompts.ts, which checks it again on the way in.
+   * The prompts that work a tracker's ticket, keyed by prompt key, each shown
+   * only on a message that links one. The patterns mirror
+   * src/config/tickets.ts, which reads the link again on the way in; `id`
+   * tells two links to the same ticket apart and `name` follows the prompt's
+   * label in the menu (Linear DATA-3051, GitHub #123, Jira ABC-123).
    */
-  const LINEAR_ISSUE = /https?:\/\/linear\.app\/[^/\s]+\/issue\/([A-Za-z][A-Za-z0-9]*-\d+)[^\s<>|]*/gi;
+  const TICKET_PROMPTS = {
+    linear: {
+      pattern: /https?:\/\/linear\.app\/[^/\s]+\/issue\/([A-Za-z][A-Za-z0-9]*-\d+)[^\s<>|]*/gi,
+      id: (m) => m[1].toUpperCase(),
+      name: (m) => m[1].toUpperCase(),
+    },
+    github: {
+      pattern: /https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][A-Za-z0-9-]*)\/([A-Za-z0-9._-]+)\/issues\/(\d+)(?!\d)/gi,
+      id: (m) => `${m[1]}/${m[2]}#${m[3]}`.toLowerCase(),
+      name: (m) => `#${m[3]}`,
+    },
+    jira: {
+      pattern: /https?:\/\/[^/\s<>|]+(?:\/[^/\s<>|?#]+)*?\/browse\/([A-Za-z][A-Za-z0-9_]*-\d+)(?![\w-])/gi,
+      id: (m) => m[1].toUpperCase(),
+      name: (m) => m[1].toUpperCase(),
+    },
+  };
+  // More than this and the menu is mostly tickets; the first ones are the point.
   const MAX_TICKETS = 2;
 
   /**
-   * The Linear issues a message links, first seen first. Read off the links'
-   * own hrefs as well as the text, since a link can be labelled with anything.
+   * The tickets a message links, of any tracker, first seen first. Read off
+   * the links' own hrefs as well as the text, since a link can be labelled
+   * with anything.
    */
-  function linearTickets(item) {
+  function messageTickets(item) {
     const content = item.querySelector(SEL.content);
     if (!content) return [];
     const sources = Array.from(content.querySelectorAll('a[href]'), (a) => a.href);
     sources.push(messageText(item));
     const found = new Map();
     for (const source of sources) {
-      for (const match of String(source).matchAll(LINEAR_ISSUE)) {
-        const id = match[1].toUpperCase();
-        if (!found.has(id)) found.set(id, { id, url: match[0] });
+      const inSource = [];
+      for (const [key, tracker] of Object.entries(TICKET_PROMPTS)) {
+        for (const match of String(source).matchAll(tracker.pattern)) {
+          inSource.push({ index: match.index, key, id: tracker.id(match), name: tracker.name(match), url: match[0] });
+        }
+      }
+      inSource.sort((a, b) => a.index - b.index);
+      for (const { key, id, name, url } of inSource) {
+        if (!found.has(`${key}:${id}`)) found.set(`${key}:${id}`, { key, id, name, url });
       }
     }
     return Array.from(found.values()).slice(0, MAX_TICKETS);
@@ -1099,13 +1124,13 @@
         menu.append(sep);
       }
 
-      // The Linear prompt is only worth offering on a message that links an
-      // issue, and then once per issue, named for it.
-      const tickets = linearTickets(row);
+      // A tracker's prompt is only worth offering on a message that links
+      // one of its tickets, and then once per ticket, named for it.
+      const tickets = messageTickets(row);
       const entries = [];
       for (const prompt of CONFIG.prompts) {
-        if (prompt.key !== LINEAR_KEY) entries.push({ prompt, ticket: null });
-        else for (const ticket of tickets) entries.push({ prompt, ticket });
+        if (!TICKET_PROMPTS[prompt.key]) entries.push({ prompt, ticket: null });
+        else for (const ticket of tickets) if (ticket.key === prompt.key) entries.push({ prompt, ticket });
       }
       const letterFor = promptLetters(entries.map((e) => e.prompt));
       entries.forEach(({ prompt, ticket }, index) => {
@@ -1119,13 +1144,13 @@
           if (target && target.isConnected) startSession(target, prompt, ticket);
           schedule();
         });
-        const label = ticket ? `${prompt.label} ${ticket.id}` : prompt.label;
+        const label = ticket ? `${prompt.label} ${ticket.name}` : prompt.label;
         entry.textContent = label;
         entry.dataset.glyph = glyphFor(prompt.emoji);
         if (index < 9) entry.dataset.key = String(index + 1);
         const letter = letterFor(prompt.label);
         if (letter) entry.dataset.letter = letter;
-        entry.title = `${ticket ? `Work ${ticket.id}` : prompt.label}${repos.length > 1 ? ' in the picked repo' : ''} with ${CONFIG.agentLabel} — press ${index + 1}${letter ? ` or ${letter.toUpperCase()}` : ''}`;
+        entry.title = `${ticket ? `Work ${prompt.label} ${ticket.name}` : prompt.label}${repos.length > 1 ? ' in the picked repo' : ''} with ${CONFIG.agentLabel} — press ${index + 1}${letter ? ` or ${letter.toUpperCase()}` : ''}`;
         menu.append(entry);
       });
     }
@@ -1425,7 +1450,7 @@
       ticket: ticket ? ticket.url : '',
       question,
     };
-    const label = (ticket ? `${prompt.label} ${ticket.id}` : prompt.label) + (repo ? ` in ${repo}` : '');
+    const label = (ticket ? `${prompt.label} ${ticket.name}` : prompt.label) + (repo ? ` in ${repo}` : '');
 
     setResult(sig, `Starting ${label}…`, 'busy');
 

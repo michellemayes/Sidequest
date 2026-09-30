@@ -128,6 +128,33 @@ describe("branchNameFor with a Linear ticket", () => {
   });
 });
 
+describe("branchNameFor with a GitHub issue or Jira ticket", () => {
+  it("leads with the issue number", () => {
+    const branch = branchNameFor({
+      promptKey: "github",
+      branchPrefix: "issue",
+      messageText: "Checkout breaks on Safari",
+      messageTs: "1757430000.000100",
+      ticketId: "123",
+      now: NOW,
+    });
+    expect(branch).toBe("issue/123-checkout-breaks-on-safari-20260909-1432");
+  });
+
+  it("keeps a Jira key upper-case, which Jira's development panel matches", () => {
+    const branch = branchNameFor({
+      promptKey: "jira",
+      branchPrefix: "jira",
+      messageText: "Checkout breaks on Safari",
+      messageTs: "1757430000.000100",
+      ticketId: "ABC-123",
+      keepTicketCase: true,
+      now: NOW,
+    });
+    expect(branch).toBe("jira/ABC-123-checkout-breaks-on-safari-20260909-1432");
+  });
+});
+
 describe("warpConfigName", () => {
   it("produces a filename-safe, lowercase name", () => {
     expect(warpConfigName("fix/Total-Wrong-20260909-1432")).toBe(

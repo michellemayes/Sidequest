@@ -76,6 +76,12 @@ so you don't cut a duplicate branch by accident.
 | **Review** | Reviews the referenced PR, branch or diff, bugs first. Changes nothing. |
 | **Ask** | Opens a small box in the menu for your question (**Enter** to send, **Shift+Enter** for a new line, **Esc** to cancel). The agent gets the message, the thread and your question, reads the relevant code, and answers it. Send it empty and the agent just reads and waits for you. |
 | **Linear** | Only on a message that links a Linear issue, and named for it (**Linear DATA-3051**). Reads the ticket, fixes it, and commits with the issue ID on a `linear/data-3051-…` branch, so Linear links the branch back. |
+| **GitHub** | Only on a message that links a GitHub issue (**GitHub #123**). Reads it (with `gh issue view` when it can), fixes it, and commits on an `issue/123-…` branch with `Fixes owner/repo#123`, so merging closes the issue. |
+| **Jira** | Only on a message that links a Jira ticket, on Jira Cloud or your own server (**Jira ABC-123**). Reads it, fixes it, and commits with the key on a `jira/ABC-123-…` branch, so Jira's development panel picks both up. |
+
+A message that links more than one ticket gets a prompt for each of the first
+two, in the order they appear. Only full links count: a bare `#123` could be
+any repo's.
 
 ## How it works
 
@@ -125,14 +131,19 @@ keeps its default:
     "fix": {
       "label": "Patch",
       "template": "Fix this, reported by @{{author}} in #{{channel}}:\n{{message}}\n\nCommit on {{branch}}."
-    }
+    },
+    "github": { "branchPrefix": "gh" },
+    "jira": { "template": "Work {{ticketId}} ({{ticket}}) from #{{channel}}:\n{{message}}\n\nPut {{ticketId}} in every commit." }
   }
 }
 ```
 
+The keys are `investigate`, `fix`, `review`, `ask`, `linear`, `github` and `jira`.
+
 Tokens: `{{author}}` `{{channel}}` `{{message}}` `{{thread}}` `{{permalink}}`
 `{{date}}` `{{branch}}` `{{baseBranch}}` `{{repo}}` `{{worktree}}`, plus
-`{{ticket}}` `{{ticketId}}` for Linear and `{{question}}` (what you typed in
+`{{ticket}}` (the link) and `{{ticketId}}` (`DATA-3051`, `owner/repo#123` or
+`ABC-123`) for Linear, GitHub and Jira, and `{{question}}` (what you typed in
 the Ask box, empty otherwise). Sidequest
 leaves unknown tokens in the prompt as written, so typos are easy to spot.
 
@@ -147,6 +158,8 @@ message you started it from, so whoever asked knows it's being handled:
 | **Review** | Reviewing this. |
 | **Ask** | Looking into this: _what you typed in the Ask box_ |
 | **Linear** | Picking up DATA-3051. |
+| **GitHub** | Picking up owner/repo#123. |
+| **Jira** | Picking up ABC-123. |
 
 Each prompt's `reply` sets its text and takes the same tokens as its template
 (`{{repo}}` is the repo's label, and `{{question}}` is just what you typed,
