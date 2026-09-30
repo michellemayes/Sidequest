@@ -15,6 +15,28 @@ import {
 import { UserFacingError } from "../util/errors.js";
 import { log } from "../util/log.js";
 
+/**
+ * Migrate pre-agent configs: settings.claudeCommand/claudeArgs become
+ * settings.agent. Unknown keys would be stripped by the schema anyway; this
+ * preserves the user's values instead of dropping them.
+ */
+function migrateAgentSettings(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const settings = (raw as Record<string, unknown>).settings;
+  if (typeof settings !== "object" || settings === null) return raw;
+  const s = settings as Record<string, unknown>;
+  if (s.agent === undefined && (s.claudeCommand !== undefined || s.claudeArgs !== undefined)) {
+    s.agent = {
+      id: "claude",
+      command: typeof s.claudeCommand === "string" ? s.claudeCommand : "",
+      args: Array.isArray(s.claudeArgs) ? s.claudeArgs : [],
+    };
+  }
+  delete s.claudeCommand;
+  delete s.claudeArgs;
+  return raw;
+}
+
 /** Expand a leading ~ and make the path absolute. */
 export function expandPath(input: string): string {
   const trimmed = input.trim();
@@ -47,7 +69,7 @@ export async function loadConfig(): Promise<Config> {
     );
   }
 
-  const result = configSchema.safeParse(parsed);
+  const result = configSchema.safeParse(migrateAgentSettings(parsed));
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `  ${i.path.join(".") || "(root)"}: ${i.message}`)

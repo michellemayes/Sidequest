@@ -166,7 +166,7 @@ describeIfChrome("overlay over CDP", () => {
           // fail; the session must still be created and reported.
           warpStrategy: "new_tab",
           fetchBeforeCreate: false,
-          claudeCommand: "true",
+          agent: { id: "claude", command: "true", args: [] },
         },
         channels: {
           "eng-alerts": { repoPath, channel: "eng-alerts", baseBranch: "", label: "" },

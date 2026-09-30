@@ -1,8 +1,10 @@
 import { Command } from "commander";
-import { appendFile, readFile, writeFile, mkdir } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { openSync } from "node:fs";
+import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
-import { configFile, configRoot, shellHookFile } from "./config/paths.js";
+import { basename, join, resolve } from "node:path";
+import { configFile, configRoot, daemonLogFile, shellHookFile } from "./config/paths.js";
 import {
   allPrompts,
   ensureConfigRoot,
@@ -14,11 +16,22 @@ import {
 import { assertGitAvailable, inspectRepo, isMergedInto } from "./git/repo.js";
 import { listWorktrees, pruneWorktrees, removeWorktree } from "./git/worktree.js";
 import { shellHookSource } from "./warp/autorun.js";
+import { launchWarp } from "./warp/launcher.js";
+import { warpConfigName } from "./session/naming.js";
+import { AGENT_DEFINITIONS, agentDefinition, resolveAgent } from "./agents/agents.js";
+import {
+  clearDaemonRecord,
+  daemonAlive,
+  readDaemonRecord,
+  writeDaemonRecord,
+} from "./daemon.js";
 import { warpLaunchConfigDir, warpTabConfigDir, platform, uriOpener } from "./util/platform.js";
 import { Attacher } from "./cdp/attacher.js";
-import { findSlackApp, inspectDebugPort, isSlackRunning, launchSlack } from "./cdp/launch.js";
+import { findSlackApp, inspectDebugPort, isSlackRunning, launchSlack, sleep } from "./cdp/launch.js";
 import { channelKey } from "./config/channels.js";
 import { describeError, UserFacingError } from "./util/errors.js";
+import type { Config } from "./config/schema.js";
+import type { LaunchResult } from "./cdp/launch.js";
 import { succeeds } from "./util/exec.js";
 import { log } from "./util/log.js";
 
@@ -27,14 +40,35 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .name("sidequest")
-    .description("Turn any Slack message into a Claude Code session in a fresh git worktree, opened in Warp.")
+    .description("Turn any Slack message into an agent session in a fresh git worktree, opened in Warp.")
     .version("0.1.0");
 
   program
     .command("start")
-    .description("launch the Slack desktop app with the overlay attached")
+    .description("launch Slack with the overlay attached (runs in the background by default)")
     .option("--force", "quit a running Slack that has no DevTools port", false)
-    .action((options: { force: boolean }) => wrap(() => start(options)));
+    .option("--foreground", "stay in the foreground instead of daemonizing", false)
+    .action((options: { force: boolean; foreground: boolean }) => wrap(() => start(options)));
+
+  program
+    .command("stop")
+    .description("stop the background Sidequest daemon")
+    .action(() => wrap(stop));
+
+  program
+    .command("status")
+    .description("show whether the background daemon is running")
+    .action(() => wrap(status));
+
+  program
+    .command("agents")
+    .description("list the coding agents Sidequest can launch")
+    .action(() => wrap(agents));
+
+  program
+    .command("reopen <ref>")
+    .description("open Warp on an existing session's worktree (branch name or path)")
+    .action((ref: string) => wrap(() => reopen(ref)));
 
   program
     .command("link <path>")
@@ -88,7 +122,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("doctor")
-    .description("check that git, Warp, Claude Code and Slack tokens are all usable")
+    .description("check that git, Warp, the agent and Slack are all usable")
     .action(() => wrap(doctor));
 
   await program.parseAsync(argv);
@@ -107,12 +141,207 @@ async function wrap(action: () => Promise<void>): Promise<void> {
   }
 }
 
-async function start(options: { force: boolean }): Promise<void> {
+async function start(options: { force: boolean; foreground: boolean }): Promise<void> {
   await assertGitAvailable();
   const config = await loadConfig();
   const { cdpPort, targetUrlPattern } = config.settings;
 
   const launch = await launchSlack({ cdpPort, force: options.force, targetUrlPattern });
+
+  // Relaunching Slack is the disruptive part; do it up front where its errors
+  // are visible, then hand the attach loop to a background daemon so no
+  // terminal has to stay open.
+  if (!options.foreground && !process.env.SIDEQUEST_DAEMON) {
+    await startDaemonized();
+    return;
+  }
+
+  await runAttacherLoop({ launch, config });
+}
+
+/**
+ * Spawn a detached child that runs the attach loop, then exit. The child
+ * writes its pid file on boot; the parent waits for it briefly so a fast
+ * failure (bad config, port taken) surfaces instead of a false "running".
+ */
+async function startDaemonized(): Promise<void> {
+  const existing = await readDaemonRecord();
+  if (existing && daemonAlive(existing.pid)) {
+    throw new UserFacingError(
+      `Sidequest is already running in the background (pid ${existing.pid}).`,
+      "Run `sidequest stop` first, or `sidequest status` to check on it.",
+    );
+  }
+  if (existing) await clearDaemonRecord();
+
+  await ensureConfigRoot();
+  const logFile = daemonLogFile();
+  const out = openSync(logFile, "a");
+  const child = spawn(process.execPath, [process.argv[1]!, "start", "--foreground"], {
+    detached: true,
+    stdio: ["ignore", out, out],
+    env: { ...process.env, SIDEQUEST_DAEMON: "1" },
+  });
+  child.unref();
+
+  const deadline = Date.now() + 8000;
+  for (;;) {
+    const rec = await readDaemonRecord();
+    if (rec && daemonAlive(rec.pid)) {
+      const agent = resolveAgent((await loadConfig()).settings.agent);
+      console.log(`Sidequest is running in the background (pid ${rec.pid}).`);
+      console.log(`  agent: ${agent.label} — hover a message in Slack and click Sidequest.`);
+      console.log(`  log:   ${logFile}`);
+      console.log("  `sidequest stop` stops it; `sidequest status` checks on it.");
+      return;
+    }
+    if (Date.now() > deadline) break;
+    await sleep(250);
+  }
+  throw new UserFacingError(
+    "Sidequest did not stay up.",
+    `Something failed during startup — see ${logFile}.`,
+  );
+}
+
+async function stop(): Promise<void> {
+  const rec = await readDaemonRecord();
+  if (!rec) {
+    console.log("Sidequest is not running.");
+    return;
+  }
+  if (!daemonAlive(rec.pid)) {
+    await clearDaemonRecord();
+    console.log("Sidequest was not running (cleaned up a stale pid file).");
+    return;
+  }
+  process.kill(rec.pid, "SIGTERM");
+  const deadline = Date.now() + 8000;
+  while (daemonAlive(rec.pid) && Date.now() < deadline) await sleep(250);
+  if (daemonAlive(rec.pid)) process.kill(rec.pid, "SIGKILL");
+  await clearDaemonRecord();
+  console.log("Stopped Sidequest.");
+}
+
+async function status(): Promise<void> {
+  const config = await loadConfig();
+  const agent = resolveAgent(config.settings.agent);
+  const rec = await readDaemonRecord();
+  if (rec === null || !daemonAlive(rec.pid)) {
+    if (rec) await clearDaemonRecord();
+    console.log("Sidequest is not running.");
+  } else {
+    const started = rec.startedAt ? `, started ${rec.startedAt}` : "";
+    console.log(`Sidequest is running (pid ${rec.pid}${started}).`);
+    const attached = await lastAttachedCount(daemonLogFile());
+    if (attached !== null) console.log(`Slack windows with the overlay: ${attached}`);
+    console.log(`Log: ${daemonLogFile()}`);
+  }
+  console.log(`Agent: ${agent.label} (${[agent.command, ...agent.args].join(" ")})`);
+  console.log(`Linked channels: ${Object.keys(config.channels).length}`);
+}
+
+/** Best-effort read of the attach count from the daemon's log tail. */
+async function lastAttachedCount(logFile: string): Promise<number | null> {
+  try {
+    const text = await readFile(logFile, "utf8");
+    const lines = text.split("\n");
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const line = lines[i] ?? "";
+      const m = line.match(/attached to a Slack window \((\d+) total\)/);
+      if (m) return Number.parseInt(m[1]!, 10);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function agents(): Promise<void> {
+  const config = await loadConfig();
+  const activeId = resolveAgent(config.settings.agent).id;
+  console.log("Agents Sidequest can launch:\n");
+  for (const def of AGENT_DEFINITIONS) {
+    const marker = def.id === activeId ? "  (active)" : "";
+    console.log(`  ${def.id}${marker}`);
+    console.log(`    ${def.label} — ${[def.command, ...def.defaultArgs].join(" ")}`);
+  }
+  console.log(`\nSwitch in ${configFile()}:`);
+  console.log(`  { "settings": { "agent": { "id": "codex" } } }`);
+  console.log("`command` and `args` override the agent's executable and flags.");
+}
+
+/**
+ * Open Warp on a worktree Sidequest created earlier, by branch name or path.
+ * Handy when Warp opened in the wrong place or the agent never started: if the
+ * session's pending marker is still unclaimed, the shell hook starts the agent
+ * on arrival.
+ */
+async function reopen(ref: string): Promise<void> {
+  const config = await loadConfig();
+  const repos = uniqueRepoPaths(config.channels);
+  if (repos.length === 0) {
+    console.log("No repos are linked yet.");
+    return;
+  }
+
+  const wanted = resolve(ref);
+  for (const repoPath of repos) {
+    const worktrees = (await listWorktrees(repoPath)).filter(
+      (w) => !w.isMain && w.path.startsWith(config.settings.worktreesRoot),
+    );
+    const match = worktrees.find((w) => w.branch === ref || w.path === wanted);
+    if (!match) continue;
+
+    try {
+      await stat(match.path);
+    } catch {
+      throw new UserFacingError(
+        `The worktree for ${match.branch} is gone (${match.path}).`,
+        "Run `sidequest clean` to drop its registration.",
+      );
+    }
+
+    const scriptFile = join(match.path, ".sidequest", "autorun.sh");
+    let scriptExists = false;
+    try {
+      await stat(scriptFile);
+      scriptExists = true;
+    } catch {
+      // No launcher script; just open the directory.
+    }
+
+    const prefix = match.branch.split("/")[0] ?? "";
+    const launch = await launchWarp({
+      strategy: scriptExists ? config.settings.warpStrategy : "new_tab",
+      preview: config.settings.warpPreview,
+      spec: {
+        name: warpConfigName(match.branch),
+        title: `${match.branch} · ${basename(repoPath)}`,
+        color: prefix === "investigate" ? "blue" : prefix === "fix" ? "yellow" : prefix === "review" ? "magenta" : "cyan",
+        cwd: match.path,
+        command: scriptExists ? scriptFile : "true",
+      },
+    });
+    console.log(`Opened Warp on ${match.path} (${launch.strategy}).`);
+    return;
+  }
+  throw new UserFacingError(
+    `No Sidequest session found for "${ref}".`,
+    "Pass a branch name or worktree path from `sidequest sessions`.",
+  );
+}
+
+async function runAttacherLoop(options: {
+  launch: LaunchResult;
+  config: Config;
+}): Promise<void> {
+  const { launch, config } = options;
+  const { cdpPort, targetUrlPattern } = config.settings;
+  const daemonized = Boolean(process.env.SIDEQUEST_DAEMON);
+  const agentLabel = resolveAgent(config.settings.agent).label;
+
+  if (daemonized) await writeDaemonRecord();
   // Until the banner is out, `start` reports the attach state itself; a running
   // commentary before it would say the same thing twice, out of order.
   let booted = false;
@@ -184,7 +413,8 @@ async function start(options: { force: boolean }): Promise<void> {
   }
 
   console.log(
-    "\nHover a message in Slack and click Claude Code. Ctrl-C to stop.\n" +
+    `\nHover a message in Slack and click Sidequest to start a ${agentLabel} session.\n` +
+      (daemonized ? "Running in the background; `sidequest stop` stops it.\n" : "Ctrl-C to stop.\n") +
       "Stopping leaves Slack running; the overlay disappears on its next reload.",
   );
   booted = true;
@@ -192,7 +422,8 @@ async function start(options: { force: boolean }): Promise<void> {
   const shutdown = (): void => {
     console.log("\nstopping…");
     attacher.stop();
-    process.exit(0);
+    if (daemonized) void clearDaemonRecord().finally(() => process.exit(0));
+    else process.exit(0);
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
@@ -231,12 +462,13 @@ async function unlink(channel: string): Promise<void> {
 async function list(): Promise<void> {
   const config = await loadConfig();
   const entries = Object.entries(config.channels);
+  const agent = resolveAgent(config.settings.agent);
 
   console.log(`config: ${configFile()}\n`);
   console.log("settings");
   console.log(`  worktreesRoot:  ${config.settings.worktreesRoot}`);
   console.log(`  warpStrategy:   ${config.settings.warpStrategy}${config.settings.warpPreview ? " (preview)" : ""}`);
-  console.log(`  claudeCommand:  ${[config.settings.claudeCommand, ...config.settings.claudeArgs].join(" ")}`);
+  console.log(`  agent:          ${agent.label} (${[agent.command, ...agent.args].join(" ")})`);
   console.log(`  threadContext:  ${config.settings.threadContextLimit} messages`);
 
   console.log("\nlinked channels");
@@ -438,11 +670,12 @@ async function doctor(): Promise<void> {
 
   check(await succeeds("git", ["--version"]), "git", "required to create worktrees");
 
-  const claudeOk = await succeeds(config.settings.claudeCommand, ["--version"]);
+  const agent = resolveAgent(config.settings.agent);
+  const agentOk = await succeeds(agent.command, ["--version"]);
   check(
-    claudeOk,
-    `claude command (${config.settings.claudeCommand})`,
-    claudeOk ? "" : "not on PATH — set settings.claudeCommand in config.json",
+    agentOk,
+    `${agent.label} (${agent.command})`,
+    agentOk ? "" : agentDefinition(agent.id).installHint,
   );
 
   const opener = uriOpener();

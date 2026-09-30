@@ -133,8 +133,8 @@ describe("session directory is ignored", () => {
     await writeAutorun({
       worktreePath: worktree.path,
       prompt: "hello",
-      claudeCommand: "true",
-      claudeArgs: [],
+      agentCommand: "true",
+      agentArgs: [],
     });
 
     // Claude Code must not see the prompt files as untracked work.
@@ -191,8 +191,8 @@ describe("autorun script", () => {
     const files = await writeAutorun({
       worktreePath: worktree.path,
       prompt,
-      claudeCommand: stub,
-      claudeArgs: ["--model", "opus"],
+      agentCommand: stub,
+      agentArgs: ["--model", "opus"],
     });
 
     await exec("bash", [files.scriptFile]);
@@ -223,8 +223,8 @@ describe("autorun script", () => {
     const files = await writeAutorun({
       worktreePath: worktree.path,
       prompt: "hi",
-      claudeCommand: await writeStubClaude(root, join(root, "r2.txt")),
-      claudeArgs: [],
+      agentCommand: await writeStubClaude(root, join(root, "r2.txt")),
+      agentArgs: [],
     });
 
     await expect(stat(files.pendingFile)).resolves.toBeTruthy();

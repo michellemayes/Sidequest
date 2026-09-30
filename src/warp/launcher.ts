@@ -19,34 +19,49 @@ export interface LaunchResult {
   fellBack: boolean;
 }
 
+const ALL_STRATEGIES: WarpStrategy[] = ["launch_config", "tab_config", "new_tab"];
+
 /**
  * Open Warp on a prepared worktree.
  *
  * `launch_config` and `tab_config` give a titled, coloured tab and ask Warp to
  * run the command itself. `new_tab` only sets the directory — the shell hook
- * starts Claude there. If the preferred strategy fails to open we fall back to
- * `new_tab`, which is the one that has always worked.
+ * starts the agent there. Strategies are tried in order with the preferred one
+ * first: Warp has ignored `exec` commands from deeplinks in some versions
+ * (warpdotdev/warp#9007), so a strategy that fails to open falls through to
+ * the next instead of giving up.
  */
 export async function launchWarp(options: LaunchOptions): Promise<LaunchResult> {
   const { spec, preview } = options;
+  const strategies =
+    options.strategy === "new_tab"
+      ? ALL_STRATEGIES.slice(2)
+      : [options.strategy, ...ALL_STRATEGIES.filter((s) => s !== options.strategy)];
 
-  try {
-    const uri = await buildUri(options);
-    await openUri(uri);
-    return { strategy: options.strategy, uri, fellBack: false };
-  } catch (err) {
-    if (options.strategy === "new_tab") throw err;
-    log.warn(
-      `${options.strategy} launch failed, falling back to new_tab`,
-      err instanceof Error ? err.message : err,
-    );
-    const uri = newTabUri(spec.cwd, preview);
-    await openUri(uri);
-    return { strategy: "new_tab", uri, fellBack: true };
+  let lastError: unknown = null;
+  for (const strategy of strategies) {
+    try {
+      const uri = await buildUri({ spec, strategy, preview });
+      await openUri(uri);
+      return { strategy, uri, fellBack: strategy !== options.strategy };
+    } catch (err) {
+      lastError = err;
+      log.warn(
+        `${strategy} launch failed, trying the next strategy`,
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
+  throw lastError;
 }
 
-async function buildUri(options: LaunchOptions): Promise<string> {
+interface BuildUriOptions {
+  spec: WarpSessionSpec;
+  strategy: WarpStrategy;
+  preview: boolean;
+}
+
+async function buildUri(options: BuildUriOptions): Promise<string> {
   const { spec, strategy, preview } = options;
   const scheme = warpScheme(preview);
 
