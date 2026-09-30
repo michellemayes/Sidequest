@@ -29,7 +29,7 @@ vi.mock("../src/util/platform.js", async (importOriginal) => {
   };
 });
 
-const { launchWarp } = await import("../src/warp/launcher.js");
+const { launchWarp, strategyOrder } = await import("../src/warp/launcher.js");
 
 let root: string;
 let pendingFile: string;
@@ -57,7 +57,7 @@ afterEach(async () => {
 describe("launchWarp", () => {
   it("stops at the first strategy whose tab claims the session", async () => {
     onOpen = async () => rm(pendingFile);
-    const result = await launchWarp({ spec: spec(), strategy: "launch_config", preview: false, pendingFile, claimTimeoutMs: 300 });
+    const result = await launchWarp({ spec: spec(), strategy: "launch_config", preview: false, pendingFile, tabConfigSettleMs: 0, claimTimeoutMs: 300 });
     expect(result).toMatchObject({ strategy: "launch_config", fellBack: false, agentStarted: true });
     expect(opened).toHaveLength(1);
   });
@@ -67,20 +67,44 @@ describe("launchWarp", () => {
     onOpen = async (uri) => {
       if (uri.includes("action/new_tab")) await rm(pendingFile);
     };
-    const result = await launchWarp({ spec: spec(), strategy: "launch_config", preview: false, pendingFile, claimTimeoutMs: 300 });
+    const result = await launchWarp({ spec: spec(), strategy: "launch_config", preview: false, pendingFile, tabConfigSettleMs: 0, claimTimeoutMs: 300 });
     expect(result).toMatchObject({ strategy: "new_tab", fellBack: true, agentStarted: true });
     expect(opened.map((u) => u.split("://")[1]!.split("/")[0])).toEqual(["launch", "tab_config", "action"]);
   });
 
   it("reports that the agent never started", async () => {
-    const result = await launchWarp({ spec: spec(), strategy: "launch_config", preview: false, pendingFile, claimTimeoutMs: 200 });
+    const result = await launchWarp({ spec: spec(), strategy: "launch_config", preview: false, pendingFile, tabConfigSettleMs: 0, claimTimeoutMs: 200 });
     expect(result).toMatchObject({ strategy: "new_tab", agentStarted: false });
   });
 
   it("does not wait when there is no pending session", async () => {
     await rm(pendingFile);
-    const result = await launchWarp({ spec: spec(), strategy: "launch_config", preview: false, pendingFile });
+    const result = await launchWarp({ spec: spec(), strategy: "launch_config", preview: false, pendingFile, tabConfigSettleMs: 0 });
     expect(result).toMatchObject({ strategy: "launch_config", agentStarted: null });
     expect(opened).toHaveLength(1);
+  });
+
+  it("auto tries a tab config first, since Warp picks those up while running", async () => {
+    onOpen = async (uri) => {
+      if (uri.includes("tab_config")) await rm(pendingFile);
+    };
+    const result = await launchWarp({ spec: spec(), strategy: "auto", preview: false, pendingFile, claimTimeoutMs: 300, tabConfigSettleMs: 0 });
+    expect(result).toMatchObject({ strategy: "tab_config", fellBack: false, agentStarted: true });
+    expect(opened).toHaveLength(1);
+  });
+
+  it("gives Warp's file watcher a moment before opening a new tab config", async () => {
+    await rm(pendingFile);
+    const started = Date.now();
+    await launchWarp({ spec: spec(), strategy: "tab_config", preview: false, pendingFile, tabConfigSettleMs: 150 });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(140);
+  });
+});
+
+describe("strategyOrder", () => {
+  it("puts the preferred strategy first and never falls back from new_tab", () => {
+    expect(strategyOrder("auto")).toEqual(["tab_config", "launch_config", "new_tab"]);
+    expect(strategyOrder("launch_config")).toEqual(["launch_config", "tab_config", "new_tab"]);
+    expect(strategyOrder("new_tab")).toEqual(["new_tab"]);
   });
 });

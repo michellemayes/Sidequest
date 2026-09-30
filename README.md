@@ -83,7 +83,8 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest stats` | Your total, today's count, current and best streak |
 | `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force` |
 | `sidequest link <path> -c <channel>` / `unlink` | Link or unlink a channel from the terminal |
-| `sidequest list` / `prompts` / `agents` | Show linked channels, prompt templates and available agents |
+| `sidequest agents [claude\|codex]` | Show the available agents, or switch the one new sessions use |
+| `sidequest list` / `prompts` | Show linked channels and prompt templates |
 
 ## Configuration
 
@@ -111,9 +112,9 @@ leaves unknown tokens in the prompt as written, so typos are easy to spot.
 
 | Setting | Default | |
 | --- | --- | --- |
-| `agent` | `{ "id": "claude" }` | `claude` or `codex`. Use `command`/`args` to override the executable |
+| `agent` | `{ "id": "claude" }` | `claude` or `codex` (or run `sidequest agents codex`). Use `command`/`args` to override the executable |
 | `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees go |
-| `warpStrategy` | `launch_config` | `launch_config`, `tab_config` or `new_tab` |
+| `warpStrategy` | `auto` | `auto` tries a tab config, then a launch config, then a plain new tab, until the agent starts. `tab_config`, `launch_config` or `new_tab` puts that one first |
 | `warpPreview` | `false` | Use Warp Preview |
 | `fetchBeforeCreate` | `true` | Fetch the base branch first |
 | `repoSearchRoots` | `[]` | Where to look for repos to suggest. Empty means `~/code`, `~/src`, `~/Developer`, `~/projects` and similar, two levels deep |
@@ -140,11 +141,13 @@ Start with `sidequest doctor`.
   app, or set `cdpPort` to a free port and run `start --force`.
 - **The repo I want isn't suggested**: add its parent folder to
   `repoSearchRoots`, or paste the path into the channel pill's panel.
-- **Warp opens but the agent doesn't start**: Warp only reads launch
-  configurations when it starts, so a deeplink to one written while it's
-  running just focuses Warp. Sidequest notices the agent didn't start and
-  falls back to a tab on the worktree, where the shell hook takes over — so
-  run `sidequest install-hook` and restart Warp. Then retry, or run `sidequest reopen` (latest) / `sidequest reopen <branch>`.
+- **Warp opens but the agent doesn't start**: Sidequest opens a Warp tab config
+  first, which Warp picks up while it's running. Launch configurations, the old
+  default, are only read when Warp starts, so a deeplink to one just focuses
+  Warp. If neither starts the agent, Sidequest opens a plain tab on the
+  worktree, where the shell hook takes over: run `sidequest install-hook` and
+  open a new Warp tab. `~/.sidequest/sidequest.log` shows which strategy was
+  tried. Then retry, or run `sidequest reopen` (latest) / `sidequest reopen <branch>`.
 - **Warp doesn't open**: the worktree still exists. `cd` into it and run
   `.sidequest/autorun.sh`.
 

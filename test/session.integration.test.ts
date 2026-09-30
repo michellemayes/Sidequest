@@ -260,7 +260,7 @@ describe("writeLaunchConfig", () => {
       expect(doc.windows[0].tabs[0].title).toBe("Fix · repo");
       expect(doc.windows[0].tabs[0].color).toBe("Yellow");
       expect(doc.windows[0].tabs[0].layout.cwd).toBe("/tmp/wt");
-      expect(doc.windows[0].tabs[0].layout.commands[0].exec).toBe("/tmp/wt/.sidequest/autorun.sh");
+      expect(doc.windows[0].tabs[0].layout.commands[0].exec).toBe("'/tmp/wt/.sidequest/autorun.sh'");
     } finally {
       Object.defineProperty(process, "platform", { value: previousPlatform });
       delete process.env.XDG_DATA_HOME;

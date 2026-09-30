@@ -18,11 +18,13 @@ export interface LaunchOptions {
   pendingFile?: string;
   /** How long to wait for the agent to claim the marker per strategy. */
   claimTimeoutMs?: number;
+  /** How long to give Warp's file watcher to notice a new tab config. */
+  tabConfigSettleMs?: number;
 }
 
 export interface LaunchResult {
   /** The strategy that actually opened Warp, after any fallback. */
-  strategy: WarpStrategy;
+  strategy: ConcreteStrategy;
   uri: string;
   /** True when we fell back because the preferred strategy failed. */
   fellBack: boolean;
@@ -33,15 +35,30 @@ export interface LaunchResult {
   agentStarted: boolean | null;
 }
 
-const ALL_STRATEGIES: WarpStrategy[] = ["launch_config", "tab_config", "new_tab"];
+/** A concrete way of opening Warp; `auto` resolves to these in order. */
+export type ConcreteStrategy = Exclude<WarpStrategy, "auto">;
+
+/**
+ * Tab configs come first: Warp watches their directory and picks up a new one
+ * without a restart. Launch configs are only read at startup, so they work
+ * only when Warp was not already running.
+ */
+const ALL_STRATEGIES: ConcreteStrategy[] = ["tab_config", "launch_config", "new_tab"];
+
+/** The strategies to try, preferred first. `new_tab` never falls back. */
+export function strategyOrder(preferred: WarpStrategy): ConcreteStrategy[] {
+  if (preferred === "auto") return [...ALL_STRATEGIES];
+  if (preferred === "new_tab") return ["new_tab"];
+  return [preferred, ...ALL_STRATEGIES.filter((s) => s !== preferred)];
+}
 
 /**
  * Open Warp on a prepared worktree.
  *
- * `launch_config` and `tab_config` give a titled, coloured tab and ask Warp to
+ * `tab_config` and `launch_config` give a titled, coloured tab and ask Warp to
  * run the command itself. `new_tab` only sets the directory — the shell hook
  * starts the agent there. Strategies are tried in order with the preferred one
- * first.
+ * first; `auto` tries them in the order most likely to work.
  *
  * Handing a URI to the OS succeeds whether or not Warp acts on it: Warp reads
  * launch configurations at startup, so one written while it runs is unknown
@@ -53,27 +70,30 @@ const ALL_STRATEGIES: WarpStrategy[] = ["launch_config", "tab_config", "new_tab"
  */
 export async function launchWarp(options: LaunchOptions): Promise<LaunchResult> {
   const { spec, preview } = options;
-  const strategies =
-    options.strategy === "new_tab"
-      ? ALL_STRATEGIES.slice(2)
-      : [options.strategy, ...ALL_STRATEGIES.filter((s) => s !== options.strategy)];
+  const strategies = strategyOrder(options.strategy);
+  const first = strategies[0]!;
   const watch = options.pendingFile && (await exists(options.pendingFile)) ? options.pendingFile : null;
   const timeoutMs = options.claimTimeoutMs ?? CLAIM_TIMEOUT_MS;
 
   let lastError: unknown = null;
-  let opened: { strategy: WarpStrategy; uri: string } | null = null;
+  let opened: { strategy: ConcreteStrategy; uri: string } | null = null;
   for (const [index, strategy] of strategies.entries()) {
     const isLast = index === strategies.length - 1;
     try {
       const uri = await buildUri({ spec, strategy, preview });
+      if (strategy === "tab_config") {
+        // Warp finds new tab configs with a file watcher; a deeplink that
+        // arrives before it has looked resolves to nothing.
+        await sleep(options.tabConfigSettleMs ?? TAB_CONFIG_SETTLE_MS);
+      }
       await openUri(uri);
       opened = { strategy, uri };
       if (!watch) {
-        return { strategy, uri, fellBack: strategy !== options.strategy, agentStarted: null };
+        return { strategy, uri, fellBack: strategy !== first, agentStarted: null };
       }
       const claimed = await waitForClaim(watch, timeoutMs);
       if (claimed || isLast) {
-        return { strategy, uri, fellBack: strategy !== options.strategy, agentStarted: claimed };
+        return { strategy, uri, fellBack: strategy !== first, agentStarted: claimed };
       }
       log.warn(`${strategy} opened Warp but the agent did not start, trying the next strategy`);
     } catch (err) {
@@ -85,13 +105,18 @@ export async function launchWarp(options: LaunchOptions): Promise<LaunchResult> 
     }
   }
   if (opened) {
-    return { ...opened, fellBack: opened.strategy !== options.strategy, agentStarted: false };
+    return { ...opened, fellBack: opened.strategy !== first, agentStarted: false };
   }
   throw lastError;
 }
 
 const CLAIM_TIMEOUT_MS = 6_000;
 const CLAIM_POLL_MS = 200;
+const TAB_CONFIG_SETTLE_MS = 750;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /** True once the pending marker is gone, i.e. autorun.sh has claimed it. */
 async function waitForClaim(pendingFile: string, timeoutMs: number): Promise<boolean> {
@@ -99,7 +124,7 @@ async function waitForClaim(pendingFile: string, timeoutMs: number): Promise<boo
   for (;;) {
     if (!(await exists(pendingFile))) return true;
     if (Date.now() >= deadline) return false;
-    await new Promise((resolve) => setTimeout(resolve, CLAIM_POLL_MS));
+    await sleep(CLAIM_POLL_MS);
   }
 }
 
@@ -114,7 +139,7 @@ async function exists(path: string): Promise<boolean> {
 
 interface BuildUriOptions {
   spec: WarpSessionSpec;
-  strategy: WarpStrategy;
+  strategy: ConcreteStrategy;
   preview: boolean;
 }
 
