@@ -7,6 +7,8 @@ export interface BranchNameInput {
   messageText: string;
   /** Slack message ts, used when the message has no usable words. */
   messageTs: string;
+  /** Linear issue identifier; leads the name so Linear links the branch. */
+  ticketId?: string;
   now?: Date;
 }
 
@@ -18,7 +20,10 @@ export interface BranchNameInput {
  */
 export function branchNameFor(input: BranchNameInput): string {
   const words = slugify(stripSlackMarkup(input.messageText), 40);
-  const stem = words.length > 0 ? words : `msg-${input.messageTs.replace(/\./g, "")}`;
+  const ticket = input.ticketId ? slugify(input.ticketId, 20) : "";
+  const stem = ticket
+    ? `${ticket}${words ? `-${words}` : ""}`
+    : words.length > 0 ? words : `msg-${input.messageTs.replace(/\./g, "")}`;
   return `${input.branchPrefix}/${stem}-${timeFragment(input.now ?? new Date())}`;
 }
 

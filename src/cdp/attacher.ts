@@ -57,6 +57,8 @@ interface AskRequest {
   ts?: string;
   permalink?: string;
   thread?: Array<{ author: string; text: string }>;
+  /** Linear issue URL the message links, for the Linear prompt. */
+  ticket?: string;
   repoPath?: string;
   branch?: string;
 }
@@ -262,6 +264,7 @@ export class Attacher {
       ts: request.ts ?? "",
       permalink: request.permalink ?? "",
       threadMessages: request.thread ?? [],
+      ticket: request.ticket ?? "",
     };
 
     try {

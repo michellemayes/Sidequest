@@ -222,6 +222,29 @@ describeIfChrome("overlay over CDP", () => {
     await sleep(150);
   }
 
+  /**
+   * Whether any shown overlay element matching `selector` covers the text of
+   * a row — the words someone wrote, not just the row's box.
+   */
+  function coversText(selector: string, rowId: string): string {
+    return `(() => {
+      const content = document.getElementById('${rowId}').querySelector('[data-qa="message_content"]');
+      const range = document.createRange();
+      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+      const ink = [];
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (!n.nodeValue.trim()) continue;
+        range.selectNodeContents(n);
+        ink.push(...Array.from(range.getClientRects()));
+      }
+      return Array.from(${UI}.querySelectorAll('${selector}'))
+        .filter((el) => !el.classList.contains('sq-off'))
+        .map((el) => el.getBoundingClientRect())
+        .some((a) => ink.some((b) =>
+          a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1));
+    })()`;
+  }
+
   function shown(selector: string): string {
     return `(() => {
       const el = ${UI}.querySelector('${selector}');
@@ -267,7 +290,7 @@ describeIfChrome("overlay over CDP", () => {
         `JSON.stringify(Array.from(document.querySelectorAll('[data-qa=\"virtual-list-item\"]'))
            .map((row) => row.childElementCount))`,
       );
-      expect(JSON.parse(String(rowChildren))).toEqual([1, 1, 3, 2]);
+      expect(JSON.parse(String(rowChildren))).toEqual([1, 1, 3, 2, 3, 2]);
 
       const marks = await evaluate(
         session,
@@ -403,30 +426,24 @@ describeIfChrome("overlay over CDP", () => {
       // The branch name is built from the message text, which came off the DOM.
       expect(text).toContain("fix/checkout-total-is-wrong-for-gift-cards");
 
-      // The result is drawn against the message it belongs to — inside that
-      // row, along its bottom edge, and out of the next message's way. Hung
-      // below the boundary it covered the following message's timestamp.
+      // The result is drawn against the message it belongs to, at its bottom
+      // edge: beside the last line where the words leave room, on a line of
+      // its own under them where they do not. Never over what anyone wrote.
       const anchored = await evaluate(
         session,
         `(() => {
            const line = ${UI}.querySelector('.sq-result').getBoundingClientRect();
            const btn = ${UI}.querySelector('.sq-launch').getBoundingClientRect();
            const row = document.getElementById('row-1').getBoundingClientRect();
-           const next = document.getElementById('row-2').getBoundingClientRect();
            return JSON.stringify({
-             insideRow: line.top >= row.top - 1 && line.bottom <= row.bottom + 1,
-             onBottom: row.bottom - line.bottom <= 4,
-             clearOfNext: line.bottom <= next.top + 1,
-             clearOfButton: line.right <= btn.left - 2,
+             atBottom: Math.abs(row.bottom - line.bottom) <= line.height,
+             clearOfButton: line.right <= btn.left - 2 || line.top >= btn.bottom - 1,
            });
          })()`,
       );
-      expect(JSON.parse(String(anchored))).toEqual({
-        insideRow: true,
-        onBottom: true,
-        clearOfNext: true,
-        clearOfButton: true,
-      });
+      expect(JSON.parse(String(anchored))).toEqual({ atBottom: true, clearOfButton: true });
+      expect(await evaluate(session, coversText(".sq-result", "row-1"))).toBe(false);
+      expect(await evaluate(session, coversText(".sq-result", "row-2"))).toBe(false);
 
       const { stdout } = await exec("git", ["branch", "--list"], { cwd: repoPath });
       expect(stdout).toContain("fix/checkout-total-is-wrong-for-gift-cards");
@@ -440,6 +457,82 @@ describeIfChrome("overlay over CDP", () => {
       expect(prompt).toContain("Checkout total is wrong for gift cards");
       expect(prompt).toContain("@michelle");
       expect(prompt).toContain("#eng-alerts");
+    } finally {
+      attacher.stop();
+      session.close();
+    }
+  }, 45_000);
+
+  it("keeps the pill and the line off a message's text, on a line of their own", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+
+      // Every line of row-4 runs to the right edge, so the pill has nowhere
+      // beside the words to go.
+      await hover(session, "row-4");
+      expect(await evaluate(session, shown(".sq-launch"))).toBe(true);
+      expect(await evaluate(session, coversText(".sq-launch", "row-4"))).toBe(false);
+      const underText = await evaluate(
+        session,
+        `(() => {
+           const btn = ${UI}.querySelector('.sq-launch').getBoundingClientRect();
+           const text = document.querySelector('#row-4 .p-rich_text_section').getBoundingClientRect();
+           return btn.top >= text.bottom;
+         })()`,
+      );
+      expect(underText).toBe(true);
+    } finally {
+      attacher.stop();
+      session.close();
+    }
+  }, 30_000);
+
+  it("offers a Linear prompt on a message that links an issue, and works it", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+
+      // Not on a message with no ticket in it.
+      await hover(session, "row-1");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      const plain = await evaluate(
+        session,
+        `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-menu-prompt')).map(b => b.textContent))`,
+      );
+      expect(JSON.parse(String(plain))).toEqual(["Investigate", "Fix", "Review"]);
+      await press(session, "Escape", "Escape", 27);
+
+      await hover(session, "row-3");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      const entries = await evaluate(
+        session,
+        `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-menu-prompt')).map(b => [b.textContent, b.dataset.key, b.dataset.letter || '']))`,
+      );
+      expect(JSON.parse(String(entries))).toEqual([
+        ["Investigate", "1", "i"],
+        ["Fix", "2", "f"],
+        ["Review", "3", "r"],
+        ["Linear DATA-3051", "4", "l"],
+      ]);
+
+      await press(session, "4", "Digit4", 52);
+      const text = await settledResult(session);
+      // Named for the ticket, so Linear links the branch back to it.
+      expect(text).toContain("Linear DATA-3051 → linear/data-3051-quiet-the-flapping-alarm");
+      // And the line has its own line, under a message that runs edge to edge.
+      expect(await evaluate(session, coversText(".sq-result", "row-3"))).toBe(false);
+      expect(await evaluate(session, coversText(".sq-result", "row-4"))).toBe(false);
+
+      const worktrees = await exec("git", ["worktree", "list"], { cwd: repoPath });
+      const line = worktrees.stdout.split("\n").find((l) => l.includes("data-3051"));
+      const prompt = await readFile(join(line!.split(/\s+/)[0]!, ".sidequest", "prompt.md"), "utf8");
+      expect(prompt).toContain("DATA-3051: https://linear.app/acme/issue/DATA-3051/quiet-the-flapping-alarm");
+      expect(prompt).toContain("@pam");
     } finally {
       attacher.stop();
       session.close();

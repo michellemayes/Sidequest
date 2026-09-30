@@ -14,7 +14,9 @@
       /* Stands in for however much of Slack's header is free beside the name. */
       #header-gap { width: 260px; }
       #list { flex: 1; overflow-y: auto; }
-      #list [data-qa="virtual-list-item"] { padding: 6px 16px; }
+      /* Slack pads a message 8px top and bottom; the gap that leaves between
+         two messages' text is where a line of the overlay's own can go. */
+      #list [data-qa="virtual-list-item"] { padding: 8px 16px; }
       .sidebar [data-qa="virtual-list-item"] { padding: 4px 16px; }
     </style>
   </head>
@@ -71,6 +73,27 @@
                href="https://example.slack.com/archives/C0SMOKE/p1757430060000200">2:21 PM</a>
             <div data-qa="message_content">
               <div class="p-rich_text_section">only on the EU store</div>
+            </div>
+          </div>
+
+          <!-- Runs to the right edge on every line, and links a Linear issue. -->
+          <div data-qa="virtual-list-item" id="row-3">
+            <span data-qa="message_sender_name">pam</span>
+            <a class="c-timestamp" id="ts-1757430120.000300"
+               href="https://example.slack.com/archives/C0SMOKE/p1757430120000300">2:22 PM</a>
+            <div data-qa="message_content">
+              <div class="p-rich_text_section">Created ticket <a href="https://linear.app/acme/issue/DATA-3051/quiet-the-flapping-alarm">DATA-3051</a>
+                for the flapping alarm on the refresh cadence step summary. Want me to announce this in a
+                channel too, or leave it with the ticket and the thread here for whoever picks it up next</div>
+            </div>
+          </div>
+
+          <div data-qa="virtual-list-item" id="row-4">
+            <a class="c-timestamp" id="ts-1757430180.000400"
+               href="https://example.slack.com/archives/C0SMOKE/p1757430180000400">2:23 PM</a>
+            <div data-qa="message_content">
+              <!-- Justified to the last line, so no line leaves room at its end. -->
+              <div class="p-rich_text_section" style="text-align: justify; text-align-last: justify">A reply that runs to the right edge of the list on every line it has, the last one included</div>
             </div>
           </div>
         </div>

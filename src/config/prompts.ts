@@ -1,7 +1,8 @@
 import type { PromptConfig, PromptKey } from "./schema.js";
 
 /**
- * The three prompts that show up on every Slack message. Users can override any
+ * The prompts on a Slack message: the first three on every one, and Linear
+ * only on a message that links a Linear issue. Users can override any
  * field per prompt in ~/.sidequest/config.json; anything they omit falls back to
  * the definition here.
  */
@@ -67,7 +68,50 @@ Slack permalink: {{permalink}}
 
 Give me findings ordered most severe first, each with the file, the line, and what actually goes wrong. Say plainly if you find nothing serious. Do not change code unless I ask.`,
   },
+  linear: {
+    label: "Linear",
+    emoji: "ticket",
+    branchPrefix: "linear",
+    template: `You are working a Linear ticket shared in Slack.
+
+## The ticket
+{{ticketId}}: {{ticket}}
+
+## Where it came up
+From @{{author}} in #{{channel}} on {{date}}:
+{{message}}
+{{thread}}
+Slack permalink: {{permalink}}
+
+## What I need
+1. Read the ticket in full first: description, comments, linked issues. Use your Linear tools if you have them; if you cannot reach Linear, say so and work from the Slack context above.
+2. Find the root cause before changing anything — do not patch the symptom.
+3. Make the smallest change that actually fixes it, and add or update a test that fails without it.
+4. Run the repo's own lint, typecheck and test commands and get them green.
+5. Commit on this branch ({{branch}}) with {{ticketId}} in the message, explaining the cause, not just the change.
+
+If the ticket is wrong, already fixed, or needs a decision I should make, stop and say so instead of guessing.`,
+  },
 };
+
+/** A Linear issue link, with the issue identifier (e.g. DATA-3051) captured. */
+export const LINEAR_ISSUE =
+  /https?:\/\/linear\.app\/[^/\s]+\/issue\/([A-Za-z][A-Za-z0-9]*-\d+)(?:\/([a-z0-9-]+))?[^\s<>|]*/i;
+
+export interface LinearTicket {
+  url: string;
+  /** Issue identifier, e.g. DATA-3051. */
+  id: string;
+  /** The title slug Linear puts in its URLs, when the link carries one. */
+  slug: string;
+}
+
+/** The first Linear issue in a string. */
+export function linearTicket(text: string): LinearTicket | null {
+  const match = LINEAR_ISSUE.exec(text);
+  if (!match) return null;
+  return { url: match[0], id: match[1]!.toUpperCase(), slug: match[2] ?? "" };
+}
 
 export interface PromptContext {
   author: string;
@@ -80,6 +124,10 @@ export interface PromptContext {
   baseBranch: string;
   repo: string;
   worktree: string;
+  /** Linear issue URL, when the session is for one; empty otherwise. */
+  ticket: string;
+  /** Linear issue identifier, e.g. DATA-3051; empty otherwise. */
+  ticketId: string;
 }
 
 const TOKEN = /\{\{\s*([a-zA-Z]+)\s*\}\}/g;

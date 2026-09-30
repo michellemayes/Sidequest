@@ -49,6 +49,8 @@
   // A result outlives a scroll away and back, not a working session.
   const RESULT_TTL_MS = 10 * 60 * 1000;
   const MAX_RESULTS = 20;
+  /* The prompt that works a Linear issue; shown only when a message links one. */
+  const LINEAR_KEY = 'linear';
   const TICK_MS = 250;
   const TOAST_MS = 5200;
   /* Suggestions shown in the message menu for a channel with no repo. */
@@ -94,6 +96,7 @@
   const GLYPHS = {
     mag: '🔍', mag_right: '🔎', wrench: '🔧', hammer: '🔨', eyes: '👀', bug: '🐛',
     rocket: '🚀', sparkles: '✨', memo: '📝', test_tube: '🧪', bulb: '💡', zap: '⚡',
+    ticket: '🎫',
   };
   const glyphFor = (emoji) => {
     const name = String(emoji || '').replace(/^:|:$/g, '');
@@ -209,16 +212,16 @@
 
     /* The result reads as an annotation on the message it came from: drawn
        inside that row, along its bottom edge, tucked against the right where a
-       message leaves space. Its own row, not the next one — a line hung below
-       the boundary covers the following message's timestamp. One line, so it
-       covers nothing unasked; hovering it lets the whole thing wrap, which is
-       what an error needs. */
+       message's last line leaves space — and on a line of its own under the
+       text where it does not (see cornerTop). One line, so it covers nothing
+       unasked; hovering it lets the whole thing wrap, which is what an error
+       needs. */
     .sq-result {
       position: fixed; left: 0; top: 0;
       box-sizing: border-box;
       display: flex; align-items: flex-start; gap: 6px;
-      max-width: 60vw; padding: 1px 4px 1px 8px;
-      font-family: inherit; font-size: 11px; line-height: 16px;
+      max-width: 60vw; padding: 0 4px 0 8px;
+      font-family: inherit; font-size: 11px; line-height: 14px;
       color: inherit; opacity: .9;
       background: var(--sq-bg, #fff);
       border: 1px solid var(--sq-line); border-radius: 5px;
@@ -248,8 +251,8 @@
       position: fixed; left: 0; top: 0;
       box-sizing: border-box;
       display: inline-flex; align-items: center; gap: 4px;
-      max-width: 40vw; height: 18px; padding: 0 7px;
-      font-family: inherit; font-size: 11px; line-height: 16px;
+      max-width: 40vw; height: 16px; padding: 0 7px;
+      font-family: inherit; font-size: 11px; line-height: 14px;
       color: inherit; opacity: .6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       background: var(--sq-bg, #fff);
       border: 1px solid var(--sq-line); border-radius: 9px;
@@ -603,6 +606,32 @@
     return { permalink, ts };
   }
 
+  /*
+   * A Linear issue link, with its identifier. Mirrors LINEAR_ISSUE in
+   * src/config/prompts.ts, which checks it again on the way in.
+   */
+  const LINEAR_ISSUE = /https?:\/\/linear\.app\/[^/\s]+\/issue\/([A-Za-z][A-Za-z0-9]*-\d+)[^\s<>|]*/gi;
+  const MAX_TICKETS = 2;
+
+  /**
+   * The Linear issues a message links, first seen first. Read off the links'
+   * own hrefs as well as the text, since a link can be labelled with anything.
+   */
+  function linearTickets(item) {
+    const content = item.querySelector(SEL.content);
+    if (!content) return [];
+    const sources = Array.from(content.querySelectorAll('a[href]'), (a) => a.href);
+    sources.push(messageText(item));
+    const found = new Map();
+    for (const source of sources) {
+      for (const match of String(source).matchAll(LINEAR_ISSUE)) {
+        const id = match[1].toUpperCase();
+        if (!found.has(id)) found.set(id, { id, url: match[0] });
+      }
+    }
+    return Array.from(found.values()).slice(0, MAX_TICKETS);
+  }
+
   /** A stable-enough identity for "is this row still the same message". */
   function rowSignature(item) {
     const { ts } = messageMeta(item);
@@ -651,6 +680,51 @@
   }
 
   const onScreen = (rect, clip) => rect.bottom > clip.top + 4 && rect.top < clip.bottom - 4;
+
+  /**
+   * Where the words and pictures of a message actually are: one box per line
+   * of text, plus images. The content element itself is no use for this — it
+   * spans the full width of the row whether the last line is one word or
+   * forty. Slack's screen-reader-only text is laid out somewhere invisible and
+   * would read as ink that is not there, so it is skipped.
+   */
+  function inkOf(row) {
+    const boxes = [];
+    const content = row.querySelector(SEL.content);
+    if (!content) return boxes;
+    const range = document.createRange();
+    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.nodeValue.trim() || node.parentElement?.closest('.offscreen')) continue;
+      range.selectNodeContents(node);
+      for (const box of range.getClientRects()) {
+        if (box.width > 1 && box.height > 1) boxes.push(box);
+      }
+    }
+    content.querySelectorAll('img').forEach((img) => {
+      const box = img.getBoundingClientRect();
+      if (box.width > 1 && box.height > 1) boxes.push(box);
+    });
+    return boxes;
+  }
+
+  /**
+   * The top for something drawn at a row's bottom-right corner, `left` being
+   * where its left edge will fall. Beside the message's last line when the
+   * words stop short of it; otherwise on a line of its own just under them,
+   * in the gap before the next message, rather than over what someone wrote.
+   */
+  function cornerTop(row, rect, clip, left, height, lift, ink) {
+    const top = Math.min(rect.bottom, clip.bottom) - height - lift;
+    const boxes = ink.get(row) || inkOf(row);
+    ink.set(row, boxes);
+    const blocked = boxes.some((box) => (
+      box.bottom > top + 1 && box.top < top + height - 1 && box.right > left - GAP / 2
+    ));
+    if (!blocked) return top;
+    const below = boxes.reduce((lowest, box) => Math.max(lowest, box.bottom), -Infinity) + 2;
+    return Math.min(below, clip.bottom - height);
+  }
 
   /* ------------------------------------------------------------ row button */
 
@@ -728,9 +802,9 @@
    * A first letter that belongs to one prompt only, so "f" can mean Fix
    * without a custom prompt that also starts with F making it ambiguous.
    */
-  function promptLetters() {
+  function promptLetters(prompts) {
     const counts = {};
-    for (const prompt of CONFIG.prompts) {
+    for (const prompt of prompts) {
       const letter = String(prompt.label || '').trim().charAt(0).toLowerCase();
       if (letter) counts[letter] = (counts[letter] || 0) + 1;
     }
@@ -791,20 +865,29 @@
         menu.append(sep);
       }
 
-      const letterFor = promptLetters();
-      CONFIG.prompts.forEach((prompt, index) => {
+      // The Linear prompt is only worth offering on a message that links an
+      // issue, and then once per issue, named for it.
+      const tickets = linearTickets(row);
+      const entries = [];
+      for (const prompt of CONFIG.prompts) {
+        if (prompt.key !== LINEAR_KEY) entries.push({ prompt, ticket: null });
+        else for (const ticket of tickets) entries.push({ prompt, ticket });
+      }
+      const letterFor = promptLetters(entries.map((e) => e.prompt));
+      entries.forEach(({ prompt, ticket }, index) => {
         const entry = menuButton('sq-menu-prompt', () => {
           const target = menuRow;
           closeMenu();
-          if (target && target.isConnected) startSession(target, prompt);
+          if (target && target.isConnected) startSession(target, prompt, ticket);
           schedule();
         });
-        entry.textContent = prompt.label;
+        const label = ticket ? `${prompt.label} ${ticket.id}` : prompt.label;
+        entry.textContent = label;
         entry.dataset.glyph = glyphFor(prompt.emoji);
         if (index < 9) entry.dataset.key = String(index + 1);
         const letter = letterFor(prompt.label);
         if (letter) entry.dataset.letter = letter;
-        entry.title = `${prompt.label} with ${CONFIG.agentLabel} — press ${index + 1}${letter ? ` or ${letter.toUpperCase()}` : ''}`;
+        entry.title = `${ticket ? `Work ${ticket.id}` : prompt.label} with ${CONFIG.agentLabel} — press ${index + 1}${letter ? ` or ${letter.toUpperCase()}` : ''}`;
         menu.append(entry);
       });
     }
@@ -936,7 +1019,7 @@
 
   /* ------------------------------------------------------------- sessions */
 
-  function startSession(row, prompt) {
+  function startSession(row, prompt, ticket = null) {
     // Read everything now: the row can be recycled long before the daemon
     // answers, and the answer belongs to the message that was clicked.
     const sig = rowSignature(row);
@@ -953,16 +1036,18 @@
       thread: threadContext(row),
       permalink: meta.permalink,
       ts: meta.ts,
+      ticket: ticket ? ticket.url : '',
     };
+    const label = ticket ? `${prompt.label} ${ticket.id}` : prompt.label;
 
-    setResult(sig, `Starting ${prompt.label}…`, 'busy');
+    setResult(sig, `Starting ${label}…`, 'busy');
 
     ask(payload).then((res) => {
       if (res.error) {
         setResult(sig, res.hint ? `${res.error} ${res.hint}` : res.error, 'error');
         return;
       }
-      const base = `${prompt.label} → ${res.branch}`;
+      const base = `${label} → ${res.branch}`;
       setResult(sig, res.warning ? `${base} — ${res.warning}` : base, res.warning ? 'warn' : 'info', res.branch);
       if (res.stats) CONFIG.stats = res.stats;
       if (meta.ts) {
@@ -1532,6 +1617,9 @@
 
     const activeRow = menuRow || hoverRow;
     const activeRect = activeRow ? activeRow.getBoundingClientRect() : null;
+    // Read once per frame per row: the pill, the line and the mark can all
+    // want the same row's text.
+    const ink = new Map();
 
     if (activeRect && clip && onScreen(activeRect, clip)) {
       const flag = isLinked(currentChannel()) ? '1' : '0';
@@ -1547,11 +1635,11 @@
       // Slack's own hover actions and an unread divider's "New" label both live
       // at a row's top-right corner, so the pill takes the bottom-right and
       // leaves them clickable.
-      const bottom = Math.min(activeRect.bottom, clip.bottom);
+      const left = activeRect.right - launchBtn.offsetWidth - GAP;
       placeAt(
         launchBtn,
-        activeRect.right - launchBtn.offsetWidth - GAP,
-        bottom - launchBtn.offsetHeight - 3,
+        left,
+        cornerTop(activeRow, activeRect, clip, left, launchBtn.offsetHeight, 3, ink),
       );
     } else {
       hide(launchBtn);
@@ -1613,11 +1701,8 @@
         const indent = content ? content.getBoundingClientRect().left : rect.left + 16;
         const right = rect.right - GAP - reserve;
         el.style.maxWidth = `${Math.max(160, Math.round((right - indent) * 0.75))}px`;
-        placeAt(
-          el,
-          right - el.offsetWidth,
-          Math.min(rect.bottom, clip.bottom) - el.offsetHeight - 3,
-        );
+        const left = right - el.offsetWidth;
+        placeAt(el, left, cornerTop(row, rect, clip, left, el.offsetHeight, 3, ink));
       } else {
         hide(el);
       }
@@ -1654,11 +1739,8 @@
         const reserve = row === activeRow && !launchBtn.classList.contains('sq-off')
           ? launchBtn.offsetWidth + GAP
           : 0;
-        placeAt(
-          el,
-          rect.right - GAP - reserve - el.offsetWidth,
-          Math.min(rect.bottom, clip.bottom) - el.offsetHeight - 4,
-        );
+        const left = rect.right - GAP - reserve - el.offsetWidth;
+        placeAt(el, left, cornerTop(row, rect, clip, left, el.offsetHeight, 4, ink));
       } else {
         hide(el);
       }

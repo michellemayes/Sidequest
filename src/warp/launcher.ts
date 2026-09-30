@@ -170,6 +170,8 @@ export function colorForPrompt(key: string): WarpColor {
       return "yellow";
     case "review":
       return "magenta";
+    case "linear":
+      return "green";
     default:
       return "cyan";
   }
