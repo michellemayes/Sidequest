@@ -105,7 +105,7 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest sessions` | List every worktree Sidequest created |
 | `sidequest reopen [ref]` | Reopen Warp on a session (the latest if you name none) |
 | `sidequest stats` | Your total, today's count, current and best streak |
-| `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force` |
+| `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force`. Turn on `autoClean` and the daemon does this for you |
 | `sidequest link <path> -c <channel>` | Link a repo to a channel from the terminal. Linking a second repo adds it; the first stays the default |
 | `sidequest unlink [repo] -c <channel>` | Unlink one repo (by path or label) from a channel, or all of them if you name none |
 | `sidequest replies [on\|off]` | Show the thread replies sessions post, or turn them on or off |
@@ -174,12 +174,30 @@ without a heading). With nothing typed in the Ask box, its reply is
 | `fetchBeforeCreate` | `true` | Fetch the base branch first. A fetch slower than 3 seconds doesn't hold up the session: it's cut from the local ref while the fetch finishes in the background |
 | `repoSearchRoots` | `[]` | Where to look for repos to suggest. Empty means `~/code`, `~/src`, `~/Developer`, `~/projects` and similar, two levels deep |
 | `threadContextLimit` | `10` | How many earlier messages go into the prompt |
-| `pruneBranchesOnClean` | `true` | Delete merged branches on `clean` |
+| `pruneBranchesOnClean` | `true` | Delete merged branches on `clean` (and on auto-clean) |
+| `autoClean` | `false` | Let the running daemon remove finished worktrees itself. See Cleaning up below |
+| `autoCleanAfterDays` | `7` | How long a merged worktree has to sit untouched before auto-clean removes it |
 | `cdpPort` | `9222` | DevTools port for Slack |
 | `relaunchSlack` | `true` | While Sidequest runs, relaunch a Slack reopened from the Dock (without the DevTools port) so the overlay comes back |
 | `targetUrlPattern` | `app\.slack\.com\|/client/` | Which windows count as Slack |
 | `autoReply` | `false` | Reply in the message's thread when a session starts. See Thread replies above |
 | `verbose` | `false` | Log overlay activity to Slack's devtools console |
+
+**Cleaning up.** Every session leaves a worktree behind. `sidequest clean`
+removes the ones whose branch is merged into the base, deleting the branch too
+(with `git branch -d`, which refuses one holding commits the base doesn't
+have), and never a worktree with uncommitted changes unless you pass `--force`.
+
+Turn on `autoClean` and the running daemon does the same every six hours, by
+the same rules, plus one more: it leaves a worktree alone until nothing has
+touched it for `autoCleanAfterDays`. Investigate, Review and Ask commit
+nothing, so their branch counts as merged the moment it's cut, while you may
+still be reading what the agent found. It never fetches, so "merged" means
+merged into the base as of your last session's fetch, and it logs what it
+removed to `~/.sidequest/sidequest.log`. It's off by default, since deleting
+directories should be something you ask for. Until you turn it on,
+`sidequest status` counts the finished worktrees, and `doctor` and `start`
+mention them once five or more have piled up.
 
 ## Troubleshooting
 
