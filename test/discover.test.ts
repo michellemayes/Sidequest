@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearDiscoveryCache, discoverRepos, scoreRepoForChannel } from "../src/git/discover.js";
@@ -79,5 +79,21 @@ describe("discoverRepos", () => {
     });
     expect(found[0]!.name).toBe("payments-api");
     expect(found[0]!.linked).toBe(true);
+  });
+
+  it("lists a checkout once when two roots are the same folder", async () => {
+    // On macOS ~/Repos and ~/repos are one folder; a symlink stands in here.
+    await symlink(join(root, "code"), join(root, "Code"));
+    const found = await discoverRepos({
+      channel: "storefront",
+      linkedRepos: [join(root, "Code", "storefront")],
+      worktreesRoot: join(root, "code", "sq-worktrees"),
+      roots: [join(root, "code"), join(root, "Code")],
+    });
+    const storefronts = found.filter((r) => r.name === "storefront");
+    expect(storefronts).toHaveLength(1);
+    expect(storefronts[0]!.path).toBe(join(root, "Code", "storefront"));
+    expect(storefronts[0]!.linked).toBe(true);
+    expect(found.filter((r) => r.name === "dotfiles")).toHaveLength(1);
   });
 });
