@@ -31,7 +31,7 @@ await page.evaluate((branch) => {
       { key: 'review', label: 'Review' },
     ],
     linkedChannels: ['bugs-storefront'],
-    repoLabels: { 'bugs-storefront': 'storefront' },
+    repoLabels: { 'bugs-storefront': ['storefront'] },
     agentLabel: 'Claude Code',
     stats: { total: 11, today: 1, streak: 4 },
   };

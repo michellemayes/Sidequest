@@ -1,5 +1,5 @@
 import { allPrompts } from "./store.js";
-import { channelKey } from "./channels.js";
+import { linkLabel } from "./channels.js";
 import { resolveAgent } from "../agents/agents.js";
 import type { Config } from "./schema.js";
 import { computeStats, type HistoryEntry } from "../session/history.js";
@@ -20,7 +20,8 @@ export interface PageSession {
  * Deliberately not the whole config: repo paths, the base branch and the
  * agent command are the daemon's business, and the page has no use for them.
  * (Paths reach the page only as link suggestions, and only when it asks.)
- * What it needs is which channels are linked (to draw the header button),
+ * What it needs is which channels are linked and to which repos, by label
+ * (to draw the header button and let a message pick among them),
  * what the prompts are called (to label the menu), and which agent is active
  * (to word its tooltips). Past sessions are keyed by Slack's message ts
  * with the branch they made and nothing else, so a message that already has
@@ -30,8 +31,10 @@ export interface PageConfig {
   prompts: Array<{ key: string; label: string; emoji: string }>;
   /** Channel keys that have a repo, so the overlay can show its state offline. */
   linkedChannels: string[];
-  /** Repo label per channel key, for the header button's wording. */
-  repoLabels: Record<string, string>;
+  /** Repo labels per channel key, the default first. A label is how the page names a repo. */
+  repoLabels: Record<string, string[]>;
+  /** Per channel key, the label of the repo its latest session ran in, if still linked. */
+  lastRepos: Record<string, string>;
   /** Human label of the agent sessions launch, e.g. "Claude Code". */
   agentLabel: string;
   /** Message ts -> sessions started from it, oldest first. */
@@ -41,9 +44,9 @@ export interface PageConfig {
 }
 
 export function pageConfig(config: Config, history: HistoryEntry[] = []): PageConfig {
-  const repoLabels: Record<string, string> = {};
-  for (const [key, link] of Object.entries(config.channels)) {
-    repoLabels[key] = link.label.trim() || basename(link.repoPath);
+  const repoLabels: Record<string, string[]> = {};
+  for (const [key, links] of Object.entries(config.channels)) {
+    if (links.length > 0) repoLabels[key] = links.map(linkLabel);
   }
 
   return {
@@ -52,8 +55,9 @@ export function pageConfig(config: Config, history: HistoryEntry[] = []): PageCo
       label: prompt.label,
       emoji: prompt.emoji,
     })),
-    linkedChannels: Object.keys(config.channels).map(channelKey),
+    linkedChannels: Object.keys(repoLabels),
     repoLabels,
+    lastRepos: lastRepos(config, history),
     agentLabel: resolveAgent(config.settings.agent).label,
     sessions: sessionsByMessage(history),
     stats: (({ total, today, streak }) => ({ total, today, streak }))(computeStats(history)),
@@ -75,8 +79,15 @@ function sessionsByMessage(history: HistoryEntry[]): Record<string, PageSession[
   return out;
 }
 
-/** Last path segment, without pulling node:path into a browser-shaped module. */
-function basename(path: string): string {
-  const parts = path.replace(/[/\\]+$/, "").split(/[/\\]/);
-  return parts[parts.length - 1] ?? path;
+/**
+ * Where each channel's latest session ran, so a channel with several repos
+ * opens its menu on the one in use rather than always on the first.
+ */
+function lastRepos(config: Config, history: HistoryEntry[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const entry of history) {
+    const link = config.channels[entry.channel]?.find((l) => l.repoPath === entry.repoPath);
+    if (link) out[entry.channel] = linkLabel(link);
+  }
+  return out;
 }

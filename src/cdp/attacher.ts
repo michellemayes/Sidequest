@@ -9,7 +9,14 @@ import {
   type CdpTarget,
 } from "./client.js";
 import { pageConfig } from "../config/pageConfig.js";
-import { channelKey } from "../config/channels.js";
+import {
+  addLink,
+  channelKey,
+  linkLabel,
+  linkedRepoPaths,
+  linksForChannel,
+  removeLink,
+} from "../config/channels.js";
 import { loadConfig, updateConfig, expandPath } from "../config/store.js";
 import { inspectRepo } from "../git/repo.js";
 import { createSession, type MessageContext } from "../session/create.js";
@@ -63,7 +70,10 @@ interface AskRequest {
   ticket?: string;
   /** What the user typed into the Ask box. */
   question?: string;
+  /** A path to link, for link-repo. */
   repoPath?: string;
+  /** Which of the channel's repos: the one to start in, or the one to unlink. */
+  repo?: string;
   branch?: string;
 }
 
@@ -270,6 +280,7 @@ export class Attacher {
       threadMessages: request.thread ?? [],
       ticket: request.ticket ?? "",
       question: typeof request.question === "string" ? request.question.slice(0, MAX_QUESTION) : "",
+      repo: typeof request.repo === "string" ? request.repo : "",
     };
 
     try {
@@ -321,6 +332,9 @@ export class Attacher {
    * Link the channel the reader is looking at to a repo. The page knows the
    * channel; the daemon owns the mapping and the filesystem, so it validates
    * the path and answers with what it actually stored.
+   *
+   * A path adds that repo to the channel's list (a channel can have several).
+   * Otherwise `repo` names the one to unlink, and neither unlinks them all.
    */
   private async handleLinkRepo(
     session: CdpSession,
@@ -337,30 +351,49 @@ export class Attacher {
 
     try {
       if (raw.length === 0) {
-        await updateConfig((config) => {
-          delete config.channels[key];
+        const which = (request.repo ?? "").trim();
+        const { removed, left } = await updateConfig((config) => {
+          const removed = removeLink(config, key, which);
+          return { removed, left: linksForChannel(config, key).map(linkLabel) };
         });
-        this.emit({ type: "unlink", channel: key });
-        await this.reply(session, contextId, { id: request.id, ok: true, linked: false });
+        if (which && removed.length === 0) {
+          await this.reply(session, contextId, {
+            id: request.id,
+            error: `${which} is not linked to #${key}.`,
+            repos: left,
+          });
+          await this.broadcastConfig();
+          return;
+        }
+        for (const link of removed) this.emit({ type: "unlink", channel: key, message: link.repoPath });
+        await this.reply(session, contextId, {
+          id: request.id,
+          ok: true,
+          linked: left.length > 0,
+          removed: removed.map(linkLabel),
+          repos: left,
+        });
       } else {
         const repo = await inspectRepo(expandPath(raw));
-        await updateConfig((config) => {
-          config.channels[key] = {
+        const { stored, labels } = await updateConfig((config) => {
+          const stored = addLink(config, key, {
             repoPath: repo.root,
             channel: key,
             baseBranch: "",
             label: "",
             linkedBy: "overlay",
             linkedAt: new Date().toISOString(),
-          };
+          });
+          return { stored, labels: linksForChannel(config, key).map(linkLabel) };
         });
         this.emit({ type: "link", channel: key, message: repo.root });
         await this.reply(session, contextId, {
           id: request.id,
           ok: true,
           linked: true,
-          repo: repo.name,
+          repo: linkLabel(stored),
           repoPath: repo.root,
+          repos: labels,
         });
       }
       await this.broadcastConfig();
@@ -378,14 +411,18 @@ export class Attacher {
   ): Promise<void> {
     try {
       const config = await loadConfig();
-      const repos = await discoverRepos({
-        channel: channelKey(request.channel ?? ""),
-        linkedRepos: [...new Set(Object.values(config.channels).map((l) => l.repoPath))],
+      const channel = channelKey(request.channel ?? "");
+      // Already on this channel is not a suggestion for it.
+      const own = new Set(linksForChannel(config, channel).map((l) => l.repoPath));
+      const found = await discoverRepos({
+        channel,
+        linkedRepos: linkedRepoPaths(config),
         worktreesRoot: config.settings.worktreesRoot,
         roots: config.settings.repoSearchRoots.length > 0
           ? config.settings.repoSearchRoots.map(expandPath)
           : undefined,
       });
+      const repos = found.filter((r) => !own.has(r.path));
       await this.reply(session, contextId, { id: request.id, ok: true, repos });
     } catch (err) {
       const { message, hint } = describeError(err);
@@ -427,15 +464,15 @@ export class Attacher {
     contextId: number | undefined,
     request: AskRequest,
   ): Promise<void> {
-    const key = channelKey(request.channel ?? "");
     const config = await loadConfig();
-    const link = key ? config.channels[key] : undefined;
+    const links = linksForChannel(config, request.channel ?? "");
 
     await this.reply(session, contextId, {
       id: request.id,
-      linked: Boolean(link),
-      repo: link ? link.label.trim() || basename(link.repoPath) : "",
-      repoPath: link?.repoPath ?? "",
+      linked: links.length > 0,
+      repo: links[0] ? linkLabel(links[0]) : "",
+      repoPath: links[0]?.repoPath ?? "",
+      repos: links.map(linkLabel),
     });
   }
 
@@ -482,9 +519,4 @@ function describeTargets(targets: CdpTarget[]): string {
     .map(([type, count]) => `${count} ${type}`)
     .join(", ");
   return `the DevTools endpoint has ${census}, none of which looks like a Slack window`;
-}
-
-function basename(path: string): string {
-  const parts = path.replace(/[/\\]+$/, "").split(/[/\\]/);
-  return parts[parts.length - 1] ?? path;
 }

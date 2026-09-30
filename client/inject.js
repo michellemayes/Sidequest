@@ -9,7 +9,8 @@
  * Two pieces of UI:
  *   1. A button on the message under the pointer, opening the prompts —
  *      or, in a channel with no repo yet, the repos that look like its own.
- *   2. A button beside the channel name showing which repo the channel is on.
+ *   2. A button beside the channel name showing which repo the channel is on —
+ *      or repos: a channel can have several, and the menu then asks which.
  * And three that follow from them: a line on a message while its session
  * starts, a quiet mark on every message that already has one (click it to be
  * back in that session), and a toast when a session lands.
@@ -37,6 +38,7 @@
     prompts: [],
     linkedChannels: [],
     repoLabels: {},
+    lastRepos: {},
     agentLabel: 'Claude Code',
     sessions: {},
     stats: { total: 0, today: 0, streak: 0 },
@@ -204,6 +206,17 @@
     .sq-menu-reopen > .sq-glyph, .sq-menu-suggest > .sq-glyph { flex: 0 0 18px; text-align: center; }
     .sq-sub { margin-left: auto; padding-left: 6px; font-size: 11px; opacity: .55; }
     .sq-menu-sep { height: 1px; margin: 4px 2px; background: var(--sq-line); }
+    /* A channel with several repos: which one the prompts below run in. */
+    .sq-repos { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px 3px 5px; }
+    .sq-menu .sq-repo {
+      width: auto; padding: 1px 8px;
+      font-size: 11px; line-height: 16px; font-weight: 500;
+      border: 1px solid var(--sq-line); border-radius: 9px; opacity: .7;
+    }
+    .sq-menu .sq-repo:hover { opacity: 1; }
+    .sq-menu .sq-repo[data-on="1"] {
+      opacity: 1; color: #fff; background: #7c3aed; border-color: #7c3aed;
+    }
     /* Ask trades the menu's entries for a box to type the question into. */
     .sq-menu[data-asking="1"] { width: 264px; gap: 6px; padding: 8px; }
     .sq-ask-title { font-size: 13px; line-height: 18px; font-weight: 700; }
@@ -376,7 +389,20 @@
     .sq-suggest-name { font-weight: 600; flex: 0 0 auto; }
     .sq-suggest-path { min-width: 0; opacity: .55; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .sq-suggest[data-match="1"] .sq-suggest-name::after { content: ' ★'; color: #8b5cf6; }
-    .sq-panel-actions .sq-panel-unlink { order: -1; margin-right: auto; opacity: .75; }
+    .sq-linked { display: flex; flex-direction: column; gap: 1px; }
+    .sq-linked-row {
+      display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 8px;
+      font-size: 12px; line-height: 16px; border-radius: 5px;
+    }
+    .sq-linked-row:hover { background: var(--sq-wash); }
+    .sq-linked-row::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--sq-ok); flex: 0 0 auto; }
+    .sq-linked-name { min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sq-linked-x {
+      margin: 0 0 0 auto; padding: 0 5px;
+      font: inherit; color: inherit; opacity: .45;
+      background: transparent; border: 0; border-radius: 3px; cursor: pointer;
+    }
+    .sq-linked-x:hover { opacity: 1; background: var(--sq-wash); }
   `;
 
   /* ----------------------------------------------------------------- layer */
@@ -570,6 +596,29 @@
 
   function isLinked(channel) {
     return CONFIG.linkedChannels.indexOf(channelKey(channel)) !== -1;
+  }
+
+  /** The channel's repos by label, the default first. */
+  function reposFor(channel) {
+    const list = CONFIG.repoLabels[channelKey(channel)];
+    if (Array.isArray(list)) return list;
+    return list ? [String(list)] : [];
+  }
+
+  /* Which repo the reader picked per channel, for as long as Slack stays open. */
+  const repoPicks = new Map();
+
+  /**
+   * The repo a session in this channel starts in: the one picked in the menu,
+   * else the one the channel's last session used, else the channel's default.
+   */
+  function pickedRepo(channel) {
+    const repos = reposFor(channel);
+    const key = channelKey(channel);
+    for (const choice of [repoPicks.get(key), CONFIG.lastRepos && CONFIG.lastRepos[key]]) {
+      if (choice && repos.includes(choice)) return choice;
+    }
+    return repos[0] || '';
   }
 
   /**
@@ -930,6 +979,9 @@
         loadMenuSuggestions(menu, link, channel);
       }
     } else {
+      const repos = reposFor(channel);
+      if (repos.length > 1) menu.append(repoSwitcher(channel, repos));
+
       const past = sessionsFor(sig).slice(-2).reverse();
       for (const entry of past) {
         const again = menuButton('sq-menu-reopen', () => {
@@ -973,7 +1025,7 @@
         if (index < 9) entry.dataset.key = String(index + 1);
         const letter = letterFor(prompt.label);
         if (letter) entry.dataset.letter = letter;
-        entry.title = `${ticket ? `Work ${ticket.id}` : prompt.label} with ${CONFIG.agentLabel} — press ${index + 1}${letter ? ` or ${letter.toUpperCase()}` : ''}`;
+        entry.title = `${ticket ? `Work ${ticket.id}` : prompt.label}${repos.length > 1 ? ' in the picked repo' : ''} with ${CONFIG.agentLabel} — press ${index + 1}${letter ? ` or ${letter.toUpperCase()}` : ''}`;
         menu.append(entry);
       });
     }
@@ -983,6 +1035,40 @@
     menuSig = sig;
     ui.append(menu);
     schedule();
+  }
+
+  /**
+   * A row of the channel's repos at the top of its menu, the picked one lit.
+   * Picking one keeps the menu open: it chooses where the prompt below runs,
+   * it is not itself something to run. ← and → move along it.
+   */
+  function repoSwitcher(channel, repos) {
+    const row = document.createElement('div');
+    row.className = 'sq-repos';
+    row.setAttribute('role', 'radiogroup');
+    const current = pickedRepo(channel);
+    for (const repo of repos) {
+      const chip = menuButton('sq-repo', () => pickRepo(channel, repo));
+      chip.textContent = repo;
+      chip.dataset.repo = repo;
+      chip.setAttribute('role', 'radio');
+      chip.title = `Start sessions from #${channel} in ${repo} — ← → to switch`;
+      if (repo === current) chip.dataset.on = '1';
+      chip.setAttribute('aria-checked', repo === current ? 'true' : 'false');
+      row.append(chip);
+    }
+    return row;
+  }
+
+  function pickRepo(channel, repo) {
+    repoPicks.set(channelKey(channel), repo);
+    if (!menuEl) return;
+    menuEl.querySelectorAll('.sq-repo').forEach((chip) => {
+      const on = chip.dataset.repo === repo;
+      if (on) chip.dataset.on = '1';
+      else delete chip.dataset.on;
+      chip.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
   }
 
   /**
@@ -1013,7 +1099,10 @@
     hint.textContent = '⇧↵ new line · Esc cancel';
     const submit = menuButton('sq-ask-send', () => send());
     submit.textContent = prompt.label;
-    submit.title = `Start ${prompt.label} with ${CONFIG.agentLabel} — Enter`;
+    const repos = reposFor(currentChannel());
+    const where = repos.length > 1 ? ` in ${pickedRepo(currentChannel())}` : '';
+    if (where) title.textContent += where;
+    submit.title = `Start ${prompt.label}${where} with ${CONFIG.agentLabel} — Enter`;
     foot.append(hint, submit);
 
     menu.replaceChildren(title, box, foot);
@@ -1060,9 +1149,17 @@
       && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) {
       return false;
     }
-    const items = Array.from(menuEl.querySelectorAll('button'));
-    if (items.length === 0) return false;
     const key = event.key;
+    const chips = Array.from(menuEl.querySelectorAll('.sq-repo'));
+    if ((key === 'ArrowLeft' || key === 'ArrowRight') && chips.length > 1) {
+      const step = key === 'ArrowRight' ? 1 : -1;
+      const at = Math.max(0, chips.findIndex((c) => c.dataset.on === '1'));
+      chips[(at + step + chips.length) % chips.length].click();
+      return true;
+    }
+    // Up and down move through what the menu can do; the repo row is beside that.
+    const items = Array.from(menuEl.querySelectorAll('button:not(.sq-repo)'));
+    if (items.length === 0) return false;
 
     if (key === 'ArrowDown' || key === 'ArrowUp') {
       const step = key === 'ArrowDown' ? 1 : -1;
@@ -1129,7 +1226,9 @@
   /**
    * Link, then carry straight on: the menu reopens on the message it came
    * from with the prompts in it, so linking is a step on the way to a
-   * session rather than a detour away from one.
+   * session rather than a detour away from one. A channel that already has a
+   * repo gains another; the one just added is picked, since it is plainly the
+   * one wanted next.
    */
   function linkRepo(channel, repoPath, row, onError) {
     return ask({ op: 'link-repo', channel, repoPath }).then((res) => {
@@ -1140,18 +1239,14 @@
         return false;
       }
       // The daemon broadcasts the new config too; this just saves waiting for it.
-      const key = channelKey(channel);
-      if (res.linked === false) {
-        CONFIG.linkedChannels = CONFIG.linkedChannels.filter((c) => c !== key);
-        delete CONFIG.repoLabels[key];
-        toast({ title: `Unlinked #${channel}` });
-        return true;
-      }
-      if (!CONFIG.linkedChannels.includes(key)) CONFIG.linkedChannels = CONFIG.linkedChannels.concat(key);
-      CONFIG.repoLabels = Object.assign({}, CONFIG.repoLabels, { [key]: res.repo || '' });
+      storeRepos(channel, res.repos || [res.repo || '']);
+      if (res.repo) repoPicks.set(channelKey(channel), res.repo);
+      const count = reposFor(channel).length;
       toast({
         title: `#${channel} → ${res.repo}`,
-        sub: row ? 'Linked. Now pick what to do with this message.' : 'Linked. Hover any message to start a sidequest.',
+        sub: count > 1
+          ? `Added. #${channel} has ${count} repos; the menu asks which.`
+          : row ? 'Linked. Now pick what to do with this message.' : 'Linked. Hover any message to start a sidequest.',
         burst: true,
       });
       if (row && row.isConnected && currentChannel() === channel) openMenu(row);
@@ -1161,6 +1256,42 @@
       else toast({ title: 'Could not link that repo', sub: err.message, kind: 'error' });
       return false;
     }).finally(() => schedule());
+  }
+
+  /** Take one repo off a channel, or all of them when `repo` is empty. */
+  function unlinkRepo(channel, repo, onError) {
+    return ask({ op: 'link-repo', channel, repoPath: '', repo }).then((res) => {
+      if (res.error) {
+        const text = res.hint ? `${res.error} — ${res.hint}` : res.error;
+        if (onError) onError(text);
+        else toast({ title: 'Could not unlink that repo', sub: text, kind: 'error' });
+        return false;
+      }
+      storeRepos(channel, res.repos || []);
+      const left = reposFor(channel);
+      toast(left.length > 0
+        ? { title: `Unlinked ${repo} from #${channel}`, sub: `Sessions here now start in ${left.join(', ')}.` }
+        : { title: `Unlinked #${channel}` });
+      return true;
+    }).catch((err) => {
+      if (onError) onError(err.message);
+      else toast({ title: 'Could not unlink that repo', sub: err.message, kind: 'error' });
+      return false;
+    }).finally(() => schedule());
+  }
+
+  function storeRepos(channel, repos) {
+    const key = channelKey(channel);
+    const list = repos.filter(Boolean);
+    const labels = Object.assign({}, CONFIG.repoLabels);
+    if (list.length > 0) {
+      labels[key] = list;
+      if (!CONFIG.linkedChannels.includes(key)) CONFIG.linkedChannels = CONFIG.linkedChannels.concat(key);
+    } else {
+      delete labels[key];
+      CONFIG.linkedChannels = CONFIG.linkedChannels.filter((c) => c !== key);
+    }
+    CONFIG.repoLabels = labels;
   }
 
   /* ------------------------------------------------------------- sessions */
@@ -1173,10 +1304,14 @@
     // cut would only make a -2 branch.
     if (results.get(sig)?.kind === 'busy') return;
     const meta = messageMeta(row);
+    const channel = currentChannel();
+    // Named only when there is a choice; a single repo is the channel's anyway.
+    const repo = reposFor(channel).length > 1 ? pickedRepo(channel) : '';
     const payload = {
       op: 'start-session',
       promptKey: prompt.key,
-      channel: currentChannel(),
+      channel,
+      repo,
       sender: senderFor(row),
       text: messageText(row),
       thread: threadContext(row),
@@ -1185,7 +1320,7 @@
       ticket: ticket ? ticket.url : '',
       question,
     };
-    const label = ticket ? `${prompt.label} ${ticket.id}` : prompt.label;
+    const label = (ticket ? `${prompt.label} ${ticket.id}` : prompt.label) + (repo ? ` in ${repo}` : '');
 
     setResult(sig, `Starting ${label}…`, 'busy');
 
@@ -1197,6 +1332,7 @@
       const base = `${label} → ${res.branch}`;
       setResult(sig, res.warning ? `${base} — ${res.warning}` : base, res.warning ? 'warn' : 'info', res.branch);
       if (res.stats) CONFIG.stats = res.stats;
+      if (repo) CONFIG.lastRepos = Object.assign({}, CONFIG.lastRepos, { [channelKey(channel)]: repo });
       if (meta.ts) {
         // Mark the message now rather than on the broadcast that follows.
         const list = sessionsFor(meta.ts).concat({ key: prompt.key, label: prompt.label, branch: res.branch, at: new Date().toISOString() });
@@ -1471,27 +1607,69 @@
 
     const channel = currentChannel();
     if (!channel) return;
-    const current = CONFIG.repoLabels[channelKey(channel)] || '';
+    const current = reposFor(channel);
 
     const panel = document.createElement('div');
     panel.className = 'sq-panel';
 
     const title = document.createElement('div');
     title.className = 'sq-panel-title';
-    title.textContent = `Repo for #${channel}`;
+    title.textContent = current.length > 1 ? `Repos for #${channel}` : `Repo for #${channel}`;
+
+    // What the channel is on now, each with a way off it. The first is where
+    // sessions start unless the menu picks another.
+    const linked = document.createElement('div');
+    linked.className = 'sq-linked';
+    for (const [i, repo] of current.entries()) {
+      const item = document.createElement('div');
+      item.className = 'sq-linked-row';
+      const name = document.createElement('span');
+      name.className = 'sq-linked-name';
+      name.textContent = repo;
+      item.append(name);
+      if (current.length > 1 && i === 0) {
+        const tag = document.createElement('span');
+        tag.className = 'sq-sub';
+        tag.textContent = 'default';
+        item.append(tag);
+      }
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.className = 'sq-linked-x';
+      x.textContent = '×';
+      x.title = `Unlink ${repo} from #${channel}`;
+      x.setAttribute('aria-label', x.title);
+      x.addEventListener('click', (event) => {
+        stop(event);
+        panel.dataset.busy = '1';
+        hide(error);
+        unlinkRepo(channel, repo, (text) => {
+          error.textContent = text;
+          show(error);
+          delete panel.dataset.busy;
+        }).then((ok) => {
+          if (!ok || panelEl !== panel) return;
+          // Reopened rather than patched, so the list, the wording and the
+          // suggestions all agree with what the channel has now.
+          openPanel(returnRow);
+          schedule();
+        });
+      });
+      item.append(x);
+      linked.append(item);
+    }
 
     const input = document.createElement('input');
     input.type = 'text';
     input.spellcheck = false;
-    input.placeholder = 'Search your repos, or paste a path';
 
     const list = document.createElement('div');
     list.className = 'sq-suggest-list';
 
     const note = document.createElement('div');
     note.className = 'sq-panel-note';
-    note.textContent = current
-      ? `Linked to ${current}. Pick another to switch.`
+    note.textContent = current.length > 0
+      ? `Add another and #${channel}'s menu asks which repo to work in.`
       : 'Pick a checkout, or paste the path to one.';
 
     const error = document.createElement('div');
@@ -1505,22 +1683,14 @@
     const submit = document.createElement('button');
     submit.type = 'button';
     submit.dataset.primary = '1';
-    submit.textContent = current ? 'Save' : 'Link';
-    actions.append(cancel);
-    if (current) {
-      const unlink = document.createElement('button');
-      unlink.type = 'button';
-      unlink.className = 'sq-panel-unlink';
-      unlink.textContent = 'Unlink';
-      unlink.addEventListener('click', (event) => {
-        stop(event);
-        send('');
-      });
-      actions.append(unlink);
-    }
-    actions.append(submit);
+    submit.textContent = current.length > 0 ? 'Add' : 'Link';
+    actions.append(cancel, submit);
 
-    panel.append(title, input, list, note, error, actions);
+    input.placeholder = current.length > 0
+      ? 'Add a repo: search, or paste a path'
+      : 'Search your repos, or paste a path';
+    if (current.length === 0) hide(linked);
+    panel.append(title, linked, input, list, note, error, actions);
 
     let repos = [];
     let visible = [];
@@ -1565,6 +1735,14 @@
       const value = input.value.trim();
       const picked = active >= 0 && !pathLike(value) ? visible[active] : null;
       const repoPath = forced !== undefined ? forced : picked ? picked.path : value;
+      // An empty box is not a request to unlink; the × beside a repo is.
+      if (!repoPath) {
+        error.textContent = 'Pick a repo, or paste the path to one.';
+        show(error);
+        input.focus();
+        schedule();
+        return;
+      }
       panel.dataset.busy = '1';
       hide(error);
       linkRepo(channel, repoPath, returnRow, (text) => {
@@ -1674,7 +1852,8 @@
     channelBtn.dataset.channel = channel;
 
     const linked = isLinked(channel);
-    const repo = CONFIG.repoLabels[channelKey(channel)] || '';
+    const repos = reposFor(channel);
+    const repo = repos.length > 1 ? `${repos[0]} +${repos.length - 1}` : repos[0] || '';
     const flag = linked ? '1' : '0';
     if (channelBtn.dataset.linked !== flag) channelBtn.dataset.linked = flag;
 
@@ -1683,7 +1862,9 @@
     if (label.textContent !== text) label.textContent = text;
 
     const title = linked
-      ? `#${channel} starts ${CONFIG.agentLabel} sessions in ${repo} — click to change or unlink`
+      ? repos.length > 1
+        ? `#${channel} starts ${CONFIG.agentLabel} sessions in ${repos.join(', ')} — click to add or unlink`
+        : `#${channel} starts ${CONFIG.agentLabel} sessions in ${repo} — click to add another or unlink`
       : `Link #${channel} to a git repo so messages can start ${CONFIG.agentLabel} sessions`;
     if (channelBtn.title !== title) channelBtn.title = title;
 

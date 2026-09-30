@@ -54,6 +54,12 @@ edits in the checkout. Then, in Slack:
 2. Pick **Investigate**, **Fix**, **Review** or **Ask**, or press **1**–**4**
    (or **I**/**F**/**R**/**A**).
 
+A channel can have more than one repo. Add another from the repo button beside
+the channel name (it lists the channel's repos, each with **×** to unlink it),
+or with `sidequest link`. The menu then shows a row of the channel's repos above
+the prompts: click one, or press **←**/**→**, to pick where the session runs.
+It opens on the repo the channel's last session used.
+
 A toast confirms the launch with your running count, today's count and your
 day streak. The branch name, or the error if something went wrong, shows up
 under the message; click it to reopen the session, or **×** to dismiss it.
@@ -99,7 +105,8 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest reopen [ref]` | Reopen Warp on a session (the latest if you name none) |
 | `sidequest stats` | Your total, today's count, current and best streak |
 | `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force` |
-| `sidequest link <path> -c <channel>` / `unlink` | Link or unlink a channel from the terminal |
+| `sidequest link <path> -c <channel>` | Link a repo to a channel from the terminal. Linking a second repo adds it; the first stays the default |
+| `sidequest unlink [repo] -c <channel>` | Unlink one repo (by path or label) from a channel, or all of them if you name none |
 | `sidequest agents [claude\|codex]` | Show the available agents, or switch the one new sessions use |
 | `sidequest list` / `prompts` | Show linked channels and prompt templates |
 

@@ -30,7 +30,15 @@ import { warpLaunchConfigDir, warpTabConfigDir, platform, uriOpener } from "./ut
 import { Attacher } from "./cdp/attacher.js";
 import { SlackKeeper } from "./cdp/keeper.js";
 import { findSlackApp, inspectDebugPort, isSlackRunning, launchSlack, sleep } from "./cdp/launch.js";
-import { channelKey } from "./config/channels.js";
+import {
+  addLink,
+  allLinks,
+  channelKey,
+  linkLabel,
+  linkedRepoPaths,
+  linksForChannel,
+  removeLink,
+} from "./config/channels.js";
 import { describeError, UserFacingError } from "./util/errors.js";
 import type { Config } from "./config/schema.js";
 import type { LaunchResult } from "./cdp/launch.js";
@@ -96,7 +104,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("link <path>")
-    .description("link a Slack channel to a repo from the terminal")
+    .description("link a Slack channel to a repo from the terminal (a channel can have several)")
     .requiredOption("-c, --channel <name>", "channel name, e.g. eng-alerts")
     .option("-b, --base <branch>", "branch to cut worktrees from (default: detected)")
     .option("-l, --label <name>", "display name for the repo")
@@ -105,10 +113,12 @@ export async function runCli(argv: string[]): Promise<void> {
     );
 
   program
-    .command("unlink")
-    .description("remove a channel's repo link")
+    .command("unlink [repo]")
+    .description("remove one repo (by path or label) from a channel, or all of them")
     .requiredOption("-c, --channel <name>", "channel name, e.g. eng-alerts")
-    .action((options: { channel: string }) => wrap(() => unlink(options.channel)));
+    .action((repo: string | undefined, options: { channel: string }) =>
+      wrap(() => unlink(options.channel, repo)),
+    );
 
   program
     .command("list")
@@ -554,7 +564,7 @@ async function runAttacherLoop(options: {
           console.log(`linked #${event.channel} → ${event.message}`);
           break;
         case "unlink":
-          console.log(`unlinked #${event.channel}`);
+          console.log(`unlinked #${event.channel}${event.message ? ` from ${event.message}` : ""}`);
           break;
         case "attach-error":
         case "poll-error":
@@ -637,28 +647,41 @@ async function link(
 ): Promise<void> {
   const repo = await inspectRepo(expandPath(path));
   const key = channelKey(options.channel);
-  await updateConfig((config) => {
-    config.channels[key] = {
+  const links = await updateConfig((config) => {
+    addLink(config, key, {
       repoPath: repo.root,
       channel: key,
       baseBranch: options.base ?? "",
       label: options.label ?? "",
       linkedBy: "cli",
       linkedAt: new Date().toISOString(),
-    };
+    });
+    return linksForChannel(config, key);
   });
   console.log(`Linked #${key} → ${repo.root}`);
   console.log(`Base branch: ${options.base || repo.defaultBranch}${options.base ? "" : " (detected)"}`);
+  if (links.length > 1) {
+    console.log(`#${key} now has ${links.length} repos: ${links.map(linkLabel).join(", ")} (default: ${linkLabel(links[0]!)})`);
+  }
 }
 
-async function unlink(channel: string): Promise<void> {
+async function unlink(channel: string, repo?: string): Promise<void> {
   const key = channelKey(channel);
-  const existed = await updateConfig((config) => {
-    const had = Boolean(config.channels[key]);
-    delete config.channels[key];
-    return had;
+  // A path is matched as linked, which is absolute; a label as written.
+  const which = repo && /^[~./]/.test(repo.trim()) ? expandPath(repo) : (repo ?? "").trim();
+  const { removed, left } = await updateConfig((config) => {
+    const removed = removeLink(config, key, which);
+    return { removed, left: linksForChannel(config, key) };
   });
-  console.log(existed ? `Unlinked #${key}.` : `#${key} was not linked.`);
+  if (removed.length === 0) {
+    console.log(which ? `${repo} is not linked to #${key}.` : `#${key} was not linked.`);
+    return;
+  }
+  if (!which || left.length === 0) {
+    console.log(`Unlinked #${key}.`);
+    return;
+  }
+  console.log(`Unlinked ${linkLabel(removed[0]!)} from #${key}; it still has ${left.map(linkLabel).join(", ")}.`);
 }
 
 async function list(): Promise<void> {
@@ -678,15 +701,18 @@ async function list(): Promise<void> {
     console.log("  (none yet — hover a message in Slack, click Sidequest, and pick a repo)");
     return;
   }
-  for (const [id, l] of entries) {
-    console.log(`  #${id} → ${l.repoPath}`);
-    console.log(`      base: ${l.baseBranch || "(detected)"}   label: ${l.label || basename(l.repoPath)}`);
+  for (const [id, links] of entries) {
+    for (const [i, l] of links.entries()) {
+      const tag = links.length > 1 && i === 0 ? "   (default)" : "";
+      console.log(`  #${id} → ${l.repoPath}${tag}`);
+      console.log(`      base: ${l.baseBranch || "(detected)"}   label: ${linkLabel(l)}`);
+    }
   }
 }
 
 async function sessions(): Promise<void> {
   const config = await loadConfig();
-  const repos = uniqueRepoPaths(config.channels);
+  const repos = linkedRepoPaths(config);
   if (repos.length === 0) {
     console.log("No repos are linked yet.");
     return;
@@ -708,7 +734,7 @@ async function sessions(): Promise<void> {
 
 async function clean(options: { force: boolean; all: boolean }): Promise<void> {
   const config = await loadConfig();
-  const repos = uniqueRepoPaths(config.channels);
+  const repos = linkedRepoPaths(config);
   if (repos.length === 0) {
     console.log("No repos are linked yet.");
     return;
@@ -720,7 +746,7 @@ async function clean(options: { force: boolean; all: boolean }): Promise<void> {
   for (const repoPath of repos) {
     await pruneWorktrees(repoPath);
     const repo = await inspectRepo(repoPath);
-    const base = baseBranchFor(config.channels, repoPath) || repo.defaultBranch;
+    const base = baseBranchFor(config, repoPath) || repo.defaultBranch;
 
     // Only ever touch worktrees sidequest created, never a worktree the user made
     // by hand elsewhere in the same repo.
@@ -762,11 +788,8 @@ async function clean(options: { force: boolean; all: boolean }): Promise<void> {
 }
 
 /** The base branch configured for whichever channel links this repo. */
-function baseBranchFor(
-  channels: Record<string, { repoPath: string; baseBranch: string }>,
-  repoPath: string,
-): string {
-  for (const link of Object.values(channels)) {
+function baseBranchFor(config: Config, repoPath: string): string {
+  for (const link of allLinks(config)) {
     if (link.repoPath === repoPath && link.baseBranch.trim()) return link.baseBranch.trim();
   }
   return "";
@@ -971,7 +994,7 @@ async function doctor(): Promise<void> {
 
   const channels = Object.entries(config.channels);
   console.log(`\n  linked channels: ${channels.length}`);
-  for (const [id, l] of channels) {
+  for (const [id, l] of channels.flatMap(([id, links]) => links.map((l) => [id, l] as const))) {
     try {
       const repo = await inspectRepo(l.repoPath);
       console.log(`  ok   ${id} → ${repo.root}`);
@@ -988,10 +1011,6 @@ async function doctor(): Promise<void> {
       : `\n${problems} problem${problems === 1 ? "" : "s"} to fix.\n`,
   );
   if (problems > 0) process.exitCode = 1;
-}
-
-function uniqueRepoPaths(channels: Record<string, { repoPath: string }>): string[] {
-  return [...new Set(Object.values(channels).map((l) => l.repoPath))];
 }
 
 async function fileExists(path: string): Promise<boolean> {
