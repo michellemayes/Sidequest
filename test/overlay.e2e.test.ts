@@ -381,7 +381,7 @@ describeIfChrome("overlay over CDP", () => {
     }
   }, 30_000);
 
-  it("opens the three prompts and starts a real session on click", async () => {
+  it("opens the prompts and starts a real session on click", async () => {
     const { attacher, session } = await attachAndEval();
     try {
       await sleep(600);
@@ -393,7 +393,7 @@ describeIfChrome("overlay over CDP", () => {
         session,
         `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-menu-prompt')).map(b => b.textContent))`,
       );
-      expect(JSON.parse(String(labels))).toEqual(["Investigate", "Fix", "Review"]);
+      expect(JSON.parse(String(labels))).toEqual(["Investigate", "Fix", "Review", "Ask"]);
 
       // The menu hangs off the button, clear of the message it was opened from.
       // Dropping it across that message hid the thing being acted on.
@@ -539,7 +539,7 @@ describeIfChrome("overlay over CDP", () => {
         session,
         `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-menu-prompt')).map(b => b.textContent))`,
       );
-      expect(JSON.parse(String(plain))).toEqual(["Investigate", "Fix", "Review"]);
+      expect(JSON.parse(String(plain))).toEqual(["Investigate", "Fix", "Review", "Ask"]);
       await press(session, "Escape", "Escape", 27);
 
       await hover(session, "row-3");
@@ -553,10 +553,11 @@ describeIfChrome("overlay over CDP", () => {
         ["Investigate", "1", "i"],
         ["Fix", "2", "f"],
         ["Review", "3", "r"],
-        ["Linear DATA-3051", "4", "l"],
+        ["Ask", "4", "a"],
+        ["Linear DATA-3051", "5", "l"],
       ]);
 
-      await press(session, "4", "Digit4", 52);
+      await press(session, "5", "Digit5", 53);
       const text = await settledResult(session);
       // Named for the ticket, so Linear links the branch back to it.
       expect(text).toContain("Linear DATA-3051 → linear/data-3051-quiet-the-flapping-alarm");
@@ -908,7 +909,7 @@ describeIfChrome("overlay over CDP", () => {
         session,
         `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-menu-prompt')).map(b => [b.textContent, b.dataset.key]))`,
       );
-      expect(JSON.parse(String(keys))).toEqual([["Investigate", "1"], ["Fix", "2"], ["Review", "3"]]);
+      expect(JSON.parse(String(keys))).toEqual([["Investigate", "1"], ["Fix", "2"], ["Review", "3"], ["Ask", "4"]]);
 
       await press(session, "3", "Digit3", 51);
       expect(await evaluate(session, `!!${UI}.querySelector('.sq-menu')`)).toBe(false);
@@ -984,7 +985,7 @@ describeIfChrome("overlay over CDP", () => {
         prompts = Number(await evaluate(session, `${UI}.querySelectorAll('.sq-menu-prompt').length`));
       }
       // Linked, and the menu came back on the same message ready to go.
-      expect(prompts).toBe(3);
+      expect(prompts).toBe(4);
       const stored = JSON.parse(await readFile(join(configHome, "config.json"), "utf8"));
       expect(stored.channels["repo-eng"].repoPath).toBe(repoPath);
     } finally {

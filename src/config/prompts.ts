@@ -1,7 +1,7 @@
 import type { PromptConfig, PromptKey } from "./schema.js";
 
 /**
- * The prompts on a Slack message: the first three on every one, and Linear
+ * The prompts on a Slack message: the first four on every one, and Linear
  * only on a message that links a Linear issue. Users can override any
  * field per prompt in ~/.sidequest/config.json; anything they omit falls back to
  * the definition here.
@@ -67,6 +67,17 @@ Slack permalink: {{permalink}}
 4. Skip style nits the repo's linter already covers.
 
 Give me findings ordered most severe first, each with the file, the line, and what actually goes wrong. Say plainly if you find nothing serious. Do not change code unless I ask.`,
+  },
+  ask: {
+    label: "Ask",
+    emoji: "speech_balloon",
+    branchPrefix: "ask",
+    template: `From @{{author}} in #{{channel}} on {{date}}:
+{{message}}
+{{thread}}
+Slack permalink: {{permalink}}
+
+Read this and the code it touches, then wait for my instructions.`,
   },
   linear: {
     label: "Linear",

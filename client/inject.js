@@ -7,7 +7,7 @@
  * __sidequestResult.
  *
  * Two pieces of UI:
- *   1. A button on the message under the pointer, opening the three prompts —
+ *   1. A button on the message under the pointer, opening the prompts —
  *      or, in a channel with no repo yet, the repos that look like its own.
  *   2. A button beside the channel name showing which repo the channel is on.
  * And three that follow from them: a line on a message while its session
@@ -96,7 +96,7 @@
   const GLYPHS = {
     mag: '🔍', mag_right: '🔎', wrench: '🔧', hammer: '🔨', eyes: '👀', bug: '🐛',
     rocket: '🚀', sparkles: '✨', memo: '📝', test_tube: '🧪', bulb: '💡', zap: '⚡',
-    ticket: '🎫',
+    ticket: '🎫', speech_balloon: '💬',
   };
   const glyphFor = (emoji) => {
     const name = String(emoji || '').replace(/^:|:$/g, '');
