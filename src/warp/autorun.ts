@@ -35,6 +35,12 @@ export interface WriteAutorunOptions {
   agentLabel?: string;
   /** Starting terminal title; the agent may replace it. */
   title?: string;
+  /**
+   * Leave the `pending` marker for Warp or the shell hook to claim. Off for an
+   * agent in a desktop app: the app runs the session, and a marker left behind
+   * would start a second agent in the first terminal opened there.
+   */
+  pending?: boolean;
 }
 
 /**
@@ -51,7 +57,7 @@ export async function writeAutorun(options: WriteAutorunOptions): Promise<Autoru
   await mkdir(paths.dir, { recursive: true });
 
   await writeFile(paths.promptFile, `${options.prompt}\n`, "utf8");
-  await writeFile(paths.pendingFile, "", "utf8");
+  if (options.pending !== false) await writeFile(paths.pendingFile, "", "utf8");
   await writeFile(paths.scriptFile, renderScript(options), "utf8");
   await chmod(paths.scriptFile, 0o755);
 

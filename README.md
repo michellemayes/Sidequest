@@ -21,9 +21,12 @@ See [`docs/demo`](docs/demo) to re-record it.</sub>
 
 ## Quick start
 
-You'll need macOS, Node 20+, git, [Warp](https://www.warp.dev/), and
-[Claude Code](https://claude.com/claude-code) or [Codex](https://github.com/openai/codex)
-on your `PATH`.
+You'll need macOS, Node 20+, git, and one of:
+
+- [Warp](https://www.warp.dev/) with [Claude Code](https://claude.com/claude-code) or
+  [Codex](https://github.com/openai/codex) on your `PATH`, or
+- the [Claude desktop app](https://claude.com/download) or the
+  [ChatGPT desktop app](https://chatgpt.com/download) (see [Desktop apps](#desktop-apps)).
 
 ```bash
 git clone https://github.com/michellemayes/Sidequest.git
@@ -93,7 +96,31 @@ and a local daemon then:
 
 1. creates `git worktree add -b <branch> <path> origin/<base>`,
 2. writes the prompt to `<worktree>/.sidequest/prompt.md` (git-excluded),
-3. opens Warp on the worktree and starts your agent.
+3. opens Warp on the worktree and starts your agent (or opens your agent's desktop
+   app there, see [Desktop apps](#desktop-apps)).
+
+### Desktop apps
+
+Sessions don't have to open in Warp. Two agents live in desktop apps instead:
+
+```bash
+sidequest agents claude-desktop   # Claude Code in the Claude app
+sidequest agents chatgpt          # Codex in the ChatGPT app
+sidequest agents claude           # back to Claude Code in Warp
+```
+
+The worktree, branch and prompt are made exactly as before. Then, instead of a
+Warp tab, Sidequest opens the app with a deep link
+([`claude://code/new`](https://support.claude.com/en/articles/14729294-open-claude-desktop-with-a-link),
+[`codex://threads/new`](https://learn.chatgpt.com/docs/reference/commands)): a new
+session in the worktree with the prompt already in the composer. Press **Enter**
+there to start it. Claude asks you to trust the folder the first time. A prompt too
+long for a link (over 12,000 characters) is left in `.sidequest/prompt.md`, and the
+composer asks the agent to read it.
+
+Reopening a session (`sidequest reopen`, or **Back to Fix** in Slack) starts a new
+session in the app on the same worktree; the links can't reach back into an earlier
+one. The shell hook, `warpStrategy` and `warpPreview` only matter for the Warp agents.
 
 <img src="docs/demo/menu.png" width="720" alt="The Sidequest menu open on a message, with Investigate, Fix and Review">
 
@@ -115,7 +142,7 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest link <path> -c <channel>` | Link a repo to a channel from the terminal. Linking a second repo adds it; the first stays the default |
 | `sidequest unlink [repo] -c <channel>` | Unlink one repo (by path or label) from a channel, or all of them if you name none |
 | `sidequest replies [on\|off]` | Show the thread replies sessions post, or turn them on or off |
-| `sidequest agents [claude\|codex]` | Show the available agents, or switch the one new sessions use |
+| `sidequest agents [claude\|codex\|claude-desktop\|chatgpt]` | Show the available agents, or switch the one new sessions use |
 | `sidequest list` / `prompts` | Show linked channels and prompt templates |
 
 ## Configuration
@@ -180,7 +207,7 @@ without a heading). With nothing typed in the Ask box, its reply is
 
 | Setting | Default | |
 | --- | --- | --- |
-| `agent` | `{ "id": "claude" }` | `claude` or `codex` (or run `sidequest agents codex`). Use `command`/`args` to override the executable |
+| `agent` | `{ "id": "claude" }` | `claude` or `codex` in Warp, or `claude-desktop` or `chatgpt` in their desktop apps (or run `sidequest agents codex`). Use `command`/`args` to override a Warp agent's executable |
 | `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees go |
 | `warpStrategy` | `auto` | `auto` tries a tab config, then a launch config, then a plain new tab, until the agent starts. `tab_config`, `launch_config` or `new_tab` puts that one first |
 | `warpPreview` | `false` | Use Warp Preview |

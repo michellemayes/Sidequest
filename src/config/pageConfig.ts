@@ -37,6 +37,10 @@ export interface PageConfig {
   lastRepos: Record<string, string>;
   /** Human label of the agent sessions launch, e.g. "Claude Code". */
   agentLabel: string;
+  /** Where sessions open, e.g. "Warp" or "the Claude app". */
+  agentHost: string;
+  /** True when sessions open in a desktop app, with the prompt waiting to be sent. */
+  agentInApp: boolean;
   /** Message ts -> sessions started from it, oldest first. */
   sessions: Record<string, PageSession[]>;
   stats: { total: number; today: number; streak: number };
@@ -49,6 +53,7 @@ export function pageConfig(config: Config, history: HistoryEntry[] = []): PageCo
     if (links.length > 0) repoLabels[key] = links.map(linkLabel);
   }
 
+  const agent = resolveAgent(config.settings.agent);
   return {
     prompts: allPrompts(config).map(({ key, prompt }) => ({
       key,
@@ -58,7 +63,9 @@ export function pageConfig(config: Config, history: HistoryEntry[] = []): PageCo
     linkedChannels: Object.keys(repoLabels),
     repoLabels,
     lastRepos: lastRepos(config, history),
-    agentLabel: resolveAgent(config.settings.agent).label,
+    agentLabel: agent.label,
+    agentHost: agent.host,
+    agentInApp: Boolean(agent.app),
     sessions: sessionsByMessage(history),
     stats: (({ total, today, streak }) => ({ total, today, streak }))(computeStats(history)),
     verbose: config.settings.verbose,

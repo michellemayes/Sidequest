@@ -3,7 +3,9 @@ import { join, resolve } from "node:path";
 import type { Config } from "../config/schema.js";
 import { linkedRepoPaths } from "../config/channels.js";
 import { listWorktrees, type WorktreeRecord } from "../git/worktree.js";
-import { colorForPrompt, launchWarp, type LaunchResult } from "../warp/launcher.js";
+import { colorForPrompt, launchWarp } from "../warp/launcher.js";
+import { resolveAgent } from "../agents/agents.js";
+import { openUri } from "../util/openUri.js";
 import { warpConfigName } from "./naming.js";
 import { UserFacingError } from "../util/errors.js";
 
@@ -38,11 +40,22 @@ export async function findSession(
   return null;
 }
 
+export interface ReopenResult {
+  /** Where it opened, e.g. "Warp" or "the Claude app". */
+  host: string;
+  /** How: the Warp strategy that worked, or the agent's id for an app. */
+  strategy: string;
+  /** Whether the agent claimed a still-pending session; null when there was none. */
+  agentStarted: boolean | null;
+}
+
 /**
- * Open Warp on a session again. If the session's pending marker is still
+ * Open a session again. In Warp: if the session's pending marker is still
  * unclaimed, the agent starts on arrival; otherwise it is just a tab there.
+ * For an agent in a desktop app: a new session in the app, in the worktree
+ * (the links cannot reach back into an earlier one).
  */
-export async function openSession(config: Config, found: FoundSession): Promise<LaunchResult> {
+export async function openSession(config: Config, found: FoundSession): Promise<ReopenResult> {
   const { worktree, repoPath } = found;
   try {
     await stat(worktree.path);
@@ -51,6 +64,12 @@ export async function openSession(config: Config, found: FoundSession): Promise<
       `The worktree for ${worktree.branch} is gone (${worktree.path}).`,
       "Run `sidequest clean` to drop its registration.",
     );
+  }
+
+  const agent = resolveAgent(config.settings.agent);
+  if (agent.app) {
+    await openUri(agent.app.newSessionUri(worktree.path), agent.host, `Is ${agent.host} installed? \`sidequest doctor\` checks.`);
+    return { host: agent.host, strategy: agent.id, agentStarted: null };
   }
 
   const scriptFile = join(worktree.path, ".sidequest", "autorun.sh");
@@ -74,5 +93,5 @@ export async function openSession(config: Config, found: FoundSession): Promise<
     },
     pendingFile: join(worktree.path, ".sidequest", "pending"),
   });
-  return launch;
+  return { host: "Warp", strategy: launch.strategy, agentStarted: launch.agentStarted };
 }
