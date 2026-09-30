@@ -18,13 +18,13 @@
 import { stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Config } from "../config/schema.js";
-import { allLinks } from "../config/channels.js";
 import { detectDefaultBranch, refExists } from "../git/repo.js";
 import { listWorktrees, pruneWorktrees, removeWorktree, type WorktreeRecord } from "../git/worktree.js";
 import { run, succeeds } from "../util/exec.js";
 import { UserFacingError } from "../util/errors.js";
 import { log } from "../util/log.js";
 import { autorunPaths } from "../warp/autorun.js";
+import { baseBranchFor } from "./cleanup.js";
 import type { HistoryEntry } from "./history.js";
 import { findSession, type FoundSession } from "./reopen.js";
 
@@ -160,7 +160,8 @@ export class UncommittedWorkError extends UserFacingError {
 }
 
 /**
- * Remove one session's worktree, with the same rules as `sidequest clean`:
+ * Remove one session's worktree, with the same rules as `sidequest clean`
+ * (sweepWorktrees in cleanup.ts, which works a whole repo at a time):
  * git refuses to remove a worktree with uncommitted changes unless forced,
  * and the branch is only deleted (when pruneBranchesOnClean is on) if it has
  * nothing the base lacks — `git branch -d`, never `-D`. The one difference is
@@ -240,10 +241,7 @@ export async function findById(
 /** The ref a session's commits are counted against: origin/<base> when it exists. */
 async function baseRefFor(config: Config, repoPath: string): Promise<string | null> {
   try {
-    const configured = allLinks(config)
-      .find((l) => l.repoPath === repoPath && l.baseBranch.trim())
-      ?.baseBranch.trim();
-    const base = configured || await detectDefaultBranch(repoPath, true);
+    const base = baseBranchFor(config, repoPath) || await detectDefaultBranch(repoPath, true);
     if (await refExists(repoPath, `origin/${base}`)) return `origin/${base}`;
     if (await refExists(repoPath, base)) return base;
   } catch {

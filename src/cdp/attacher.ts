@@ -67,7 +67,7 @@ interface AskRequest {
   ts?: string;
   permalink?: string;
   thread?: Array<{ author: string; text: string }>;
-  /** Linear issue URL the message links, for the Linear prompt. */
+  /** Linear, GitHub or Jira issue URL the message links, for that prompt. */
   ticket?: string;
   /** What the user typed into the Ask box. */
   question?: string;

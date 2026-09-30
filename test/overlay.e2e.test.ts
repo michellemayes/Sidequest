@@ -600,6 +600,70 @@ describeIfChrome("overlay over CDP", () => {
     }
   }, 45_000);
 
+  it("offers GitHub and Jira prompts on a message that links their issues, and works them", async () => {
+    const { attacher, session } = await attachAndEval();
+    const section = "document.querySelector('#row-2 .p-rich_text_section')";
+    const original = String(await evaluate(session, `${section}.innerHTML`));
+    try {
+      await sleep(600);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      // A message of its own, linking three tickets: only the first two are offered.
+      await evaluate(session, "window.__recycle('row-2', 'x', '1757438888.000800')");
+      await evaluate(
+        session,
+        `${section}.innerHTML = 'Dupe of <a href="https://github.com/acme/web/issues/123">#123</a>, tracked in ' +
+          '<a href="https://acme.atlassian.net/browse/OPS-7">OPS-7</a> and <a href="https://github.com/acme/web/issues/124">#124</a>'`,
+      );
+      await sleep(300);
+
+      await hover(session, "row-2");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      const entries = await evaluate(
+        session,
+        `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-menu-prompt')).map(b => [b.textContent, b.dataset.key, b.dataset.letter || '']))`,
+      );
+      expect(JSON.parse(String(entries))).toEqual([
+        ["Investigate", "1", "i"],
+        ["Fix", "2", "f"],
+        ["Review", "3", "r"],
+        ["Ask", "4", "a"],
+        ["GitHub #123", "5", "g"],
+        ["Jira OPS-7", "6", "j"],
+      ]);
+
+      await press(session, "j", "KeyJ", 74);
+      const jira = await settledResult(session);
+      // The key leads the branch, upper-case, so Jira's development panel finds it.
+      expect(jira).toContain("Jira OPS-7 → jira/OPS-7-dupe-of-123");
+
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await hover(session, "row-2");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      await press(session, "g", "KeyG", 71);
+      const github = await settledResult(session);
+      expect(github).toContain("GitHub #123 → issue/123-dupe-of-123");
+
+      const worktrees = (await exec("git", ["worktree", "list"], { cwd: repoPath })).stdout.split("\n");
+      const promptOf = (branch: string) => {
+        const line = worktrees.find((l) => l.includes(`[${branch}`));
+        return readFile(join(line!.split(/\s+/)[0]!, ".sidequest", "prompt.md"), "utf8");
+      };
+      const jiraPrompt = await promptOf("jira/OPS-7-");
+      expect(jiraPrompt).toContain("OPS-7: https://acme.atlassian.net/browse/OPS-7");
+      const githubPrompt = await promptOf("issue/123-");
+      expect(githubPrompt).toContain("acme/web#123: https://github.com/acme/web/issues/123");
+      expect(githubPrompt).toContain('"Fixes acme/web#123"');
+    } finally {
+      await evaluate(session, `${section}.innerHTML = ${JSON.stringify(original)}`);
+      await evaluate(session, "window.__recycle('row-2', 'only on the EU store', '1757430060.000200')");
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      attacher.stop();
+      session.close();
+    }
+  }, 60_000);
+
   it("drops a stale result when the virtual list recycles a row", async () => {
     const { attacher, session } = await attachAndEval();
     try {
