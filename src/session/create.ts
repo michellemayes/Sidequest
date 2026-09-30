@@ -35,7 +35,7 @@ export interface SessionResult {
   launchStrategy: string;
   fellBackToNewTab: boolean;
   promptFile: string;
-  /** Set when the worktree is ready but Warp could not be opened. */
+  /** Set when the worktree is ready but Warp could not be opened, or the agent did not start. */
   launchError?: string;
 }
 
@@ -119,6 +119,7 @@ export async function createSession(
         cwd: worktree.path,
         command: files.scriptFile,
       },
+      pendingFile: files.pendingFile,
     });
 
     log.info(`session ready: ${worktree.path} (${launch.strategy})`);
@@ -126,6 +127,7 @@ export async function createSession(
       ...base,
       launchStrategy: launch.strategy,
       fellBackToNewTab: launch.fellBack,
+      ...(launch.agentStarted === false ? { launchError: AGENT_DID_NOT_START } : {}),
     };
   } catch (err) {
     const { message } = describeError(err);
@@ -138,6 +140,13 @@ export async function createSession(
     };
   }
 }
+
+/**
+ * Warp opened on the worktree, but nothing ran autorun.sh: Warp ignored the
+ * launch config and the shell hook that would catch that is not installed.
+ */
+const AGENT_DID_NOT_START =
+  "Warp opened but the agent did not start. Run `sidequest install-hook`, then `sidequest reopen`.";
 
 interface ContextExtras {
   branch: string;

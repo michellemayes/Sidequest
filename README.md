@@ -134,8 +134,11 @@ Start with `sidequest doctor`.
   app, or set `cdpPort` to a free port and run `start --force`.
 - **The repo I want isn't suggested**: add its parent folder to
   `repoSearchRoots`, or paste the path into the channel pill's panel.
-- **Warp opens but the agent doesn't start**: run `sidequest install-hook` and
-  open a new terminal, or run `sidequest reopen` (latest) / `sidequest reopen <branch>`.
+- **Warp opens but the agent doesn't start**: Warp only reads launch
+  configurations when it starts, so a deeplink to one written while it's
+  running just focuses Warp. Sidequest notices the agent didn't start and
+  falls back to a tab on the worktree, where the shell hook takes over — so
+  run `sidequest install-hook` and restart Warp. Then retry, or run `sidequest reopen` (latest) / `sidequest reopen <branch>`.
 - **Warp doesn't open**: the worktree still exists. `cd` into it and run
   `.sidequest/autorun.sh`.
 

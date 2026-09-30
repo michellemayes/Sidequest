@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { Config } from "../config/schema.js";
 import { listWorktrees, type WorktreeRecord } from "../git/worktree.js";
-import { colorForPrompt, launchWarp } from "../warp/launcher.js";
+import { colorForPrompt, launchWarp, type LaunchResult } from "../warp/launcher.js";
 import { warpConfigName } from "./naming.js";
 import { UserFacingError } from "../util/errors.js";
 
@@ -45,7 +45,7 @@ export async function findSession(
  * Open Warp on a session again. If the session's pending marker is still
  * unclaimed, the agent starts on arrival; otherwise it is just a tab there.
  */
-export async function openSession(config: Config, found: FoundSession): Promise<string> {
+export async function openSession(config: Config, found: FoundSession): Promise<LaunchResult> {
   const { worktree, repoPath } = found;
   try {
     await stat(worktree.path);
@@ -76,6 +76,7 @@ export async function openSession(config: Config, found: FoundSession): Promise<
       cwd: worktree.path,
       command: scriptExists ? scriptFile : "true",
     },
+    pendingFile: join(worktree.path, ".sidequest", "pending"),
   });
-  return launch.strategy;
+  return launch;
 }
