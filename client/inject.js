@@ -33,6 +33,7 @@
     prompts: [],
     linkedChannels: [],
     repoLabels: {},
+    agentLabel: 'Claude Code',
     verbose: false,
   }, window.__SIDEQUEST_CONFIG || {});
 
@@ -60,18 +61,24 @@
   const HEADER_CONTROLS = 'button, a, input, [role="button"]';
 
   /* The Sidequest mark: a little sparkle badge, inlined so the overlay needs
-     no assets. Also saved as assets/icon.svg for the README. */
-  const ICON_SVG =
-    '<svg width="14" height="14" viewBox="0 0 64 64" aria-hidden="true">' +
-    '<defs><linearGradient id="sqg" x1="0" y1="0" x2="1" y2="1">' +
-    '<stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c3aed"/>' +
-    '</linearGradient></defs>' +
-    '<rect x="4" y="4" width="56" height="56" rx="16" fill="url(#sqg)"/>' +
-    '<path d="M32 14c2.1 9.2 6.1 13.2 15.3 15.3-9.2 2.1-13.2 6.1-15.3 15.3' +
-    '-2.1-9.2-6.1-13.2-15.3-15.3 9.2-2.1 13.2-6.1 15.3-15.3z" fill="#fff"/>' +
-    '<circle cx="46.5" cy="17.5" r="3.4" fill="#fff" opacity=".9"/>' +
-    '<circle cx="17.5" cy="46.5" r="2.6" fill="#fff" opacity=".75"/>' +
-    '</svg>';
+     no assets. Also saved as assets/icon.svg for the README. Each copy gets
+     its own gradient id: url(#id) resolves to the first match in the document,
+     and Chrome drops gradients defined inside a display:none subtree (compact
+     pills hide their icon), which would blank every other icon. */
+  let iconSeq = 0;
+  const iconSvg = () => {
+    const id = `sq-icon-grad-${++iconSeq}`;
+    return '<svg width="14" height="14" viewBox="0 0 64 64" aria-hidden="true">' +
+      `<defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1">` +
+      '<stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c3aed"/>' +
+      '</linearGradient></defs>' +
+      `<rect x="4" y="4" width="56" height="56" rx="16" fill="url(#${id})"/>` +
+      '<path d="M32 14c2.1 9.2 6.1 13.2 15.3 15.3-9.2 2.1-13.2 6.1-15.3 15.3' +
+      '-2.1-9.2-6.1-13.2-15.3-15.3 9.2-2.1 13.2-6.1 15.3-15.3z" fill="#fff"/>' +
+      '<circle cx="46.5" cy="17.5" r="3.4" fill="#fff" opacity=".9"/>' +
+      '<circle cx="17.5" cy="46.5" r="2.6" fill="#fff" opacity=".75"/>' +
+      '</svg>';
+  };
 
   const log = (...args) => { if (CONFIG.verbose) console.log('[sidequest]', ...args); };
 
@@ -525,7 +532,7 @@
     dot.className = 'sq-dot';
     const icon = document.createElement('span');
     icon.className = 'sq-icon';
-    icon.innerHTML = ICON_SVG;
+    icon.innerHTML = iconSvg();
     const label = document.createElement('span');
     label.className = 'sq-label';
     label.textContent = 'Sidequest';
@@ -688,7 +695,7 @@
     dot.className = 'sq-dot';
     const icon = document.createElement('span');
     icon.className = 'sq-icon';
-    icon.innerHTML = ICON_SVG;
+    icon.innerHTML = iconSvg();
     const label = document.createElement('span');
     label.className = 'sq-label sq-channel-label';
     button.append(dot, icon, label);

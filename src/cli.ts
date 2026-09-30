@@ -16,7 +16,7 @@ import {
 import { assertGitAvailable, inspectRepo, isMergedInto } from "./git/repo.js";
 import { listWorktrees, pruneWorktrees, removeWorktree } from "./git/worktree.js";
 import { shellHookSource } from "./warp/autorun.js";
-import { launchWarp } from "./warp/launcher.js";
+import { colorForPrompt, launchWarp } from "./warp/launcher.js";
 import { warpConfigName } from "./session/naming.js";
 import { AGENT_DEFINITIONS, agentDefinition, resolveAgent } from "./agents/agents.js";
 import {
@@ -146,6 +146,11 @@ async function start(options: { force: boolean; foreground: boolean }): Promise<
   const config = await loadConfig();
   const { cdpPort, targetUrlPattern } = config.settings;
 
+  // Check before touching Slack: `--force` would otherwise restart Slack out
+  // from under a daemon that is already attached, and a second attacher
+  // (daemon or --foreground) would inject the overlay twice.
+  if (!process.env.SIDEQUEST_DAEMON) await assertNoRunningDaemon();
+
   const launch = await launchSlack({ cdpPort, force: options.force, targetUrlPattern });
 
   // Relaunching Slack is the disruptive part; do it up front where its errors
@@ -159,12 +164,7 @@ async function start(options: { force: boolean; foreground: boolean }): Promise<
   await runAttacherLoop({ launch, config });
 }
 
-/**
- * Spawn a detached child that runs the attach loop, then exit. The child
- * writes its pid file on boot; the parent waits for it briefly so a fast
- * failure (bad config, port taken) surfaces instead of a false "running".
- */
-async function startDaemonized(): Promise<void> {
+async function assertNoRunningDaemon(): Promise<void> {
   const existing = await readDaemonRecord();
   if (existing && daemonAlive(existing.pid)) {
     throw new UserFacingError(
@@ -173,11 +173,19 @@ async function startDaemonized(): Promise<void> {
     );
   }
   if (existing) await clearDaemonRecord();
+}
 
+/**
+ * Spawn a detached child that runs the attach loop, then exit. The child
+ * writes its pid file on boot; the parent waits for it briefly so a fast
+ * failure (bad config, port taken) surfaces instead of a false "running".
+ */
+async function startDaemonized(): Promise<void> {
   await ensureConfigRoot();
   const logFile = daemonLogFile();
   const out = openSync(logFile, "a");
-  const child = spawn(process.execPath, [process.argv[1]!, "start", "--foreground"], {
+  // execArgv carries loaders such as tsx (`npm run dev`) over to the child.
+  const child = spawn(process.execPath, [...process.execArgv, process.argv[1]!, "start", "--foreground"], {
     detached: true,
     stdio: ["ignore", out, out],
     env: { ...process.env, SIDEQUEST_DAEMON: "1" },
@@ -318,7 +326,7 @@ async function reopen(ref: string): Promise<void> {
       spec: {
         name: warpConfigName(match.branch),
         title: `${match.branch} · ${basename(repoPath)}`,
-        color: prefix === "investigate" ? "blue" : prefix === "fix" ? "yellow" : prefix === "review" ? "magenta" : "cyan",
+        color: colorForPrompt(prefix),
         cwd: match.path,
         command: scriptExists ? scriptFile : "true",
       },
