@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { build, buildOutOfDate, depsFingerprint, depsOutOfDate } from "../src/update.js";
+import { build, buildOutOfDate, daemonOutOfDate, depsFingerprint, depsOutOfDate } from "../src/update.js";
 
 let root: string;
 
@@ -45,6 +45,28 @@ describe("buildOutOfDate", () => {
     await writeFile(join(root, "dist", ".sidequest-build"), "abc\n");
     expect(await buildOutOfDate(root, "abc")).toBe(false);
     expect(await buildOutOfDate(root, "def")).toBe(true);
+  });
+});
+
+describe("daemonOutOfDate", () => {
+  it("is fresh only for a daemon that started on the build dist/ holds now", async () => {
+    await mkdir(join(root, "dist"));
+    await writeFile(join(root, "dist", ".sidequest-build"), "abc\n");
+    expect(await daemonOutOfDate(root, "abc")).toBe(false);
+    expect(await daemonOutOfDate(root, "old")).toBe(true);
+  });
+
+  it("treats a daemon from before builds were recorded as stale", async () => {
+    await mkdir(join(root, "dist"));
+    await writeFile(join(root, "dist", ".sidequest-build"), "abc\n");
+    expect(await daemonOutOfDate(root, undefined)).toBe(true);
+  });
+
+  it("matches a daemon on an unstamped build only while dist/ is still unstamped", async () => {
+    expect(await daemonOutOfDate(root, "")).toBe(false);
+    await mkdir(join(root, "dist"));
+    await writeFile(join(root, "dist", ".sidequest-build"), "abc\n");
+    expect(await daemonOutOfDate(root, "")).toBe(true);
   });
 });
 

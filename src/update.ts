@@ -10,7 +10,8 @@
  *   - the build goes to a scratch directory and replaces `dist/` only once it
  *     succeeds, so a broken build never takes down a working install,
  *   - a failed install or build puts the checkout back on the commit it was on,
- *   - and a running daemon is restarted on the new code.
+ *   - and a running daemon is restarted on the new code, including one left
+ *     on an older build by an earlier `--no-restart` or a manual rebuild.
  */
 import { createHash } from "node:crypto";
 import { chmod, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -48,10 +49,25 @@ export async function depsOutOfDate(root: string): Promise<boolean> {
   return installed?.trim() !== (await depsFingerprint(root));
 }
 
+/** The commit dist/ was built from, or null when it has no stamp (or no dist/). */
+export async function builtCommit(root: string): Promise<string | null> {
+  const built = await readFile(join(root, "dist", BUILD_STAMP), "utf8").catch(() => null);
+  return built?.trim() || null;
+}
+
 /** True when dist/ is missing or was built from a different commit. */
 export async function buildOutOfDate(root: string, commit: string): Promise<boolean> {
-  const built = await readFile(join(root, "dist", BUILD_STAMP), "utf8").catch(() => null);
-  return built?.trim() !== commit;
+  return (await builtCommit(root)) !== commit;
+}
+
+/**
+ * True when a daemon that recorded `daemonBuild` at startup is running older
+ * code than dist/ now holds. A daemon from before builds were recorded has no
+ * `daemonBuild` at all, and is stale by definition.
+ */
+export async function daemonOutOfDate(root: string, daemonBuild: string | undefined): Promise<boolean> {
+  if (daemonBuild === undefined) return true;
+  return daemonBuild !== ((await builtCommit(root)) ?? "");
 }
 
 export async function installDeps(root: string): Promise<void> {
