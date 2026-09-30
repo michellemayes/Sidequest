@@ -31,7 +31,20 @@ sidequest setup          # config, shell hook, checks, then relaunches Slack wit
 ```
 
 `setup` runs `init`, `install-hook`, `doctor` and `start` in turn, and is safe to
-run again. Then, in Slack:
+run again.
+
+**Updating** is one command, from anywhere:
+
+```bash
+sidequest update
+```
+
+It pulls the latest, runs `npm ci` only when `package.json` or
+`package-lock.json` changed (most updates skip it), builds into a scratch folder
+and swaps it in only if the build succeeds, and restarts the daemon if it was
+running. If anything fails, the checkout goes back to the version you had, so a
+bad update never leaves you with a broken install. It refuses to run over local
+edits in the checkout. Then, in Slack:
 
 1. Hover any message → **Sidequest**. In a channel with no repo yet, the menu
    suggests the checkouts on your machine that match the channel's name (for
@@ -77,7 +90,8 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 | --- | --- |
 | `sidequest setup` | First run in one command: config, shell hook, checks, start |
 | `sidequest start` / `stop` / `status` | Run the background daemon (logs in `~/.sidequest/sidequest.log`) |
-| `sidequest doctor` | Check git, Warp, the agent, Slack.app and the debug port |
+| `sidequest update` | Pull the latest and rebuild, reinstalling dependencies only if they changed; restarts a running daemon (`--no-restart` to skip) |
+| `sidequest doctor` | Check git, Warp, the agent, Slack.app, the debug port, and whether the build is current |
 | `sidequest sessions` | List every worktree Sidequest created |
 | `sidequest reopen [ref]` | Reopen Warp on a session (the latest if you name none) |
 | `sidequest stats` | Your total, today's count, current and best streak |
