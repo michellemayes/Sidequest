@@ -213,7 +213,7 @@
     /* The result reads as an annotation on the message it came from: drawn
        inside that row, along its bottom edge, tucked against the right where a
        message's last line leaves space — and on a line of its own under the
-       text where it does not (see cornerTop). One line, so it covers nothing
+       text where it does not (see cornerSpot). One line, so it covers nothing
        unasked; hovering it lets the whole thing wrap, which is what an error
        needs. */
     .sq-result {
@@ -260,6 +260,10 @@
     }
     .sq-mark:hover { opacity: 1; border-color: var(--sq-line-hover); }
     .sq-mark::before { content: '✦'; color: #8b5cf6; }
+    /* No room under the last message: the sparkle alone, in the avatar's
+       gutter, with the rest in the tooltip. */
+    .sq-mark[data-compact="1"] { gap: 0; padding: 0 4px; font-size: 0; }
+    .sq-mark[data-compact="1"]::before { font-size: 11px; }
 
     .sq-toast {
       position: fixed; left: 0; top: 0;
@@ -709,21 +713,107 @@
   }
 
   /**
-   * The top for something drawn at a row's bottom-right corner, `left` being
-   * where its left edge will fall. Beside the message's last line when the
-   * words stop short of it; otherwise on a line of its own just under them,
-   * in the gap before the next message, rather than over what someone wrote.
+   * Whether a box is open message list: every point sampled across it lands
+   * on a message, or on the list around them, and not on something Slack
+   * floats over the list's bottom edge — the composer, the suggestion chips
+   * above it, a "new messages" bar. The overlay's own layer is looked through.
    */
-  function cornerTop(row, rect, clip, left, height, lift, ink) {
-    const top = Math.min(rect.bottom, clip.bottom) - height - lift;
+  function openList(row, left, top, width, height) {
+    const xs = [left + 2, left + width / 2, left + width - 2];
+    const ys = [top + 2, top + height - 2];
+    for (const x of xs) {
+      for (const y of ys) {
+        const hit = document.elementsFromPoint(x, y).find((el) => el !== host);
+        if (!hit) return false;
+        const item = hit.closest(SEL.item);
+        if (item ? !isMessageRow(item) : !(hit.contains(row) && (!scroller || scroller.contains(hit)))) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  const overlaps = (a, left, top, width, height) => (
+    a.bottom > top + 1 && a.top < top + height - 1 && a.right > left - GAP / 2 && a.left < left + width + GAP / 2
+  );
+
+  /**
+   * Where to draw something at a row's bottom-right corner, `right` being
+   * where its right edge falls. Beside the message's last line when the words
+   * stop short of it; otherwise on a line of its own just under them, in the
+   * gap before the next message. When that gap is not there — the last
+   * message in a channel or thread sits right on the composer — `fit` says
+   * how the element gives way: 'gutter' shrinks it to its icon in the empty
+   * strip under the avatar, 'shrink' cuts its text short to fit beside the
+   * last line. Never over what someone wrote if there is anywhere else, and
+   * never over Slack's own chrome. `taken` is what the overlay already put by
+   * this row this frame.
+   */
+  function cornerSpot(row, rect, clip, el, right, lift, ink, taken, fit) {
+    if (el.dataset.compact) delete el.dataset.compact;
+    const width = el.offsetWidth;
+    const height = el.offsetHeight;
+    const left = right - width;
     const boxes = ink.get(row) || inkOf(row);
     ink.set(row, boxes);
-    const blocked = boxes.some((box) => (
-      box.bottom > top + 1 && box.top < top + height - 1 && box.right > left - GAP / 2
-    ));
-    if (!blocked) return top;
-    const below = boxes.reduce((lowest, box) => Math.max(lowest, box.bottom), -Infinity) + 2;
-    return Math.min(below, clip.bottom - height);
+    const mine = taken.get(row) || [];
+    const free = (l, t, w, h, obstacles) => (
+      !obstacles.some((box) => overlaps(box, l, t, w, h)) && openList(row, l, t, w, h)
+    );
+    const spot = (l, t, w, h) => {
+      mine.push({ left: l, top: t, right: l + w, bottom: t + h });
+      taken.set(row, mine);
+      return { left: l, top: t };
+    };
+
+    const clear = boxes.concat(mine);
+    const top = Math.min(rect.bottom, clip.bottom) - height - lift;
+    if (free(left, top, width, height, clear)) return spot(left, top, width, height);
+    const below = boxes.reduce((lowest, box) => Math.max(lowest, box.bottom), rect.top) + 2;
+    if (below + height <= clip.bottom && free(left, below, width, height, clear)) {
+      return spot(left, below, width, height);
+    }
+
+    if (fit === 'shrink') {
+      const beside = clear.filter((box) => box.bottom > top + 1 && box.top < top + height - 1);
+      const room = right - beside.reduce((edge, box) => Math.max(edge, box.right), rect.left) - GAP;
+      if (room >= 80) {
+        const wide = el.style.maxWidth;
+        el.style.maxWidth = `${Math.floor(room)}px`;
+        const w = el.offsetWidth;
+        if (free(right - w, top, w, height, clear)) return spot(right - w, top, w, height);
+        el.style.maxWidth = wide;
+      }
+    }
+
+    if (fit === 'gutter') {
+      el.dataset.compact = '1';
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      const content = row.querySelector(SEL.content);
+      const l = (content ? content.getBoundingClientRect().left : rect.left + 56) - GAP / 2 - w;
+      if (l >= rect.left) {
+        // The avatar and a continuation's hover time live in the gutter too.
+        const obstacles = clear.slice();
+        row.querySelectorAll(`img, ${SEL.timestamp}`).forEach((node) => {
+          const box = node.getBoundingClientRect();
+          if (box.width > 1 && box.height > 1) obstacles.push(box);
+        });
+        const floor = Math.max(rect.top, clip.top);
+        for (let t = Math.min(rect.bottom, clip.bottom) - h - lift; t >= floor; t -= 2) {
+          if (free(l, t, w, h, obstacles)) return spot(l, t, w, h);
+        }
+      }
+      delete el.dataset.compact;
+    }
+
+    // Nowhere clear: over the words, then, but still on the list rather than
+    // hanging over the composer.
+    for (let t = Math.min(below, top); t >= Math.max(rect.top, clip.top); t -= 2) {
+      if (openList(row, left, t, width, height)) return spot(left, t, width, height);
+    }
+    return spot(left, top, width, height);
   }
 
   /* ------------------------------------------------------------ row button */
@@ -1620,6 +1710,7 @@
     // Read once per frame per row: the pill, the line and the mark can all
     // want the same row's text.
     const ink = new Map();
+    const taken = new Map();
 
     if (activeRect && clip && onScreen(activeRect, clip)) {
       const flag = isLinked(currentChannel()) ? '1' : '0';
@@ -1635,12 +1726,8 @@
       // Slack's own hover actions and an unread divider's "New" label both live
       // at a row's top-right corner, so the pill takes the bottom-right and
       // leaves them clickable.
-      const left = activeRect.right - launchBtn.offsetWidth - GAP;
-      placeAt(
-        launchBtn,
-        left,
-        cornerTop(activeRow, activeRect, clip, left, launchBtn.offsetHeight, 3, ink),
-      );
+      const at = cornerSpot(activeRow, activeRect, clip, launchBtn, activeRect.right - GAP, 3, ink, taken, 'gutter');
+      placeAt(launchBtn, at.left, at.top);
     } else {
       hide(launchBtn);
       if (menuEl) closeMenu();
@@ -1661,7 +1748,10 @@
       const top = below + menuEl.offsetHeight > window.innerHeight - 4
         ? anchor.top - menuEl.offsetHeight - 4
         : below;
-      placeAt(menuEl, anchor.right - menuEl.offsetWidth, top);
+      // A pill shrunk into the avatar's gutter opens its menu rightward, over
+      // the message, rather than off the list's left edge.
+      const left = launchBtn.dataset.compact ? anchor.left : anchor.right - menuEl.offsetWidth;
+      placeAt(menuEl, left, top);
     }
 
     for (const [sig, el] of resultEls) {
@@ -1694,15 +1784,15 @@
         show(el);
         // The row button shares this corner while the pointer is on the
         // message, so the line makes room for it rather than sitting under it.
-        const reserve = row === activeRow && !launchBtn.classList.contains('sq-off')
+        const reserve = row === activeRow && !launchBtn.classList.contains('sq-off') && !launchBtn.dataset.compact
           ? launchBtn.offsetWidth + GAP
           : 0;
         const content = row.querySelector(SEL.content);
         const indent = content ? content.getBoundingClientRect().left : rect.left + 16;
         const right = rect.right - GAP - reserve;
         el.style.maxWidth = `${Math.max(160, Math.round((right - indent) * 0.75))}px`;
-        const left = right - el.offsetWidth;
-        placeAt(el, left, cornerTop(row, rect, clip, left, el.offsetHeight, 3, ink));
+        const at = cornerSpot(row, rect, clip, el, right, 3, ink, taken, 'shrink');
+        placeAt(el, at.left, at.top);
       } else {
         hide(el);
       }
@@ -1736,11 +1826,11 @@
       const rect = row.getBoundingClientRect();
       if (clip && onScreen(rect, clip)) {
         show(el);
-        const reserve = row === activeRow && !launchBtn.classList.contains('sq-off')
+        const reserve = row === activeRow && !launchBtn.classList.contains('sq-off') && !launchBtn.dataset.compact
           ? launchBtn.offsetWidth + GAP
           : 0;
-        const left = rect.right - GAP - reserve - el.offsetWidth;
-        placeAt(el, left, cornerTop(row, rect, clip, left, el.offsetHeight, 4, ink));
+        const at = cornerSpot(row, rect, clip, el, rect.right - GAP - reserve, 4, ink, taken, 'gutter');
+        placeAt(el, at.left, at.top);
       } else {
         hide(el);
       }
