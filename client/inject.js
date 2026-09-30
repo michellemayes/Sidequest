@@ -591,6 +591,92 @@
     return el ? el.textContent.trim().replace(/^#+/, '') : '';
   }
 
+  /** The id of the channel a message sits in, off its permalink. */
+  function rowChannelId(row) {
+    const match = messageMeta(row).permalink.match(/\/archives\/([A-Z0-9]+)\//);
+    return match ? match[1] : '';
+  }
+
+  /**
+   * The id of the channel open in the main view, off Slack's URL
+   * (/client/T…/C…). Empty when Slack is showing something that is not a
+   * channel — Threads, Activity, search — and null when the URL is not
+   * Slack's at all, which leaves the header as the only word on it.
+   */
+  function viewChannelId() {
+    const path = location.pathname;
+    if (!/\/client\/[A-Z0-9]+/.test(path)) return null;
+    const match = path.match(/\/client\/[A-Z0-9]+\/([CG][A-Z0-9]+)(?:[/?#]|$)/);
+    return match ? match[1] : '';
+  }
+
+  /** Channel names by id, from wherever one was seen or asked for. */
+  const channelNames = new Map();
+  const channelLookups = new Map();
+
+  /** A channel's name from its sidebar row, when the sidebar has one rendered. */
+  function sidebarName(id) {
+    const item = document.querySelector(`[data-qa-channel-sidebar-channel-id="${id}"]`);
+    if (!item) return '';
+    const name = item.querySelector('[data-qa^="channel_sidebar_name_"], .p-channel_sidebar__name');
+    return (name || item).textContent.trim().replace(/^#+/, '');
+  }
+
+  /**
+   * The channel a message belongs to. On a channel's own page that is the
+   * header, but the Threads view and search mix messages from many channels
+   * under one page, and the header — or whatever channel was open before —
+   * says nothing about any one of them. There the message's permalink names
+   * its channel, and the name is looked up by id. Empty when it cannot be
+   * told yet; resolveChannel() asks Slack.
+   */
+  function channelFor(row) {
+    const header = currentChannel();
+    const id = row ? rowChannelId(row) : '';
+    const view = viewChannelId();
+    if (!id || view === null) return header;
+    if (view === id && header) {
+      channelNames.set(id, header);
+      return header;
+    }
+    const known = channelNames.get(id) || sidebarName(id);
+    if (known) channelNames.set(id, known);
+    return known || '';
+  }
+
+  // A lookup that came back empty is not retried on every frame.
+  const forget = (id) => setTimeout(() => channelLookups.delete(id), 30000);
+
+  /** Ask Slack for the name of a channel the page does not show. Once per id. */
+  function resolveChannel(row) {
+    const id = row ? rowChannelId(row) : '';
+    if (!id || channelNames.has(id)) return Promise.resolve(channelNames.get(id) || '');
+    if (channelLookups.has(id)) return channelLookups.get(id);
+    const team = slackTeam();
+    if (!team) return Promise.resolve('');
+    const form = new FormData();
+    form.append('token', team.token);
+    form.append('channel', id);
+    const lookup = fetch(new URL('api/conversations.info', team.url).href, {
+      method: 'POST',
+      body: form,
+      credentials: 'include',
+    })
+      .then((res) => res.json())
+      .then((body) => {
+        const name = body && body.ok && body.channel && body.channel.name ? String(body.channel.name) : '';
+        if (name) channelNames.set(id, name);
+        else forget(id);
+        return name;
+      })
+      .catch(() => {
+        forget(id);
+        return '';
+      });
+    channelLookups.set(id, lookup);
+    return lookup;
+  }
+
   function channelKey(name) {
     return String(name || '').trim().replace(/^#+/, '').toLowerCase();
   }
@@ -953,10 +1039,23 @@
     const menu = document.createElement('div');
     menu.className = 'sq-menu';
     menu.setAttribute('role', 'menu');
-    const channel = currentChannel();
+    const channel = channelFor(row);
     const sig = rowSignature(row);
 
-    if (!isLinked(channel)) {
+    if (!channel && rowChannelId(row) && viewChannelId() !== null) {
+      // A message from a channel the page does not name, as in Threads: find
+      // out which before offering anything, so it runs in that channel's repo.
+      const note = document.createElement('div');
+      note.className = 'sq-note';
+      note.textContent = 'Finding this message\u2019s channel…';
+      menu.append(note);
+      resolveChannel(row).then((name) => {
+        if (menuEl !== menu) return;
+        if (name) openMenu(row);
+        else note.textContent = 'Could not tell which channel this message is in.';
+        schedule();
+      });
+    } else if (!isLinked(channel)) {
       const note = document.createElement('div');
       note.className = 'sq-note';
       note.textContent = channel
@@ -1100,8 +1199,9 @@
     hint.textContent = '⇧↵ new line · Esc cancel';
     const submit = menuButton('sq-ask-send', () => send());
     submit.textContent = prompt.label;
-    const repos = reposFor(currentChannel());
-    const where = repos.length > 1 ? ` in ${pickedRepo(currentChannel())}` : '';
+    const channel = channelFor(menuRow);
+    const repos = reposFor(channel);
+    const where = repos.length > 1 ? ` in ${pickedRepo(channel)}` : '';
     if (where) title.textContent += where;
     submit.title = `Start ${prompt.label}${where} with ${CONFIG.agentLabel} — Enter`;
     foot.append(hint, submit);
@@ -1250,7 +1350,7 @@
           : row ? 'Linked. Now pick what to do with this message.' : 'Linked. Hover any message to start a sidequest.',
         burst: true,
       });
-      if (row && row.isConnected && currentChannel() === channel) openMenu(row);
+      if (row && row.isConnected && channelFor(row) === channel) openMenu(row);
       return true;
     }).catch((err) => {
       if (onError) onError(err.message);
@@ -1305,7 +1405,11 @@
     // cut would only make a -2 branch.
     if (results.get(sig)?.kind === 'busy') return;
     const meta = messageMeta(row);
-    const channel = currentChannel();
+    const channel = channelFor(row);
+    if (!channel) {
+      setResult(sig, 'Could not tell which channel this message is in.', 'error');
+      return;
+    }
     // Named only when there is a choice; a single repo is the channel's anyway.
     const repo = reposFor(channel).length > 1 ? pickedRepo(channel) : '';
     const payload = {
@@ -1666,7 +1770,9 @@
     closeMenu();
     closePanel();
 
-    const channel = currentChannel();
+    // From a message's menu, the message's channel: in Threads it is not the
+    // page's.
+    const channel = returnRow ? channelFor(returnRow) : currentChannel();
     if (!channel) return;
     const current = reposFor(channel);
 
@@ -2013,7 +2119,10 @@
     const taken = new Map();
 
     if (activeRect && clip && onScreen(activeRect, clip)) {
-      const flag = isLinked(currentChannel()) ? '1' : '0';
+      const activeChannel = channelFor(activeRow);
+      // Looked up while the pointer is on the row, so the menu has it by the click.
+      if (!activeChannel) resolveChannel(activeRow).then((name) => name && schedule());
+      const flag = isLinked(activeChannel) ? '1' : '0';
       if (launchBtn.dataset.linked !== flag) launchBtn.dataset.linked = flag;
       const total = CONFIG.stats?.total || 0;
       const streak = CONFIG.stats?.streak || 0;

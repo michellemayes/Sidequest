@@ -72,6 +72,14 @@ describeIfChrome("overlay over CDP", () => {
         });
         return;
       }
+      if (req.method === "POST" && req.url === "/api/conversations.info") {
+        req.resume();
+        req.on("end", () => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: true, channel: { id: "C0SMOKE", name: "eng-alerts" } }));
+        });
+        return;
+      }
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(fixture);
     });
@@ -1000,6 +1008,41 @@ describeIfChrome("overlay over CDP", () => {
       expect(field("thread_ts")).toBe("1757430000.000100");
       expect(field("text")).toBe("Reviewing this in repo.");
     } finally {
+      await evaluate(session, "localStorage.removeItem('localConfig_v2')").catch(() => undefined);
+      attacher.stop();
+      session.close();
+    }
+  }, 45_000);
+
+  it("works in the message's own channel's repo from Threads, not the page's", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `localStorage.setItem('localConfig_v2', JSON.stringify({
+        teams: { T0SMOKE: { url: location.origin + '/', token: 'xoxc-test' } },
+      }))`);
+      // Threads mixes channels under one page, and whatever channel name the
+      // page still shows is not the message's.
+      await evaluate(session, "history.pushState({}, '', '/client/T0SMOKE/threads')");
+      await evaluate(session, "window.__setChannel('random-chatter')");
+      await sleep(400);
+
+      await hover(session, "row-1");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(400);
+
+      const note = await evaluate(session, `${UI}.querySelector('.sq-menu .sq-note')?.textContent || ''`);
+      expect(String(note)).toBe("");
+      expect(Number(await evaluate(session, `${UI}.querySelectorAll('.sq-menu-prompt').length`))).toBeGreaterThan(0);
+
+      await press(session, "2", "Digit2", 50);
+      expect(await settledResult(session)).toContain("fix/checkout-total-is-wrong-for-gift-cards");
+      const branches = await exec("git", ["branch", "--list"], { cwd: repoPath });
+      expect(branches.stdout).toContain("fix/checkout-total-is-wrong-for-gift-cards");
+    } finally {
+      await evaluate(session, "history.pushState({}, '', '/')").catch(() => undefined);
+      await evaluate(session, "window.__setChannel('eng-alerts')").catch(() => undefined);
       await evaluate(session, "localStorage.removeItem('localConfig_v2')").catch(() => undefined);
       attacher.stop();
       session.close();
