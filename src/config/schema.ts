@@ -78,6 +78,12 @@ export const settingsSchema = z.object({
    * process start, so changing this means restarting Slack.
    */
   cdpPort: z.number().int().min(1024).max(65_535).default(9222),
+  /**
+   * While Sidequest is running, relaunch a Slack that was opened without the
+   * DevTools port (from the Dock, Spotlight or login items) so the overlay
+   * survives Slack being quit and reopened.
+   */
+  relaunchSlack: z.boolean().default(true),
   /** Which DevTools targets count as a Slack window. */
   targetUrlPattern: z.string().default("app\\.slack\\.com|/client/"),
   /** Log what the injected overlay is doing to the Slack devtools console. */
