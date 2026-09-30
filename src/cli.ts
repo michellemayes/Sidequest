@@ -391,7 +391,7 @@ async function replies(state?: string): Promise<void> {
   }
   console.log(`\nTurn them ${config.settings.autoReply ? "off" : "on"} with \`sidequest replies ${config.settings.autoReply ? "off" : "on"}\`.`);
   console.log(`Change one in ${configFile()}:`);
-  console.log(`  { "prompts": { "fix": { "reply": "On it, fixing on {{branch}}." } } }`);
+  console.log(`  { "prompts": { "fix": { "reply": "On it, fixing this now." } } }`);
   console.log('An empty "reply" turns it off for that prompt.');
 }
 

@@ -154,7 +154,7 @@ Each prompt's `reply` sets its text and takes the same tokens as its template
 {
   "settings": { "autoReply": true },
   "prompts": {
-    "fix": { "reply": "On it, fixing this on {{branch}}." },
+    "fix": { "reply": "On it, fixing this now." },
     "review": { "reply": "" }
   }
 }

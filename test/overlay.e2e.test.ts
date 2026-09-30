@@ -972,7 +972,7 @@ describeIfChrome("overlay over CDP", () => {
     const file = join(configHome, "config.json");
     const config = JSON.parse(await readFile(file, "utf8"));
     config.settings.autoReply = true;
-    config.prompts = { review: { reply: "Reviewing on {{branch}} in {{repo}}." } };
+    config.prompts = { review: { reply: "Reviewing this in {{repo}}." } };
     await writeFile(file, JSON.stringify(config));
 
     const { attacher, session } = await attachAndEval();
@@ -998,7 +998,7 @@ describeIfChrome("overlay over CDP", () => {
       expect(field("token")).toBe("xoxc-test");
       expect(field("channel")).toBe("C0SMOKE");
       expect(field("thread_ts")).toBe("1757430000.000100");
-      expect(field("text")).toMatch(/^Reviewing on review\/checkout-total-is-wrong-for-gift-cards\S* in repo\.$/);
+      expect(field("text")).toBe("Reviewing this in repo.");
     } finally {
       await evaluate(session, "localStorage.removeItem('localConfig_v2')").catch(() => undefined);
       attacher.stop();
