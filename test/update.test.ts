@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildOutOfDate, depsFingerprint, depsOutOfDate } from "../src/update.js";
+import { build, buildOutOfDate, depsFingerprint, depsOutOfDate } from "../src/update.js";
 
 let root: string;
 
@@ -46,4 +46,22 @@ describe("buildOutOfDate", () => {
     expect(await buildOutOfDate(root, "abc")).toBe(false);
     expect(await buildOutOfDate(root, "def")).toBe(true);
   });
+});
+
+describe("build", () => {
+  it("leaves dist/index.js executable so the linked `sidequest` command still runs", async () => {
+    await mkdir(join(root, "src"));
+    await writeFile(join(root, "src", "index.ts"), "#!/usr/bin/env node\nconsole.log(1);\n");
+    await writeFile(
+      join(root, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { module: "nodenext", target: "es2022", rootDir: "src" }, include: ["src"] }),
+    );
+    await mkdir(join(root, "node_modules"));
+    await symlink(resolve("node_modules", "typescript"), join(root, "node_modules", "typescript"));
+
+    await build(root, "abc");
+
+    expect((await stat(join(root, "dist", "index.js"))).mode & 0o111).toBe(0o111);
+    expect(await buildOutOfDate(root, "abc")).toBe(false);
+  }, 60_000);
 });
