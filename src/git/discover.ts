@@ -86,6 +86,20 @@ interface Found {
   mtime: number;
 }
 
+/**
+ * Which directory a path really is. On a case-insensitive disk (the macOS
+ * default) ~/Repos and ~/repos are one folder under two spellings, so paths
+ * alone would find every checkout in it twice.
+ */
+async function identity(path: string): Promise<string | null> {
+  try {
+    const info = await stat(path);
+    return `${info.dev}:${info.ino}`;
+  } catch {
+    return null;
+  }
+}
+
 let cache: { key: string; at: number; found: Found[] } | null = null;
 
 async function isDir(path: string): Promise<boolean> {
@@ -97,7 +111,8 @@ async function isDir(path: string): Promise<boolean> {
 }
 
 /** Every checkout under the roots, two levels deep. */
-async function scan(roots: string[], exclude: string[]): Promise<Found[]> {
+async function scan(roots: string[], exclude: string[]): Promise<Map<string, Found>> {
+  // Keyed by the `.git` directory's identity, not its path.
   const found = new Map<string, Found>();
   let budget = MAX_DIRS;
 
@@ -110,7 +125,8 @@ async function scan(roots: string[], exclude: string[]): Promise<Found[]> {
       try {
         const info = await stat(git);
         // A `.git` file is a worktree or submodule, not a checkout of its own.
-        if (info.isDirectory()) found.set(dir, { path: dir, mtime: info.mtimeMs });
+        const id = `${info.dev}:${info.ino}`;
+        if (info.isDirectory() && !found.has(id)) found.set(id, { path: dir, mtime: info.mtimeMs });
       } catch {
         // Vanished between the two calls; skip it.
       }
@@ -128,12 +144,17 @@ async function scan(roots: string[], exclude: string[]): Promise<Found[]> {
     await Promise.all(children.map((child) => consider(child, depth - 1)));
   };
 
-  await Promise.all(
-    roots.map(async (root) => {
-      if (await isDir(root)) await consider(root, 2);
-    }),
-  );
-  return [...found.values()];
+  const seenRoots = new Set<string>();
+  const distinct: string[] = [];
+  for (const root of roots) {
+    const id = (await isDir(root)) ? await identity(root) : null;
+    if (id && !seenRoots.has(id)) {
+      seenRoots.add(id);
+      distinct.push(root);
+    }
+  }
+  await Promise.all(distinct.map((root) => consider(root, 2)));
+  return found;
 }
 
 export interface DiscoverOptions {
@@ -158,12 +179,16 @@ export async function discoverRepos(options: DiscoverOptions): Promise<RepoCandi
   if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) {
     found = cache.found;
   } else {
-    found = await scan(uniqueRoots, [options.worktreesRoot]);
+    const byId = await scan(uniqueRoots, [options.worktreesRoot]);
     for (const repo of options.linkedRepos) {
-      if (!found.some((f) => f.path === repo) && (await isDir(repo))) {
-        found.push({ path: repo, mtime: 0 });
-      }
+      if (!(await isDir(repo))) continue;
+      const id = (await identity(join(repo, ".git"))) ?? `path:${repo}`;
+      // A linked repo keeps the spelling it was linked under, so it still
+      // reads as linked when the scan reached it by another.
+      const seen = byId.get(id);
+      byId.set(id, { path: repo, mtime: seen?.mtime ?? 0 });
     }
+    found = [...byId.values()];
     cache = { key, at: Date.now(), found };
   }
 
