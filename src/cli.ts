@@ -27,6 +27,7 @@ import {
 } from "./daemon.js";
 import { warpLaunchConfigDir, warpTabConfigDir, platform, uriOpener } from "./util/platform.js";
 import { Attacher } from "./cdp/attacher.js";
+import { SlackKeeper } from "./cdp/keeper.js";
 import { findSlackApp, inspectDebugPort, isSlackRunning, launchSlack, sleep } from "./cdp/launch.js";
 import { channelKey } from "./config/channels.js";
 import { describeError, UserFacingError } from "./util/errors.js";
@@ -462,6 +463,26 @@ async function runAttacherLoop(options: {
 
   await attacher.start();
 
+  const keeper = new SlackKeeper({
+    cdpPort,
+    targetUrlPattern,
+    onEvent: (event) => {
+      switch (event.type) {
+        case "relaunching":
+          console.log("Slack was opened without its DevTools port — relaunching it with the port open");
+          break;
+        case "relaunched":
+          console.log("Slack relaunched; reattaching");
+          void attacher.sweepNow();
+          break;
+        case "relaunch-error":
+          log.warn(`could not relaunch Slack: ${event.message}`);
+          break;
+      }
+    },
+  });
+  if (config.settings.relaunchSlack) keeper.start();
+
   const linked = Object.keys(config.channels).length;
   console.log(
     launch.started
@@ -486,12 +507,16 @@ async function runAttacherLoop(options: {
   console.log(
     `\nHover a message in Slack and click Sidequest to start a ${agentLabel} session.\n` +
       (daemonized ? "Running in the background; `sidequest stop` stops it.\n" : "Ctrl-C to stop.\n") +
+      (config.settings.relaunchSlack
+        ? "If you quit and reopen Slack, Sidequest relaunches it with the port open.\n"
+        : "") +
       "Stopping leaves Slack running; the overlay disappears on its next reload.",
   );
   booted = true;
 
   const shutdown = (): void => {
     console.log("\nstopping…");
+    keeper.stop();
     attacher.stop();
     if (daemonized) void clearDaemonRecord().finally(() => process.exit(0));
     else process.exit(0);

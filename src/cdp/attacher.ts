@@ -117,6 +117,16 @@ export class Attacher {
     await tick();
   }
 
+  /** Sweep now rather than on the next poll, e.g. right after Slack relaunches. */
+  async sweepNow(): Promise<void> {
+    if (this.stopped) return;
+    try {
+      await this.sweep();
+    } catch (err) {
+      this.emit({ type: "poll-error", message: describeError(err).message });
+    }
+  }
+
   stop(): void {
     this.stopped = true;
     if (this.pollTimer) clearTimeout(this.pollTimer);

@@ -98,6 +98,15 @@ export async function quitSlack(timeoutMs = 15_000): Promise<boolean> {
     // Slack may not be scriptable, or may already be gone.
   }
 
+  if (await waitForSlackToExit(timeoutMs)) return true;
+
+  // A Slack that is still starting up can miss the Apple Event; the daemon
+  // relaunches exactly that kind of Slack, so fall back to asking the process.
+  await succeeds("/usr/bin/pkill", ["-TERM", "-x", "Slack"]);
+  return waitForSlackToExit(5000);
+}
+
+async function waitForSlackToExit(timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (!(await isSlackRunning())) return true;

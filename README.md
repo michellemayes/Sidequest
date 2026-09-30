@@ -119,6 +119,7 @@ leaves unknown tokens in the prompt as written, so typos are easy to spot.
 | `threadContextLimit` | `10` | How many earlier messages go into the prompt |
 | `pruneBranchesOnClean` | `true` | Delete merged branches on `clean` |
 | `cdpPort` | `9222` | DevTools port for Slack |
+| `relaunchSlack` | `true` | While Sidequest runs, relaunch a Slack reopened from the Dock (without the DevTools port) so the overlay comes back |
 | `targetUrlPattern` | `app\.slack\.com\|/client/` | Which windows count as Slack |
 | `verbose` | `false` | Log overlay activity to Slack's devtools console |
 
@@ -128,6 +129,10 @@ Start with `sidequest doctor`.
 
 - **"Slack is running without --remote-debugging-port"**: Slack only accepts
   the flag at launch. Run `sidequest start --force`.
+- **The overlay is gone after quitting and reopening Slack**: a Slack opened
+  from the Dock has no DevTools port, so the running daemon quits it and
+  relaunches it with the port within a couple of seconds. If that doesn't
+  happen, check `sidequest status` (the daemon has to be running) and the log.
 - **No buttons**: hover a message first. If `sidequest status` shows zero
   attached windows, the overlay wasn't injected.
 - **"Something other than Slack is listening on 127.0.0.1:9222"**: quit that
