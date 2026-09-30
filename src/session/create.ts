@@ -1,6 +1,6 @@
 import { loadConfig, promptFor } from "../config/store.js";
 import { linksForChannel, repoForChannelName } from "../config/channels.js";
-import { linearTicket, renderPrompt, type LinearTicket, type PromptContext } from "../config/prompts.js";
+import { linearTicket, renderPrompt, renderReply, type LinearTicket, type PromptContext } from "../config/prompts.js";
 import { resolveAgent } from "../agents/agents.js";
 import type { Config, PromptKey } from "../config/schema.js";
 import { inspectRepo } from "../git/repo.js";
@@ -153,9 +153,8 @@ export async function createSession(
     ticket,
   });
   const body = renderPrompt(prompt.template, context);
-  // The repo in a reply is its label: a path on your machine means nothing in Slack.
   const reply = config.settings.autoReply
-    ? renderPrompt(prompt.reply, { ...context, repo: repoLabel }).trim()
+    ? renderReply(prompt.reply, context, repoLabel, message.question ?? "")
     : "";
 
   const files = await writeAutorun({

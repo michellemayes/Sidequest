@@ -75,7 +75,7 @@ Give me findings ordered most severe first, each with the file, the line, and wh
     label: "Ask",
     emoji: "speech_balloon",
     branchPrefix: "ask",
-    reply: "",
+    reply: "Looking into this: {{question}}",
     template: `From @{{author}} in #{{channel}} on {{date}}:
 {{message}}
 {{thread}}
@@ -160,4 +160,24 @@ export function renderPrompt(template: string, context: PromptContext): string {
     const value = (context as unknown as Record<string, string | undefined>)[key];
     return value === undefined ? match : value;
   });
+}
+
+/**
+ * The thread reply, rendered for Slack rather than for the agent: the repo is
+ * its label (a path on your machine means nothing there) and the question is
+ * just what you typed, without the prompt's heading. With nothing typed, a
+ * reply like "Looking into this: {{question}}" ends at "Looking into this."
+ */
+export function renderReply(template: string, context: PromptContext, repoLabel: string, question: string): string {
+  const rendered = renderPrompt(template, {
+    ...context,
+    repo: repoLabel,
+    question: escapeSlack(question.trim()),
+  }).trim();
+  return question.trim() ? rendered : rendered.replace(/\s*:$/, ".");
+}
+
+/** chat.postMessage reads &, < and > as markup; typed text should post as typed. */
+function escapeSlack(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

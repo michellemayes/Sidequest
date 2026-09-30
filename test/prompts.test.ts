@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PROMPTS, linearTicket, renderPrompt, type PromptContext } from "../src/config/prompts.js";
+import { DEFAULT_PROMPTS, linearTicket, renderPrompt, renderReply, type PromptContext } from "../src/config/prompts.js";
 import { PROMPT_KEYS } from "../src/config/schema.js";
 import { shellQuote } from "../src/warp/autorun.js";
 import { tomlString } from "../src/warp/configFiles.js";
@@ -75,6 +75,18 @@ describe("default prompts", () => {
       expect(reply, `${key} has an emoji`).not.toMatch(/:[a-z0-9_+-]+:|\p{Extended_Pictographic}/u);
     }
     expect(renderPrompt(DEFAULT_PROMPTS.linear.reply, CONTEXT)).toBe("Picking up DATA-3051.");
+  });
+
+  it("says in the Ask reply what you are looking into", () => {
+    const reply = (question: string) => renderReply(DEFAULT_PROMPTS.ask.reply, CONTEXT, "web", question);
+    expect(reply("  why does this only happen on Safari?\n")).toBe(
+      "Looking into this: why does this only happen on Safari?",
+    );
+    // Typed text posts as typed, not as Slack markup.
+    expect(reply("is <!channel> & <@U1> safe?")).toBe("Looking into this: is &lt;!channel&gt; &amp; &lt;@U1&gt; safe?");
+    // With nothing typed there is no dangling colon.
+    expect(reply("")).toBe("Looking into this.");
+    expect(renderReply("On it in {{repo}}.", CONTEXT, "web", "")).toBe("On it in web.");
   });
 
   it("uses branch prefixes that are valid git ref fragments", () => {

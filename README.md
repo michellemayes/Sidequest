@@ -144,11 +144,13 @@ message you started it from, so whoever asked knows it's being handled:
 | **Investigate** | Investigating this. |
 | **Fix** | Working on a fix. |
 | **Review** | Reviewing this. |
-| **Ask** | (none) |
+| **Ask** | Looking into this: _what you typed in the Ask box_ |
 | **Linear** | Picking up DATA-3051. |
 
 Each prompt's `reply` sets its text and takes the same tokens as its template
-(`{{repo}}` is the repo's label). An empty `reply` turns it off for that prompt:
+(`{{repo}}` is the repo's label, and `{{question}}` is just what you typed,
+without a heading). With nothing typed in the Ask box, its reply is
+"Looking into this." An empty `reply` turns it off for that prompt:
 
 ```json
 {
