@@ -46,7 +46,9 @@ import { run, succeeds } from "./util/exec.js";
 import {
   build,
   buildOutOfDate,
+  builtCommit,
   changelog,
+  daemonOutOfDate,
   depsOutOfDate,
   fastForward,
   installDeps,
@@ -478,7 +480,21 @@ async function update(options: { restart: boolean }): Promise<void> {
   const needDeps = await depsOutOfDate(root);
   const needBuild = await buildOutOfDate(root, plan.to);
   if (commits.length === 0 && plan.from === plan.to && !needDeps && !needBuild) {
-    console.log("Sidequest is already up to date.");
+    // Nothing to pull or build, but the daemon may still be on older code
+    // (an earlier `--no-restart`, or a rebuild it never picked up).
+    const rec = await readDaemonRecord();
+    if (!rec || !daemonAlive(rec.pid) || !(await daemonOutOfDate(root, rec.build))) {
+      console.log("Sidequest is already up to date.");
+      return;
+    }
+    if (!options.restart) {
+      console.log(
+        "Sidequest is already up to date, but the daemon is on an older version until you run `sidequest stop && sidequest start`.",
+      );
+      return;
+    }
+    console.log("Sidequest is already up to date, but the daemon is running an older version.");
+    await restartDaemon(root);
     return;
   }
 
@@ -519,6 +535,10 @@ async function update(options: { restart: boolean }): Promise<void> {
     console.log("\nUpdated. The daemon is still on the old version until you run `sidequest stop && sidequest start`.");
     return;
   }
+  await restartDaemon(root);
+}
+
+async function restartDaemon(root: string): Promise<void> {
   console.log("\nRestarting the daemon on the new version…");
   await stop();
   // A fresh process, so the restart runs the code that was just built.
@@ -562,7 +582,7 @@ async function runAttacherLoop(options: {
   const daemonized = Boolean(process.env.SIDEQUEST_DAEMON);
   const agentLabel = resolveAgent(config.settings.agent).label;
 
-  if (daemonized) await writeDaemonRecord();
+  if (daemonized) await writeDaemonRecord((await builtCommit(installRoot())) ?? "");
   // Until the banner is out, `start` reports the attach state itself; a running
   // commentary before it would say the same thing twice, out of order.
   let booted = false;

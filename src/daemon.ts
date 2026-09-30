@@ -12,6 +12,12 @@ import { daemonPidFile } from "./config/paths.js";
 export interface DaemonRecord {
   pid: number;
   startedAt: string;
+  /**
+   * The commit of the build the daemon started on ("" for an unstamped build),
+   * so `update` can tell a daemon still running old code. Missing from records
+   * written before this was tracked.
+   */
+  build?: string;
 }
 
 export async function readDaemonRecord(): Promise<DaemonRecord | null> {
@@ -19,14 +25,18 @@ export async function readDaemonRecord(): Promise<DaemonRecord | null> {
     const raw = await readFile(daemonPidFile(), "utf8");
     const parsed = JSON.parse(raw) as Partial<DaemonRecord>;
     if (typeof parsed.pid !== "number" || !Number.isInteger(parsed.pid)) return null;
-    return { pid: parsed.pid, startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : "" };
+    return {
+      pid: parsed.pid,
+      startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : "",
+      ...(typeof parsed.build === "string" ? { build: parsed.build } : {}),
+    };
   } catch {
     return null;
   }
 }
 
-export async function writeDaemonRecord(): Promise<void> {
-  const record: DaemonRecord = { pid: process.pid, startedAt: new Date().toISOString() };
+export async function writeDaemonRecord(build: string): Promise<void> {
+  const record: DaemonRecord = { pid: process.pid, startedAt: new Date().toISOString(), build };
   await writeFile(daemonPidFile(), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
 }
 

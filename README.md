@@ -44,7 +44,8 @@ sidequest update
 It pulls the latest, runs `npm ci` only when `package.json` or
 `package-lock.json` changed (most updates skip it), builds into a scratch folder
 and swaps it in only if the build succeeds, and restarts the daemon if it was
-running. If anything fails, the checkout goes back to the version you had, so a
+running. When there's nothing new to pull, it still restarts a daemon that is
+running an older build (say, after an earlier `--no-restart`). If anything fails, the checkout goes back to the version you had, so a
 bad update never leaves you with a broken install. It refuses to run over local
 edits in the checkout. Then, in Slack:
 
