@@ -24,3 +24,13 @@ export function defaultWorktreesRoot(): string {
 export function shellHookFile(): string {
   return join(configRoot(), "shell-hook.sh");
 }
+
+/** PID file for the background daemon started by `sidequest start`. */
+export function daemonPidFile(): string {
+  return join(configRoot(), "sidequest.pid");
+}
+
+/** Log file the background daemon's output goes to. */
+export function daemonLogFile(): string {
+  return join(configRoot(), "sidequest.log");
+}

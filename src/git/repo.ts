@@ -159,7 +159,7 @@ export async function isMergedInto(
  *
  * Two things depend on this. `git worktree remove` refuses to delete a worktree
  * holding untracked files, so without it `sidequest clean` could never remove
- * anything; and Claude Code would otherwise see the prompt files as untracked
+ * anything; and the agent would otherwise see the prompt files as untracked
  * changes and might commit them.
  *
  * info/exclude lives in the common git dir, so one write covers every worktree

@@ -1,14 +1,16 @@
 import { allPrompts } from "./store.js";
 import { channelKey } from "./channels.js";
+import { resolveAgent } from "../agents/agents.js";
 import type { Config } from "./schema.js";
 
 /**
  * The slice of config the injected overlay is allowed to see.
  *
  * Deliberately not the whole config: repo paths, the base branch and the
- * Claude command are the daemon's business, and the page has no use for them.
- * What it needs is which channels are linked (to draw the header button) and
- * what the prompts are called (to label the menu).
+ * agent command are the daemon's business, and the page has no use for them.
+ * What it needs is which channels are linked (to draw the header button),
+ * what the prompts are called (to label the menu), and which agent is active
+ * (to word its tooltips).
  */
 export interface PageConfig {
   prompts: Array<{ key: string; label: string; emoji: string }>;
@@ -16,6 +18,8 @@ export interface PageConfig {
   linkedChannels: string[];
   /** Repo label per channel key, for the header button's wording. */
   repoLabels: Record<string, string>;
+  /** Human label of the agent sessions launch, e.g. "Claude Code". */
+  agentLabel: string;
   verbose: boolean;
 }
 
@@ -33,6 +37,7 @@ export function pageConfig(config: Config): PageConfig {
     })),
     linkedChannels: Object.keys(config.channels).map(channelKey),
     repoLabels,
+    agentLabel: resolveAgent(config.settings.agent).label,
     verbose: config.settings.verbose,
   };
 }

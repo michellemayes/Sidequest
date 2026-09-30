@@ -1,17 +1,17 @@
-# Sidequest
+# <img src="assets/icon.svg" width="48" height="48" align="top" alt="Sidequest icon"> Sidequest
 
-An overlay for the Slack desktop app that turns any message into a Claude Code session.
+An overlay for the Slack desktop app that turns any message into a coding-agent session.
 
 Assign a repo to a channel. Then hover any message in that channel, click
 **Sidequest**, and pick **Investigate**, **Fix** or **Review**. Sidequest cuts a
 fresh git worktree off your base branch, writes a prompt built from the message
-and its thread, and opens the worktree in Warp with Claude Code already running.
+and its thread, and opens the worktree in Warp with your agent already running.
 
 Everything runs on your own machine. Nothing is sent anywhere — the message text
 goes straight from Slack's renderer into a prompt file in the worktree.
 
 ```
-hover a message  ──▶  git worktree  ──▶  Warp tab  ──▶  claude "<prompt>"
+hover a message  ──▶  git worktree  ──▶  Warp tab  ──▶  agent "<prompt>"
   Sidequest ▾          fix/checkout-…     "Fix · storefront"
    Investigate
    Fix
@@ -60,7 +60,7 @@ start, so Sidequest has to be the thing that launches Slack.
 - Node.js 20 or newer
 - git
 - [Warp](https://www.warp.dev/)
-- [Claude Code](https://claude.com/claude-code) on your `PATH` as `claude`
+- A coding agent on your `PATH`: [Claude Code](https://claude.com/claude-code) (`claude`) or [Codex](https://github.com/openai/codex) (`codex`) — see `sidequest agents`
 
 ## Install
 
@@ -77,9 +77,14 @@ Sidequest install-hook  # so Claude starts when the Warp tab opens
 ## Run it
 
 ```bash
-Sidequest start          # launches Slack with the overlay attached
-Sidequest start --force  # quits an already-running Slack first
+sidequest start          # launches Slack with the overlay attached (background daemon)
+sidequest start --force  # quits an already-running Slack first
+sidequest stop           # stops the daemon
 ```
+
+`start` daemonizes by default — no terminal stays open. Its output goes to
+`~/.sidequest/sidequest.log`; `sidequest status` shows what it's doing.
+Pass `--foreground` to keep the old behavior while debugging.
 
 Leave it running. In Slack:
 
@@ -91,7 +96,7 @@ Leave it running. In Slack:
    does it from the terminal.
 2. Hover any message → **Sidequest** → **Investigate** / **Fix** / **Review**.
 
-A Warp tab opens on a new worktree with Claude Code already working. The result —
+A Warp tab opens on a new worktree with your agent already working. The result —
 the branch name, or what went wrong — appears on the message you clicked. It is
 one line, so it covers nothing; hover it to read a long one in full, click it to
 dismiss it.
@@ -111,8 +116,12 @@ quietly.
 
 | Command | What it does |
 | --- | --- |
-| `sidequest start` | Launch Slack with the overlay attached. `--force` |
-| `sidequest doctor` | Check git, Warp, Claude Code, Slack.app and the debug port |
+| `sidequest start` | Launch Slack with the overlay attached. Runs in the background; `--force`, `--foreground` |
+| `sidequest stop` | Stop the background daemon |
+| `sidequest status` | Show whether the daemon is running, and what it's doing |
+| `sidequest agents` | List the coding agents Sidequest can launch |
+| `sidequest reopen <ref>` | Open Warp on an existing session (branch name or worktree path) |
+| `sidequest doctor` | Check git, Warp, the agent, Slack.app and the debug port |
 | `sidequest list` | Show settings and linked channels |
 | `sidequest sessions` | List every worktree Sidequest created |
 | `sidequest clean` | Remove worktrees whose branch is merged. `--all`, `--force` |
@@ -169,8 +178,7 @@ so renaming a prompt renames it in the menu.
 | `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees are created |
 | `warpStrategy` | `launch_config` | `launch_config`, `tab_config` or `new_tab` |
 | `warpPreview` | `false` | Use Warp Preview (`warppreview://`) |
-| `claudeCommand` | `claude` | The Claude Code executable |
-| `claudeArgs` | `[]` | Extra flags, e.g. `["--model", "opus"]` |
+| `agent` | `{ "id": "claude" }` | Which coding agent to launch (`claude`, `codex`); `command`/`args` override its executable and flags |
 | `fetchBeforeCreate` | `true` | Fetch the base branch before branching |
 | `threadContextLimit` | `10` | Preceding messages included in the prompt |
 | `pruneBranchesOnClean` | `true` | Also delete merged branches on `clean` |
@@ -194,7 +202,7 @@ name is what the overlay can read off the DOM.
 5. `.sidequest/` is added to the repo's `.git/info/exclude`, so Claude never sees
    the prompt files as untracked changes and `sidequest clean` can remove the
    worktree later.
-6. Warp is opened on the worktree and `autorun.sh` starts Claude Code.
+6. Warp is opened on the worktree and `autorun.sh` starts the agent.
 
 Branch names look like `fix/checkout-total-is-wrong-20260909-1432`. Clicking the
 same message twice gives you `-2`, `-3` rather than an error.
@@ -229,8 +237,9 @@ name, or **Sidequest** → **Link a repo…** on any message. If the pill beside
 channel name is only a dot, or missing, Slack's own header buttons left it no
 room — widen the window, or use the menu.
 
-**Warp opens but Claude doesn't start.** Run `sidequest install-hook`, then open a
-new terminal.
+**Warp opens but the agent doesn't start.** Run `sidequest install-hook`, then open a
+new terminal. Or run `sidequest reopen <branch>` to open Warp on the session again —
+if its start marker is still unclaimed, the agent launches on arrival.
 
 **Warp doesn't open at all.** Sidequest still creates the worktree and says so under
 the message — `cd` there and run `.sidequest/autorun.sh`.

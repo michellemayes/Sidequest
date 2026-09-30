@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import { loadConfig, promptFor } from "../config/store.js";
 import { repoForChannelName } from "../config/channels.js";
 import { renderPrompt, type PromptContext } from "../config/prompts.js";
+import { resolveAgent } from "../agents/agents.js";
 import type { Config, PromptKey, RepoLink } from "../config/schema.js";
 import { inspectRepo } from "../git/repo.js";
 import { createWorktree } from "../git/worktree.js";
@@ -30,6 +31,7 @@ export interface SessionResult {
   repoLabel: string;
   baseBranch: string;
   promptLabel: string;
+  agentLabel: string;
   launchStrategy: string;
   fellBackToNewTab: boolean;
   promptFile: string;
@@ -60,6 +62,7 @@ export async function createSession(
   const baseBranch = link.baseBranch.trim() || repo.defaultBranch;
   const repoLabel = link.label.trim() || repo.name;
   const prompt = promptFor(config, promptKey);
+  const agent = resolveAgent(config.settings.agent);
 
   const branch = branchNameFor({
     promptKey,
@@ -87,8 +90,9 @@ export async function createSession(
   const files = await writeAutorun({
     worktreePath: worktree.path,
     prompt: body,
-    claudeCommand: config.settings.claudeCommand,
-    claudeArgs: config.settings.claudeArgs,
+    agentCommand: agent.command,
+    agentArgs: agent.args,
+    agentLabel: agent.label,
   });
 
   const base = {
@@ -99,6 +103,7 @@ export async function createSession(
     baseBranch: worktree.baseBranch,
     promptLabel: prompt.label,
     promptFile: files.promptFile,
+    agentLabel: agent.label,
   };
 
   // The worktree and prompt are already on disk and usable. If Warp will not

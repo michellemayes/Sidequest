@@ -37,6 +37,17 @@ export type RepoLink = z.infer<typeof repoLinkSchema>;
 export const warpStrategySchema = z.enum(["launch_config", "tab_config", "new_tab"]);
 export type WarpStrategy = z.infer<typeof warpStrategySchema>;
 
+export const agentConfigSchema = z.object({
+  /** Which built-in agent to launch; see src/agents/agents.ts for the registry. */
+  id: z.string().default("claude"),
+  /** Override the executable; empty means the agent's default. */
+  command: z.string().default(""),
+  /** Extra flags placed before the prompt. */
+  args: z.array(z.string()).default([]),
+});
+
+export type AgentConfig = z.infer<typeof agentConfigSchema>;
+
 export const settingsSchema = z.object({
   /** Parent directory that holds every generated worktree. */
   worktreesRoot: z.string().default(defaultWorktreesRoot()),
@@ -48,10 +59,8 @@ export const settingsSchema = z.object({
   warpStrategy: warpStrategySchema.default("launch_config"),
   /** Use the Warp Preview build (warppreview:// scheme). */
   warpPreview: z.boolean().default(false),
-  /** The command that starts Claude Code; the prompt is appended as one argument. */
-  claudeCommand: z.string().default("claude"),
-  /** Extra flags passed to claudeCommand before the prompt. */
-  claudeArgs: z.array(z.string()).default([]),
+  /** Which coding agent to launch in Warp; command/args override its defaults. */
+  agent: agentConfigSchema.default({}),
   /** Pull the base branch before cutting the worktree. */
   fetchBeforeCreate: z.boolean().default(true),
   /** How many messages of surrounding thread context to include. */
