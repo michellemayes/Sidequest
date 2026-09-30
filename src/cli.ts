@@ -34,7 +34,18 @@ import { channelKey } from "./config/channels.js";
 import { describeError, UserFacingError } from "./util/errors.js";
 import type { Config } from "./config/schema.js";
 import type { LaunchResult } from "./cdp/launch.js";
-import { succeeds } from "./util/exec.js";
+import { run, succeeds } from "./util/exec.js";
+import {
+  build,
+  buildOutOfDate,
+  changelog,
+  depsOutOfDate,
+  fastForward,
+  installDeps,
+  installRoot,
+  planUpdate,
+  rollBack,
+} from "./update.js";
 import { log } from "./util/log.js";
 
 export async function runCli(argv: string[]): Promise<void> {
@@ -132,6 +143,12 @@ export async function runCli(argv: string[]): Promise<void> {
     .command("prompts")
     .description("show the three prompt templates and where to override them")
     .action(() => wrap(prompts));
+
+  program
+    .command("update")
+    .description("pull the latest Sidequest, rebuild, and restart the daemon if it's running")
+    .option("--no-restart", "leave a running daemon on the old version")
+    .action((options: { restart: boolean }) => wrap(() => update(options)));
 
   program
     .command("doctor")
@@ -403,6 +420,73 @@ async function stats(): Promise<void> {
     console.log(`    ${entry.branch}  ·  #${entry.channel}  ·  ${when}`);
   }
   console.log("\n`sidequest reopen` jumps back into the latest one.\n");
+}
+
+/**
+ * Pull, install only if the lockfile moved, build beside dist/ and swap it in,
+ * then restart the daemon on the new code. Any failure after the pull puts the
+ * checkout back on the commit it was on.
+ */
+async function update(options: { restart: boolean }): Promise<void> {
+  const root = installRoot();
+  console.log(`Checking for updates (${root})…`);
+  const plan = await planUpdate(root);
+  const commits = await changelog(root, plan.from, plan.to);
+  const needDeps = await depsOutOfDate(root);
+  const needBuild = await buildOutOfDate(root, plan.to);
+  if (commits.length === 0 && plan.from === plan.to && !needDeps && !needBuild) {
+    console.log("Sidequest is already up to date.");
+    return;
+  }
+
+  if (plan.from !== plan.to) {
+    await fastForward(root, plan.to);
+    console.log(`Pulled ${commits.length} change${commits.length === 1 ? "" : "s"} from ${plan.upstream}:`);
+    for (const line of commits.slice(-15)) console.log(`  • ${line}`);
+    if (commits.length > 15) console.log(`  … and ${commits.length - 15} earlier`);
+  }
+
+  let depsTouched = false;
+  try {
+    if (await depsOutOfDate(root)) {
+      console.log("Installing dependencies (they changed)…");
+      depsTouched = true;
+      await installDeps(root);
+    } else {
+      console.log("Dependencies unchanged; skipping npm install.");
+    }
+    console.log("Building…");
+    await build(root, plan.to);
+  } catch (err) {
+    if (plan.from !== plan.to) await rollBack(root, plan.from);
+    if (depsTouched) await installDeps(root).catch(() => undefined);
+    const { message } = describeError(err);
+    throw new UserFacingError(
+      `Update failed, so Sidequest stayed on the version it was on.\n${message}`,
+      "Run `sidequest update` again; if it keeps failing, please open an issue with the error above.",
+    );
+  }
+
+  const rec = await readDaemonRecord();
+  if (!rec || !daemonAlive(rec.pid)) {
+    console.log("\nUpdated. Run `sidequest start` when you want the overlay.");
+    return;
+  }
+  if (!options.restart) {
+    console.log("\nUpdated. The daemon is still on the old version until you run `sidequest stop && sidequest start`.");
+    return;
+  }
+  console.log("\nRestarting the daemon on the new version…");
+  await stop();
+  // A fresh process, so the restart runs the code that was just built.
+  const code = await new Promise<number | null>((resolve, reject) => {
+    const child = spawn(process.execPath, [join(root, "dist", "index.js"), "start"], { stdio: "inherit" });
+    child.on("error", reject);
+    child.on("exit", resolve);
+  });
+  if (code !== 0) {
+    throw new UserFacingError("Updated, but the daemon didn't come back up.", "Run `sidequest start` to see why.");
+  }
 }
 
 /**
@@ -829,6 +913,18 @@ async function doctor(): Promise<void> {
       ? `       installed at ${shellHookFile()}`
       : `       not installed. Run \`sidequest install-hook\` so sessions start even when Warp ignores the launch config.`,
   );
+
+  const root = installRoot();
+  const head = await run("git", ["rev-parse", "HEAD"], { cwd: root }).then((r) => r.stdout.trim(), () => "");
+  if (head) {
+    const stale = (await buildOutOfDate(root, head)) || (await depsOutOfDate(root));
+    console.log(`  ${stale ? "-- " : "ok "}  install`);
+    console.log(
+      stale
+        ? `       the build in ${root} doesn't match its checkout. Run \`sidequest update\`.`
+        : `       built from ${head.slice(0, 7)}; \`sidequest update\` pulls the latest`,
+    );
+  }
 
   const app = findSlackApp();
   check(
