@@ -489,6 +489,43 @@ describeIfChrome("overlay over CDP", () => {
     }
   }, 30_000);
 
+  it("keeps the pill off the composer under the last message", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, "window.__pinToComposer(true)");
+      await sleep(100);
+
+      // row-4 runs edge to edge and sits right on the composer: no room
+      // beside its words, and none under them.
+      await hover(session, "row-4");
+      expect(await evaluate(session, shown(".sq-launch"))).toBe(true);
+      expect(await evaluate(session, coversText(".sq-launch", "row-4"))).toBe(false);
+      const placed = await evaluate(
+        session,
+        `(() => {
+           const btn = ${UI}.querySelector('.sq-launch').getBoundingClientRect();
+           const composer = document.getElementById('composer').getBoundingClientRect();
+           const chips = document.querySelector('#composer .chips').getBoundingClientRect();
+           const row = document.getElementById('row-4').getBoundingClientRect();
+           const text = document.querySelector('#row-4 [data-qa="message_content"]').getBoundingClientRect();
+           const hits = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+           return JSON.stringify({
+             offComposer: !hits(btn, composer) && !hits(btn, chips),
+             inRow: btn.top >= row.top && btn.bottom <= row.bottom,
+             inGutter: btn.right <= text.left,
+           });
+         })()`,
+      );
+      expect(JSON.parse(String(placed))).toEqual({ offComposer: true, inRow: true, inGutter: true });
+    } finally {
+      await evaluate(session, "window.__pinToComposer(false)");
+      attacher.stop();
+      session.close();
+    }
+  }, 30_000);
+
   it("offers a Linear prompt on a message that links an issue, and works it", async () => {
     const { attacher, session } = await attachAndEval();
     try {
