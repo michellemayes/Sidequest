@@ -168,7 +168,7 @@ Each prompt's `reply` sets its text and takes the same tokens as its template
 | `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees go |
 | `warpStrategy` | `auto` | `auto` tries a tab config, then a launch config, then a plain new tab, until the agent starts. `tab_config`, `launch_config` or `new_tab` puts that one first |
 | `warpPreview` | `false` | Use Warp Preview |
-| `fetchBeforeCreate` | `true` | Fetch the base branch first |
+| `fetchBeforeCreate` | `true` | Fetch the base branch first. A fetch slower than 3 seconds doesn't hold up the session: it's cut from the local ref while the fetch finishes in the background |
 | `repoSearchRoots` | `[]` | Where to look for repos to suggest. Empty means `~/code`, `~/src`, `~/Developer`, `~/projects` and similar, two levels deep |
 | `threadContextLimit` | `10` | How many earlier messages go into the prompt |
 | `pruneBranchesOnClean` | `true` | Delete merged branches on `clean` |

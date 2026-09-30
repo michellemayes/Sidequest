@@ -99,6 +99,16 @@ describe("launchWarp", () => {
     await launchWarp({ spec: spec(), strategy: "tab_config", preview: false, pendingFile, tabConfigSettleMs: 150 });
     expect(Date.now() - started).toBeGreaterThanOrEqual(140);
   });
+
+  it("does not wait again for a tab config written ahead of time", async () => {
+    await rm(pendingFile);
+    const preparedTabConfig = { uri: "warp://tab_config/sidequest-test", writtenAt: Date.now() - 1_000 };
+    const started = Date.now();
+    const result = await launchWarp({ spec: spec(), strategy: "tab_config", preview: false, pendingFile, tabConfigSettleMs: 500, preparedTabConfig });
+    expect(Date.now() - started).toBeLessThan(250);
+    expect(result.uri).toBe(preparedTabConfig.uri);
+    expect(opened).toEqual([preparedTabConfig.uri]);
+  });
 });
 
 describe("strategyOrder", () => {

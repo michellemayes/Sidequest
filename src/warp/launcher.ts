@@ -20,6 +20,25 @@ export interface LaunchOptions {
   claimTimeoutMs?: number;
   /** How long to give Warp's file watcher to notice a new tab config. */
   tabConfigSettleMs?: number;
+  /**
+   * A tab config already written for this spec (see prepareTabConfig), so
+   * the settle time has partly or wholly passed by the time Warp is opened.
+   */
+  preparedTabConfig?: PreparedTabConfig;
+}
+
+export interface PreparedTabConfig {
+  uri: string;
+  writtenAt: number;
+}
+
+/**
+ * Write the tab config ahead of launching, so Warp's file watcher can find it
+ * while the worktree is still being checked out.
+ */
+export async function prepareTabConfig(spec: WarpSessionSpec, preview: boolean): Promise<PreparedTabConfig> {
+  const uri = await buildUri({ spec, strategy: "tab_config", preview });
+  return { uri, writtenAt: Date.now() };
 }
 
 export interface LaunchResult {
@@ -80,11 +99,14 @@ export async function launchWarp(options: LaunchOptions): Promise<LaunchResult> 
   for (const [index, strategy] of strategies.entries()) {
     const isLast = index === strategies.length - 1;
     try {
-      const uri = await buildUri({ spec, strategy, preview });
+      const prepared = strategy === "tab_config" ? options.preparedTabConfig : undefined;
+      const uri = prepared?.uri ?? (await buildUri({ spec, strategy, preview }));
       if (strategy === "tab_config") {
         // Warp finds new tab configs with a file watcher; a deeplink that
         // arrives before it has looked resolves to nothing.
-        await sleep(options.tabConfigSettleMs ?? TAB_CONFIG_SETTLE_MS);
+        const settleMs = options.tabConfigSettleMs ?? TAB_CONFIG_SETTLE_MS;
+        const since = prepared ? Date.now() - prepared.writtenAt : 0;
+        if (settleMs > since) await sleep(settleMs - since);
       }
       await openUri(uri);
       opened = { strategy, uri };
@@ -111,7 +133,7 @@ export async function launchWarp(options: LaunchOptions): Promise<LaunchResult> 
 }
 
 const CLAIM_TIMEOUT_MS = 6_000;
-const CLAIM_POLL_MS = 200;
+const CLAIM_POLL_MS = 50;
 const TAB_CONFIG_SETTLE_MS = 750;
 
 function sleep(ms: number): Promise<void> {
