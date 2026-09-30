@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Sidequest demo</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.46 -apple-system, "Segoe UI", "Helvetica Neue", Lato, Arial, sans-serif; color: #1d1c1d; background: #fff; }
+  .app { display: flex; height: 100vh; }
+  .sidebar { width: 230px; background: #3f0e40; color: #cfc3cf; padding: 14px 0; }
+  .ws { color: #fff; font-weight: 800; font-size: 18px; padding: 0 16px 14px; border-bottom: 1px solid #5d3a5e; margin-bottom: 10px; }
+  .section { font-size: 14px; padding: 6px 16px 4px; opacity: .8; }
+  .ch { padding: 3px 16px 3px 26px; font-size: 15px; }
+  .ch.active { background: #1164a3; color: #fff; }
+  .ch.bold { color: #fff; font-weight: 700; }
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .p-view_header { display: flex; align-items: center; height: 52px; padding: 0 18px; border-bottom: 1px solid #e2e2e2; }
+  .name-control { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 18px; font-weight: 900; background: none; border: 0; padding: 0; color: inherit; }
+  .chev { font-size: 11px; color: #616061; }
+  .gap { flex: 1; }
+  .hbtn { border: 1px solid #ddd; background: #fff; border-radius: 6px; padding: 3px 10px; font-size: 13px; color: #1d1c1d; margin-left: 8px; }
+  #list { flex: 1; overflow: hidden; padding-top: 12px; }
+  .day { text-align: center; font-size: 13px; font-weight: 700; margin: 4px 0 8px; }
+  .row { display: flex; gap: 10px; padding: 8px 20px 8px 20px; }
+  .row.cont { padding-top: 2px; }
+  .row.cont .avatar { visibility: hidden; height: 0; }
+  .avatar { width: 36px; height: 36px; border-radius: 6px; flex: none; color: #fff; font-weight: 700; display: grid; place-items: center; }
+  .body { min-width: 0; flex: 1; }
+  .meta { display: flex; align-items: baseline; gap: 8px; }
+  [data-qa="message_sender_name"] { font-weight: 900; }
+  a.c-timestamp { color: #616061; font-size: 12px; text-decoration: none; }
+  .row.cont .meta { display: none; }
+  code { font: 12px Menlo, monospace; background: #f6f6f6; border: 1px solid #e0e0e0; border-radius: 3px; padding: 1px 3px; color: #c01343; }
+  .composer { margin: 0 20px 20px; border: 1px solid #bbb; border-radius: 8px; padding: 12px; color: #868686; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar">
+    <div class="ws">Acme</div>
+    <div class="section">▾ Channels</div>
+    <div class="ch">general</div>
+    <div class="ch active">bugs-storefront</div>
+    <div class="ch bold">deploys</div>
+    <div class="ch">eng-platform</div>
+    <div class="ch">random</div>
+    <div class="section" style="margin-top:10px">▾ Direct messages</div>
+    <div class="ch">Priya Shah</div>
+    <div class="ch">Marcus Lee</div>
+  </div>
+  <div class="main">
+    <div class="p-view_header" data-qa="channel_header">
+      <button class="name-control"><span data-qa="channel_name">bugs-storefront</span><span class="chev">▾</span></button>
+      <span class="gap"></span>
+      <button class="hbtn" data-qa="huddle">Huddle</button>
+      <button class="hbtn" data-qa="more">⋮</button>
+    </div>
+    <div id="list">
+      <div class="day">Today</div>
+      <div class="row" data-qa="virtual-list-item" id="r1">
+        <div class="avatar" style="background:#2e7d5b">PS</div>
+        <div class="body">
+          <div class="meta"><span data-qa="message_sender_name">Priya Shah</span>
+            <a class="c-timestamp" href="https://acme.slack.com/archives/C0BUGS/p1759240800000100">2:20 PM</a></div>
+          <div data-qa="message_content"><div class="p-rich_text_section">Heads up: checkout total is wrong when a gift card covers part of the order. The tax is calculated before the gift card is applied, so customers get overcharged.</div></div>
+        </div>
+      </div>
+      <div class="row cont" data-qa="virtual-list-item" id="r2">
+        <div class="avatar"></div>
+        <div class="body">
+          <div class="meta"><a class="c-timestamp" href="https://acme.slack.com/archives/C0BUGS/p1759240860000200">2:21 PM</a></div>
+          <div data-qa="message_content"><div class="p-rich_text_section">Only on the EU store as far as I can tell. Order #48213 is a clean repro.</div></div>
+        </div>
+      </div>
+      <div class="row" data-qa="virtual-list-item" id="r3">
+        <div class="avatar" style="background:#b35c1e">ML</div>
+        <div class="body">
+          <div class="meta"><span data-qa="message_sender_name">Marcus Lee</span>
+            <a class="c-timestamp" href="https://acme.slack.com/archives/C0BUGS/p1759241100000300">2:25 PM</a></div>
+          <div data-qa="message_content"><div class="p-rich_text_section">Probably the VAT path in <code>pricing/totals.ts</code>. It got refactored last sprint.</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="composer">Message #bugs-storefront</div>
+    <div id="list-end"></div>
+  </div>
+</div>
+</body>
+</html>

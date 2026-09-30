@@ -1,154 +1,85 @@
 # <img src="assets/icon.svg" width="48" height="48" align="top" alt="Sidequest icon"> Sidequest
 
-An overlay for the Slack desktop app that turns any message into a coding-agent session.
+**Turn any Slack message into a coding-agent session in one click.**
 
-Assign a repo to a channel. Then hover any message in that channel, click
-**Sidequest**, and pick **Investigate**, **Fix** or **Review**. Sidequest cuts a
-fresh git worktree off your base branch, writes a prompt built from the message
-and its thread, and opens the worktree in Warp with your agent already running.
+Someone reports a bug in Slack. You hover the message and click **Sidequest → Fix**.
+A few seconds later a Warp tab is open on a fresh git worktree, and Claude Code (or
+Codex) is already working on it, with the message and its thread as the prompt.
 
-Everything runs on your own machine. Nothing is sent anywhere — the message text
-goes straight from Slack's renderer into a prompt file in the worktree.
+![Sidequest demo: hover a Slack message, pick Fix, and get a branch back](docs/demo/demo.gif)
 
-```
-hover a message  ──▶  git worktree  ──▶  Warp tab  ──▶  agent "<prompt>"
-  Sidequest ▾          fix/checkout-…     "Fix · storefront"
-   Investigate
-   Fix
-   Review
-```
+<sub>The overlay running over a mock channel. See [`docs/demo`](docs/demo) to re-record it.</sub>
 
-## How it attaches to the desktop app
+- **No Slack app, no bot token, no workspace install.** Sidequest attaches to the
+  Slack desktop app you already use.
+- **Nothing leaves your machine.** The message goes from Slack's window into a
+  prompt file on disk.
+- **Your checkout is never touched.** Every session gets its own branch and
+  worktree, cut from an up-to-date base branch.
 
-Slack's desktop app is Electron, so its renderer speaks the Chrome DevTools
-Protocol. `sidequest start` launches Slack with `--remote-debugging-port`, attaches
-over CDP, and injects [`client/inject.js`](client/inject.js) into every Slack
-window. The buttons are Sidequest's own elements, drawn over Slack's message
-list.
+## Quick start
 
-They live in a layer of Sidequest's own: one zero-sized, `pointer-events: none`
-host at the end of `<body>`, with a shadow root holding every element and the
-only stylesheet. Slack's DOM is read, never written — no children, no
-attributes, no styles — and no rule in that stylesheet can match a Slack
-element. Slack's lists are virtualised, so their rows are measured and recycled;
-anything put inside one, or any `position` overridden on one, changes how Slack
-lays out the app around it. `[data-qa="virtual-list-item"]` is not just messages
-either — the sidebar, the DM list and search results are virtual lists too — so
-rows are matched on a message's own content. Everything anchored to a message is
-positioned from that row's rectangle and keyed by the message it belongs to, so
-a recycled row drops what was drawn for its previous occupant.
-
-Being in its own layer means the overlay cannot push Slack's own UI aside, so it
-measures around it instead. The message button takes a row's bottom-right corner,
-because Slack's hover actions and an unread divider's **New** label both own the
-top-right. The menu hangs off that button rather than dropping across the message
-it was opened from. A result is drawn inside its own row, not below it, where a
-line would cover the next message's timestamp. And the channel pill measures the
-free space beside the channel name before it takes any: it truncates its label,
-then shows only its dot, and then gets out of the way entirely rather than
-covering the huddle button. Colours come from Slack — the font and text colour by
-inheritance, the background read off the message list — so the overlay follows
-the workspace theme instead of assuming a light one.
-
-There is no Slack app to create, no bot token, no workspace install and no
-network hop. The trade-off is that Slack only accepts the debug flag at process
-start, so Sidequest has to be the thing that launches Slack.
-
-## Requirements
-
-- macOS (the launcher drives `Slack.app`)
-- Node.js 20 or newer
-- git
-- [Warp](https://www.warp.dev/)
-- A coding agent on your `PATH`: [Claude Code](https://claude.com/claude-code) (`claude`) or [Codex](https://github.com/openai/codex) (`codex`) — see `sidequest agents`
-
-## Install
+You'll need macOS, Node 20+, git, [Warp](https://www.warp.dev/), and
+[Claude Code](https://claude.com/claude-code) or [Codex](https://github.com/openai/codex)
+on your `PATH`.
 
 ```bash
-git clone https://github.com/michellemayes/CCSlackAssist.git
-cd CCSlackAssist
-npm install
-npm run build
-npm link              # puts `sidequest` on your PATH
-Sidequest init          # creates ~/.Sidequest/config.json
-Sidequest install-hook  # so Claude starts when the Warp tab opens
+git clone https://github.com/michellemayes/Sidequest.git
+cd Sidequest
+npm install && npm run build && npm link
+sidequest init           # creates ~/.sidequest/config.json
+sidequest install-hook   # starts the agent when the Warp tab opens
+sidequest start          # relaunches Slack with the overlay (--force if Slack is open)
 ```
 
-## Run it
+Then, in Slack:
 
-```bash
-sidequest start          # launches Slack with the overlay attached (background daemon)
-sidequest start --force  # quits an already-running Slack first
-sidequest stop           # stops the daemon
-```
+1. Click **Link a repo** beside a channel name and paste the path to a git checkout.
+2. Hover any message → **Sidequest** → **Investigate**, **Fix** or **Review**.
 
-`start` daemonizes by default — no terminal stays open. Its output goes to
-`~/.sidequest/sidequest.log`; `sidequest status` shows what it's doing.
-Pass `--foreground` to keep the old behavior while debugging.
+The branch name, or the error if something went wrong, shows up under the message.
 
-Leave it running. In Slack:
+| | What the agent does |
+| --- | --- |
+| **Investigate** | Reproduces the problem, traces it to the code, explains it and recommends a fix. Changes nothing. |
+| **Fix** | Finds the root cause, makes the smallest fix, adds a test, gets lint and tests passing, and commits. |
+| **Review** | Reviews the referenced PR, branch or diff, bugs first. Changes nothing. |
 
-1. Open a channel and click **Link a repo** beside the channel name. Paste an
-   absolute path to a git checkout. The panel that opens is Sidequest's own —
-   Electron does not implement `window.prompt`. In a narrow window there may be
-   no room for that pill beside Slack's own header buttons; the same panel is
-   one click away under **Sidequest** → **Link a repo…**, and `sidequest link`
-   does it from the terminal.
-2. Hover any message → **Sidequest** → **Investigate** / **Fix** / **Review**.
+## How it works
 
-A Warp tab opens on a new worktree with your agent already working. The result —
-the branch name, or what went wrong — appears on the message you clicked. It is
-one line, so it covers nothing; hover it to read a long one in full, click it to
-dismiss it.
+Slack's desktop app is built on Electron. `sidequest start` launches it with
+`--remote-debugging-port` and injects a small overlay
+([`client/inject.js`](client/inject.js)) over the Chrome DevTools Protocol. The
+overlay reads the message, its thread, the sender and the permalink from the page,
+and a local daemon then:
 
-Stopping Sidequest leaves Slack running; the overlay disappears on Slack's next
-reload.
+1. creates `git worktree add -b <branch> <path> origin/<base>`,
+2. writes the prompt to `<worktree>/.sidequest/prompt.md` (git-excluded),
+3. opens Warp on the worktree and starts your agent.
 
-### The shell hook
+<img src="docs/demo/menu.png" width="720" alt="The Sidequest menu open on a message, with Investigate, Fix and Review">
 
-Warp has [ignored `exec` commands from `warp://launch/` deeplinks](https://github.com/warpdotdev/warp/issues/9007)
-in some versions. `sidequest install-hook` adds one line to your `~/.zshrc` that
-starts the session when a shell opens in a Sidequest worktree. It is safe alongside
-the launch config — whichever fires first claims the session, and the other exits
-quietly.
+The overlay sits in its own shadow-DOM layer and never modifies Slack's DOM. It
+picks up your Slack theme and moves out of the way of Slack's own buttons.
 
 ## CLI
 
 | Command | What it does |
 | --- | --- |
-| `sidequest start` | Launch Slack with the overlay attached. Runs in the background; `--force`, `--foreground` |
-| `sidequest stop` | Stop the background daemon |
-| `sidequest status` | Show whether the daemon is running, and what it's doing |
-| `sidequest agents` | List the coding agents Sidequest can launch |
-| `sidequest reopen <ref>` | Open Warp on an existing session (branch name or worktree path) |
+| `sidequest start` / `stop` / `status` | Run the background daemon (logs in `~/.sidequest/sidequest.log`) |
 | `sidequest doctor` | Check git, Warp, the agent, Slack.app and the debug port |
-| `sidequest list` | Show settings and linked channels |
 | `sidequest sessions` | List every worktree Sidequest created |
-| `sidequest clean` | Remove worktrees whose branch is merged. `--all`, `--force` |
-| `sidequest prompts` | Print the three prompt templates |
-| `sidequest install-hook` | Install the shell hook. `--print`, `--rc <path>` |
-| `sidequest link <path> -c <channel>` | Link from the terminal, by channel name |
-| `sidequest unlink -c <channel>` | Remove a link |
+| `sidequest reopen <ref>` | Reopen Warp on a session |
+| `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force` |
+| `sidequest link <path> -c <channel>` / `unlink` | Link or unlink a channel from the terminal |
+| `sidequest list` / `prompts` / `agents` | Show linked channels, prompt templates and available agents |
 
-`sidequest clean` never destroys work: it leaves a branch alone if it holds
-unmerged commits, and refuses a worktree with uncommitted changes unless you pass
-`--force`.
+## Configuration
 
-## The three prompts
+Everything lives in `~/.sidequest/config.json`.
 
-| | Branch | What it asks for |
-| --- | --- | --- |
-| **Investigate** | `investigate/…` | Reproduce, trace to the responsible code, explain the mechanism, recommend a fix. Changes nothing. |
-| **Fix** | `fix/…` | Root-cause it, make the smallest fix, add a failing-then-passing test, get lint and tests green, commit. |
-| **Review** | `review/…` | Review the referenced PR, branch or diff for real bugs first, then clarity. Changes nothing. |
-
-Each prompt receives the message text, up to ten preceding messages, the sender,
-the channel, a permalink, and the branch it is working on.
-
-### Customising them
-
-Edit the `prompts` section of `~/.sidequest/config.json`. Anything you leave out
-falls back to the built-in default, so you can override just the template:
+**Prompts.** Override any of the three templates or labels. Anything you leave out
+keeps its default:
 
 ```json
 {
@@ -161,121 +92,55 @@ falls back to the built-in default, so you can override just the template:
 }
 ```
 
-Available tokens: `{{author}}`, `{{channel}}`, `{{message}}`, `{{thread}}`,
-`{{permalink}}`, `{{date}}`, `{{branch}}`, `{{baseBranch}}`, `{{repo}}`,
-`{{worktree}}`. An unknown token is left visible in the prompt rather than
-silently blanked, so typos are obvious.
+Tokens: `{{author}}` `{{channel}}` `{{message}}` `{{thread}}` `{{permalink}}`
+`{{date}}` `{{branch}}` `{{baseBranch}}` `{{repo}}` `{{worktree}}`. Sidequest
+leaves unknown tokens in the prompt as written, so typos are easy to spot.
 
-Run `sidequest prompts` to see the current set. The button labels come from `label`,
-so renaming a prompt renames it in the menu.
+**Settings** (under `settings`):
 
-## Settings
-
-`~/.sidequest/config.json`, under `settings`:
-
-| Setting | Default | What it does |
+| Setting | Default | |
 | --- | --- | --- |
-| `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees are created |
+| `agent` | `{ "id": "claude" }` | `claude` or `codex`. Use `command`/`args` to override the executable |
+| `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees go |
 | `warpStrategy` | `launch_config` | `launch_config`, `tab_config` or `new_tab` |
-| `warpPreview` | `false` | Use Warp Preview (`warppreview://`) |
-| `agent` | `{ "id": "claude" }` | Which coding agent to launch (`claude`, `codex`); `command`/`args` override its executable and flags |
-| `fetchBeforeCreate` | `true` | Fetch the base branch before branching |
-| `threadContextLimit` | `10` | Preceding messages included in the prompt |
-| `pruneBranchesOnClean` | `true` | Also delete merged branches on `clean` |
-| `cdpPort` | `9222` | DevTools port Slack is launched with |
+| `warpPreview` | `false` | Use Warp Preview |
+| `fetchBeforeCreate` | `true` | Fetch the base branch first |
+| `threadContextLimit` | `10` | How many earlier messages go into the prompt |
+| `pruneBranchesOnClean` | `true` | Delete merged branches on `clean` |
+| `cdpPort` | `9222` | DevTools port for Slack |
 | `targetUrlPattern` | `app\.slack\.com\|/client/` | Which windows count as Slack |
 | `verbose` | `false` | Log overlay activity to Slack's devtools console |
 
-Channels are keyed by name, lowercased and without the `#`, because the channel
-name is what the overlay can read off the DOM.
-
-## How a session is built
-
-1. The overlay reads the message, its sender, its permalink and the preceding
-   messages out of Slack's DOM, and sends them to the local daemon.
-2. The channel's repo is resolved and the base branch detected (`origin/HEAD`,
-   then `main`/`master`/`develop`, then the current branch).
-3. `git worktree add -b <branch> <path> origin/<base>` — a real branch, isolated
-   from whatever you have checked out.
-4. The prompt is rendered into `<worktree>/.sidequest/prompt.md`, alongside a
-   run-once `autorun.sh`.
-5. `.sidequest/` is added to the repo's `.git/info/exclude`, so Claude never sees
-   the prompt files as untracked changes and `sidequest clean` can remove the
-   worktree later.
-6. Warp is opened on the worktree and `autorun.sh` starts the agent.
-
-Branch names look like `fix/checkout-total-is-wrong-20260909-1432`. Clicking the
-same message twice gives you `-2`, `-3` rather than an error.
-
 ## Troubleshooting
 
-**"Slack is running without --remote-debugging-port".** Slack only accepts the
-flag at startup. Quit Slack, or run `sidequest start --force` to have Sidequest
-restart it.
+Start with `sidequest doctor`.
 
-**No buttons in Slack.** The message button is drawn on the message under the
-pointer, so hover one first. Then check the terminal running `sidequest start`:
-it prints how many windows it attached to, and says so when it has none. Zero
-attached windows means the overlay was never injected, however healthy the rest
-of the output looks — see the next two entries. If it attached but nothing
-shows, Slack may have changed its `data-qa` attributes; set `verbose: true` and
-check Slack's devtools console.
+- **"Slack is running without --remote-debugging-port"**: Slack only accepts
+  the flag at launch. Run `sidequest start --force`.
+- **No buttons**: hover a message first. If `sidequest status` shows zero
+  attached windows, the overlay wasn't injected.
+- **"Something other than Slack is listening on 127.0.0.1:9222"**: quit that
+  app, or set `cdpPort` to a free port and run `start --force`.
+- **Warp opens but the agent doesn't start**: run `sidequest install-hook` and
+  open a new terminal, or run `sidequest reopen <branch>`.
+- **Warp doesn't open**: the worktree still exists. `cd` into it and run
+  `.sidequest/autorun.sh`.
 
-**"waiting for a Slack window".** The DevTools port answers, but nothing on it
-looks like Slack. Sidequest keeps polling, so opening or reloading Slack is
-usually enough. If it never attaches, run `sidequest doctor`: it now says which
-app owns the port and how many Slack windows are on it.
+## Security
 
-**"Something other than Slack is listening on 127.0.0.1:9222".** A Chrome
-started with `--remote-debugging-port`, another Electron app, or a leftover
-headless browser got there first, and Sidequest would have attached to that
-instead. Quit it, or set `cdpPort` in `~/.sidequest/config.json` to a free port
-and run `sidequest start --force` so Slack is restarted on it.
-
-**"No repo is linked to #channel".** Click **Link a repo** beside the channel
-name, or **Sidequest** → **Link a repo…** on any message. If the pill beside the
-channel name is only a dot, or missing, Slack's own header buttons left it no
-room — widen the window, or use the menu.
-
-**Warp opens but the agent doesn't start.** Run `sidequest install-hook`, then open a
-new terminal. Or run `sidequest reopen <branch>` to open Warp on the session again —
-if its start marker is still unclaimed, the agent launches on arrival.
-
-**Warp doesn't open at all.** Sidequest still creates the worktree and says so under
-the message — `cd` there and run `.sidequest/autorun.sh`.
-
-**`sidequest clean` skips everything.** Those worktrees have uncommitted changes.
-Check with `sidequest sessions`, then use `--force` once you're sure.
+The overlay makes no network requests and only talks to the local daemon.
+Sidequest runs commands from argv arrays, never through a shell, and passes the
+prompt in a file, so message text can't inject commands. The DevTools port is
+bound to `127.0.0.1`, which means other processes running as your user can reach
+it, as with any Electron app that has remote debugging on.
 
 ## Development
 
 ```bash
 npm run dev -- doctor   # run from source
-npm test                # 58 tests
+npm test                # unit, git integration, and headless-Chromium e2e tests
 npm run typecheck
 ```
-
-The test suite includes integration tests that create real git worktrees and
-execute the generated `autorun.sh`, plus end-to-end tests that launch headless
-Chromium, inject the real overlay over CDP against a Slack-shaped fixture, and
-click through to a real worktree. One of those measures the fixture's own layout
-before anything is injected and again with the overlay running, and fails if a
-single row has moved. Chromium stands in for Slack's Electron
-renderer — the same engine, driven the same way. Those tests skip themselves if
-no Chromium is found.
-
-## Security notes
-
-- The overlay only reads the DOM of Slack windows and only talks to the local
-  daemon over the CDP binding. It makes no network requests, and writes nothing
-  into Slack's own DOM.
-- Commands are executed with an argv array, never through a shell, so message
-  text cannot inject shell syntax. The generated `autorun.sh` single-quotes every
-  interpolated value, and the prompt is passed via a file rather than the command
-  line.
-- The DevTools port is bound to `127.0.0.1`. Anything running as your user on
-  your machine can talk to it while Slack is running that way — the same
-  exposure any Electron app with remote debugging enabled has.
 
 ## License
 
