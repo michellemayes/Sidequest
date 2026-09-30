@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile, readFile, chmod, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile, chmod, stat, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -274,6 +274,59 @@ describe("autorun script", () => {
 
     const { stdout } = await exec("bash", [files.scriptFile]);
     expect(stdout).toBe("\u001b]0;Ask · it's $(id)\u0007");
+  });
+
+  it("passes the prompt behind a flag, or as a file, when the agent asks for it", async () => {
+    const repo = await inspectRepo(repoPath);
+    const worktree = await createWorktree({
+      repo,
+      branch: "fix/prompt-args",
+      baseBranch: "main",
+      worktreesRoot: join(root, "worktrees"),
+      fetch: false,
+    });
+
+    const receipt = join(root, "receipt-flags.txt");
+    const files = await writeAutorun({
+      worktreePath: worktree.path,
+      prompt: "It's $(whoami).",
+      agentCommand: await writeStubClaude(root, receipt),
+      agentArgs: ["--model", "x"],
+      promptArgs: ["--prompt-interactive", "{prompt}", "--file={promptFile}"],
+    });
+
+    await exec("bash", [files.scriptFile]);
+    const recorded = await readFile(receipt, "utf8");
+    expect(recorded).toContain("--model\nx\n--prompt-interactive\nIt's $(whoami).\n");
+    expect(recorded).toContain(`--file=${await realpath(files.promptFile)}\n`);
+  });
+
+  it("starts a one-shot agent again to resume the conversation", async () => {
+    const repo = await inspectRepo(repoPath);
+    const worktree = await createWorktree({
+      repo,
+      branch: "fix/resume",
+      baseBranch: "main",
+      worktreesRoot: join(root, "worktrees"),
+      fetch: false,
+    });
+
+    const receipt = join(root, "receipt-resume.txt");
+    const files = await writeAutorun({
+      worktreePath: worktree.path,
+      prompt: "Fix it.",
+      agentCommand: await writeStubClaude(root, receipt),
+      agentArgs: ["--model", "x"],
+      promptArgs: ["--message-file", "{promptFile}"],
+      resumeArgs: ["--restore-chat-history"],
+    });
+
+    await exec("bash", [files.scriptFile]);
+    const runs = (await readFile(receipt, "utf8")).split("---RUN---").filter((s) => s.trim().length > 0);
+    expect(runs).toEqual([
+      `\n--model\nx\n--message-file\n${await realpath(files.promptFile)}\n`,
+      "\n--model\nx\n--restore-chat-history\n",
+    ]);
   });
 
   it("claims the pending marker so a second run is a no-op", async () => {

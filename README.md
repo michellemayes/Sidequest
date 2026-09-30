@@ -4,7 +4,8 @@
 
 Someone reports a bug in Slack. You hover the message and click **Sidequest → Fix**.
 A few seconds later a Warp tab is open on a fresh git worktree, and Claude Code (or
-Codex) is already working on it, with the message and its thread as the prompt.
+Codex, Gemini CLI, Aider, or [another agent](#agents)) is already working on it,
+with the message and its thread as the prompt.
 
 ![Sidequest demo: pick Fix on a Slack message, watch Claude Code fix it in a Warp tab on a new worktree, and find the branch linked back in Slack](docs/demo/demo.gif)
 
@@ -21,9 +22,9 @@ See [`docs/demo`](docs/demo) to re-record it.</sub>
 
 ## Quick start
 
-You'll need macOS, Node 20+, git, [Warp](https://www.warp.dev/), and
-[Claude Code](https://claude.com/claude-code) or [Codex](https://github.com/openai/codex)
-on your `PATH`.
+You'll need macOS, Node 20+, git, [Warp](https://www.warp.dev/), and a coding
+agent on your `PATH`: [Claude Code](https://claude.com/claude-code) by default,
+or any of the [others Sidequest knows](#agents).
 
 ```bash
 git clone https://github.com/michellemayes/Sidequest.git
@@ -109,7 +110,7 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest link <path> -c <channel>` | Link a repo to a channel from the terminal. Linking a second repo adds it; the first stays the default |
 | `sidequest unlink [repo] -c <channel>` | Unlink one repo (by path or label) from a channel, or all of them if you name none |
 | `sidequest replies [on\|off]` | Show the thread replies sessions post, or turn them on or off |
-| `sidequest agents [claude\|codex]` | Show the available agents, or switch the one new sessions use |
+| `sidequest agents [id]` | Show the available agents and how each is run, or switch the one new sessions use (`sidequest agents gemini`) |
 | `sidequest list` / `prompts` | Show linked channels and prompt templates |
 
 ## Configuration
@@ -163,11 +164,34 @@ without a heading). With nothing typed in the Ask box, its reply is
 }
 ```
 
+<a id="agents"></a>
+**Agents.** Every session starts an interactive agent whose first turn is the
+prompt. Each CLI takes that prompt its own way, and Sidequest knows which:
+
+| Id | Agent | Runs |
+| --- | --- | --- |
+| `claude` | [Claude Code](https://claude.com/claude-code) | `claude "<prompt>"` |
+| `codex` | [Codex](https://github.com/openai/codex) | `codex "<prompt>"` |
+| `gemini` | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini --prompt-interactive "<prompt>"` |
+| `aider` | [Aider](https://aider.chat) | `aider --message-file .sidequest/prompt.md`, then `aider --restore-chat-history` |
+| `cursor-agent` | [Cursor Agent](https://cursor.com/cli) | `cursor-agent "<prompt>"` |
+| `opencode` | [opencode](https://opencode.ai) | `opencode --prompt "<prompt>"` |
+| `copilot` | [Copilot CLI](https://github.com/github/copilot-cli) | `copilot --interactive "<prompt>"` |
+| `qwen` | [Qwen Code](https://github.com/QwenLM/qwen-code) | `qwen --prompt-interactive "<prompt>"` |
+| `goose` | [Goose](https://github.com/block/goose) | `goose run --interactive --instructions .sidequest/prompt.md` |
+
+Aider is the odd one out: it has no way to open a chat with a first message
+(its bare arguments are files to edit, and `--message-file` answers once and
+exits). So Sidequest sends the prompt that way, and when it's done reopens Aider
+on the same chat so you can carry on. Your `args` go right after the command,
+before the prompt (in both of Aider's runs). `sidequest doctor` checks the active
+agent with `--version` and says how to install it if that fails.
+
 **Settings** (under `settings`):
 
 | Setting | Default | |
 | --- | --- | --- |
-| `agent` | `{ "id": "claude" }` | `claude` or `codex` (or run `sidequest agents codex`). Use `command`/`args` to override the executable |
+| `agent` | `{ "id": "claude" }` | Any id from [Agents](#agents) (or run `sidequest agents codex`). Use `command`/`args` to override the executable and add flags |
 | `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees go |
 | `warpStrategy` | `auto` | `auto` tries a tab config, then a launch config, then a plain new tab, until the agent starts. `tab_config`, `launch_config` or `new_tab` puts that one first |
 | `warpPreview` | `false` | Use Warp Preview |

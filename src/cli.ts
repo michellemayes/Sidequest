@@ -19,7 +19,7 @@ import { shellHookSource } from "./warp/autorun.js";
 import { strategyOrder } from "./warp/launcher.js";
 import { findSession, openSession } from "./session/reopen.js";
 import { computeStats, latestSession, loadHistory, MILESTONES } from "./session/history.js";
-import { AGENT_DEFINITIONS, agentDefinition, resolveAgent } from "./agents/agents.js";
+import { AGENT_DEFINITIONS, agentDefinition, describeInvocation, resolveAgent } from "./agents/agents.js";
 import {
   clearDaemonRecord,
   daemonAlive,
@@ -91,7 +91,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("agents [id]")
-    .description("list the coding agents Sidequest can launch, or switch to one (claude, codex)")
+    .description("list the coding agents Sidequest can launch, or switch to one (claude, codex, gemini, aider, ...)")
     .action((id: string | undefined) => wrap(() => agents(id)));
 
   program
@@ -151,7 +151,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("install-hook")
-    .description("add the shell hook that starts Claude when a worktree tab opens")
+    .description("add the shell hook that starts the agent when a worktree tab opens")
     .option("--rc <path>", "shell rc file to modify (default: detected)")
     .option("--print", "print the snippet instead of writing it", false)
     .action((options: { rc?: string; print: boolean }) => wrap(() => installHook(options)));
@@ -310,7 +310,7 @@ async function status(): Promise<void> {
     if (attached !== null) console.log(`Slack windows with the overlay: ${attached}`);
     console.log(`Log: ${daemonLogFile()}`);
   }
-  console.log(`Agent: ${agent.label} (${[agent.command, ...agent.args].join(" ")})`);
+  console.log(`Agent: ${agent.label} (${describeInvocation(agent)})`);
   console.log(`Linked channels: ${Object.keys(config.channels).length}`);
   const s = computeStats(await loadHistory());
   if (s.total > 0) {
@@ -362,11 +362,12 @@ async function agents(id?: string): Promise<void> {
   for (const def of AGENT_DEFINITIONS) {
     const marker = def.id === activeId ? "  (active)" : "";
     console.log(`  ${def.id}${marker}`);
-    console.log(`    ${def.label} — ${[def.command, ...def.defaultArgs].join(" ")}`);
+    const invocation = describeInvocation(resolveAgent({ id: def.id, command: "", args: [] }));
+    console.log(`    ${def.label} — ${invocation}`);
   }
   console.log("\nSwitch with `sidequest agents <id>`, or in " + `${configFile()}:`);
-  console.log(`  { "settings": { "agent": { "id": "codex" } } }`);
-  console.log("`command` and `args` override the agent's executable and flags.");
+  console.log(`  { "settings": { "agent": { "id": "gemini" } } }`);
+  console.log("`command` and `args` override the agent's executable and flags; the prompt still goes last.");
 }
 
 async function replies(state?: string): Promise<void> {
@@ -746,7 +747,7 @@ async function list(): Promise<void> {
   console.log("settings");
   console.log(`  worktreesRoot:  ${config.settings.worktreesRoot}`);
   console.log(`  warpStrategy:   ${config.settings.warpStrategy}${config.settings.warpPreview ? " (preview)" : ""}`);
-  console.log(`  agent:          ${agent.label} (${[agent.command, ...agent.args].join(" ")})`);
+  console.log(`  agent:          ${agent.label} (${describeInvocation(agent)})`);
   console.log(`  threadContext:  ${config.settings.threadContextLimit} messages`);
 
   console.log("\nlinked channels");
