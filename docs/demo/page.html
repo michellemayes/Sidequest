@@ -5,8 +5,8 @@
 <title>Sidequest demo</title>
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; font: 15px/1.46 -apple-system, "Segoe UI", "Helvetica Neue", Lato, Arial, sans-serif; color: #1d1c1d; background: #fff; }
-  .app { display: flex; height: 100vh; }
+  body { margin: 0; font: 15px/1.46 -apple-system, "Segoe UI", "Helvetica Neue", Lato, Arial, sans-serif; color: #1d1c1d; background: linear-gradient(135deg, #1e2a4a 0%, #3b2a5c 55%, #5a3358 100%); height: 100vh; overflow: hidden; }
+  .app { position: absolute; left: 24px; right: 24px; top: 20px; bottom: 64px; display: flex; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.45); }
   .sidebar { width: 230px; background: #3f0e40; color: #cfc3cf; padding: 14px 0; }
   .ws { color: #fff; font-weight: 800; font-size: 18px; padding: 0 16px 14px; border-bottom: 1px solid #5d3a5e; margin-bottom: 10px; }
   .section { font-size: 14px; padding: 6px 16px 4px; opacity: .8; }
@@ -32,6 +32,20 @@
   .row.cont .meta { display: none; }
   code { font: 12px Menlo, monospace; background: #f6f6f6; border: 1px solid #e0e0e0; border-radius: 3px; padding: 1px 3px; color: #c01343; }
   .composer { margin: 0 20px 20px; border: 1px solid #bbb; border-radius: 8px; padding: 12px; color: #868686; font-size: 14px; }
+  .warp { position: absolute; left: 150px; right: 150px; top: 36px; bottom: 76px; background: #16161d; border-radius: 10px; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,.6); border: 1px solid #33333d; z-index: 2147483600; color: #e4e4e8; font: 13.5px/1.5 Menlo, "DejaVu Sans Mono", monospace; transform-origin: 50% 60%; transition: transform .35s cubic-bezier(.2,.8,.2,1), opacity .3s; }
+  .warp.off { opacity: 0; transform: scale(.94) translateY(20px); }
+  .warp-bar { height: 38px; background: #202029; display: flex; align-items: center; gap: 14px; padding: 0 14px; border-bottom: 1px solid #2c2c36; font-family: -apple-system, "Segoe UI", Lato, Arial, sans-serif; }
+  .dots { display: inline-flex; gap: 8px; } .dots i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .warp-tab { background: #2d2d38; color: #f0f0f4; font-size: 12.5px; padding: 4px 16px; border-radius: 6px; }
+  .warp-body { padding: 14px 20px; }
+  .warp-cwd { color: #8e8ea0; margin-bottom: 10px; } .cwd { color: #7aa2f7; } .git { color: #bb9af7; }
+  .term div { white-space: pre-wrap; min-height: 1.5em; }
+  .cc-box { border: 1px solid #d97757; border-radius: 6px; padding: 6px 12px; margin: 2px 0 10px; display: inline-block; }
+  .o { color: #d97757; } .dim { color: #8e8ea0; } .g { color: #9ece6a; } .r { color: #f7768e; } .b { font-weight: 700; color: #fff; } .w { color: #e4e4e8; }
+  .add { background: rgba(158,206,106,.14); color: #b9e08f; } .del { background: rgba(247,118,142,.14); color: #f7a0b0; }
+  .cursor { display: inline-block; width: 8px; height: 1.1em; background: #d97757; vertical-align: text-bottom; }
+  .caption { position: absolute; left: 0; right: 0; bottom: 18px; display: flex; justify-content: center; align-items: center; gap: 10px; color: #fff; font-size: 16px; font-weight: 600; letter-spacing: .1px; }
+  .step { width: 24px; height: 24px; border-radius: 50%; background: #8b5cf6; display: grid; place-items: center; font-size: 13px; font-weight: 800; }
 </style>
 </head>
 <body>
@@ -85,5 +99,16 @@
     <div id="list-end"></div>
   </div>
 </div>
+<div id="warp" class="warp" hidden>
+  <div class="warp-bar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="warp-tab">Fix · storefront</span>
+  </div>
+  <div class="warp-body">
+    <div class="warp-cwd"><span class="cwd">~/.sidequest/worktrees/fix-checkout-total-is-wrong-20260930-1426</span> <span class="git">git:(fix/checkout-total-is-wrong-20260930-1426)</span></div>
+    <div id="term" class="term"></div>
+  </div>
+</div>
+<div id="caption" class="caption"><span class="step" id="step">1</span><span id="captext"></span></div>
 </body>
 </html>
