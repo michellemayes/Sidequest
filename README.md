@@ -79,6 +79,12 @@ so you don't cut a duplicate branch by accident.
 | **Review** | Reviews the referenced PR, branch or diff, bugs first. Changes nothing. |
 | **Ask** | Opens a small box in the menu for your question (**Enter** to send, **Shift+Enter** for a new line, **Esc** to cancel). The agent gets the message, the thread and your question, reads the relevant code, and answers it. Send it empty and the agent just reads and waits for you. |
 | **Linear** | Only on a message that links a Linear issue, and named for it (**Linear DATA-3051**). Reads the ticket, fixes it, and commits with the issue ID on a `linear/data-3051-…` branch, so Linear links the branch back. |
+| **GitHub** | Only on a message that links a GitHub issue (**GitHub #123**). Reads it (with `gh issue view` when it can), fixes it, and commits on an `issue/123-…` branch with `Fixes owner/repo#123`, so merging closes the issue. |
+| **Jira** | Only on a message that links a Jira ticket, on Jira Cloud or your own server (**Jira ABC-123**). Reads it, fixes it, and commits with the key on a `jira/ABC-123-…` branch, so Jira's development panel picks both up. |
+
+A message that links more than one ticket gets a prompt for each of the first
+two, in the order they appear. Only full links count: a bare `#123` could be
+any repo's.
 
 ## How it works
 
@@ -109,7 +115,7 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest sessions` | List every worktree Sidequest created |
 | `sidequest reopen [ref]` | Reopen a session's terminal (the latest if you name none). Headless, it opens the answer, or the log while it's still running |
 | `sidequest stats` | Your total, today's count, current and best streak |
-| `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force` |
+| `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force`. Turn on `autoClean` and the daemon does this for you |
 | `sidequest link <path> -c <channel>` | Link a repo to a channel from the terminal. Linking a second repo adds it; the first stays the default |
 | `sidequest unlink [repo] -c <channel>` | Unlink one repo (by path or label) from a channel, or all of them if you name none |
 | `sidequest replies [on\|off]` | Show the thread replies sessions post, or turn them on or off |
@@ -160,14 +166,19 @@ keeps its default:
     "fix": {
       "label": "Patch",
       "template": "Fix this, reported by @{{author}} in #{{channel}}:\n{{message}}\n\nCommit on {{branch}}."
-    }
+    },
+    "github": { "branchPrefix": "gh" },
+    "jira": { "template": "Work {{ticketId}} ({{ticket}}) from #{{channel}}:\n{{message}}\n\nPut {{ticketId}} in every commit." }
   }
 }
 ```
 
+The keys are `investigate`, `fix`, `review`, `ask`, `linear`, `github` and `jira`.
+
 Tokens: `{{author}}` `{{channel}}` `{{message}}` `{{thread}}` `{{permalink}}`
 `{{date}}` `{{branch}}` `{{baseBranch}}` `{{repo}}` `{{worktree}}`, plus
-`{{ticket}}` `{{ticketId}}` for Linear and `{{question}}` (what you typed in
+`{{ticket}}` (the link) and `{{ticketId}}` (`DATA-3051`, `owner/repo#123` or
+`ABC-123`) for Linear, GitHub and Jira, and `{{question}}` (what you typed in
 the Ask box, empty otherwise). Sidequest
 leaves unknown tokens in the prompt as written, so typos are easy to spot.
 
@@ -182,6 +193,8 @@ message you started it from, so whoever asked knows it's being handled:
 | **Review** | Reviewing this. |
 | **Ask** | Looking into this: _what you typed in the Ask box_ |
 | **Linear** | Picking up DATA-3051. |
+| **GitHub** | Picking up owner/repo#123. |
+| **Jira** | Picking up ABC-123. |
 
 Each prompt's `reply` sets its text and takes the same tokens as its template
 (`{{repo}}` is the repo's label, and `{{question}}` is just what you typed,
@@ -211,12 +224,30 @@ without a heading). With nothing typed in the Ask box, its reply is
 | `fetchBeforeCreate` | `true` | Fetch the base branch first. A fetch slower than 3 seconds doesn't hold up the session: it's cut from the local ref while the fetch finishes in the background |
 | `repoSearchRoots` | `[]` | Where to look for repos to suggest. Empty means `~/code`, `~/src`, `~/Developer`, `~/projects` and similar, two levels deep |
 | `threadContextLimit` | `10` | How many earlier messages go into the prompt |
-| `pruneBranchesOnClean` | `true` | Delete merged branches on `clean` |
+| `pruneBranchesOnClean` | `true` | Delete merged branches on `clean` (and on auto-clean) |
+| `autoClean` | `false` | Let the running daemon remove finished worktrees itself. See Cleaning up below |
+| `autoCleanAfterDays` | `7` | How long a merged worktree has to sit untouched before auto-clean removes it |
 | `cdpPort` | `9222` | DevTools port for Slack |
 | `relaunchSlack` | `true` | While Sidequest runs, relaunch a Slack reopened from the Dock (without the DevTools port) so the overlay comes back |
 | `targetUrlPattern` | `app\.slack\.com\|/client/` | Which windows count as Slack |
 | `autoReply` | `false` | Reply in the message's thread when a session starts. See Thread replies above |
 | `verbose` | `false` | Log overlay activity to Slack's devtools console |
+
+**Cleaning up.** Every session leaves a worktree behind. `sidequest clean`
+removes the ones whose branch is merged into the base, deleting the branch too
+(with `git branch -d`, which refuses one holding commits the base doesn't
+have), and never a worktree with uncommitted changes unless you pass `--force`.
+
+Turn on `autoClean` and the running daemon does the same every six hours, by
+the same rules, plus one more: it leaves a worktree alone until nothing has
+touched it for `autoCleanAfterDays`. Investigate, Review and Ask commit
+nothing, so their branch counts as merged the moment it's cut, while you may
+still be reading what the agent found. It never fetches, so "merged" means
+merged into the base as of your last session's fetch, and it logs what it
+removed to `~/.sidequest/sidequest.log`. It's off by default, since deleting
+directories should be something you ask for. Until you turn it on,
+`sidequest status` counts the finished worktrees, and `doctor` and `start`
+mention them once five or more have piled up.
 
 ## Troubleshooting
 
