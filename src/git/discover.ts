@@ -13,7 +13,7 @@
  * validates whichever one is picked.
  */
 import { existsSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -84,20 +84,38 @@ export function scoreRepoForChannel(repoName: string, channel: string): number {
 interface Found {
   path: string;
   mtime: number;
+  ids: string[];
 }
 
 /**
  * Which directory a path really is. On a case-insensitive disk (the macOS
  * default) ~/Repos and ~/repos are one folder under two spellings, so paths
- * alone would find every checkout in it twice.
+ * alone would find every checkout in it twice. Two answers, either of which
+ * names it: the device and inode, and the path as the disk itself spells it
+ * (realpath returns ~/Repos for ~/repos on macOS). The second
+ * covers volumes whose inode numbers are not stable.
  */
-async function identity(path: string): Promise<string | null> {
+async function identities(path: string): Promise<string[]> {
+  const ids: string[] = [];
   try {
     const info = await stat(path);
-    return `${info.dev}:${info.ino}`;
+    if (info.ino > 0) ids.push(`ino:${info.dev}:${info.ino}`);
   } catch {
-    return null;
+    return ids;
   }
+  try {
+    ids.push(`path:${await realpath(path)}`);
+  } catch {
+    // Keep whatever the stat gave.
+  }
+  return ids;
+}
+
+/** Records a directory's identities; false if any was already seen. */
+function claim(seen: Set<string>, ids: string[]): boolean {
+  if (ids.some((id) => seen.has(id))) return false;
+  for (const id of ids) seen.add(id);
+  return true;
 }
 
 let cache: { key: string; at: number; found: Found[] } | null = null;
@@ -111,9 +129,10 @@ async function isDir(path: string): Promise<boolean> {
 }
 
 /** Every checkout under the roots, two levels deep. */
-async function scan(roots: string[], exclude: string[]): Promise<Map<string, Found>> {
+async function scan(roots: string[], exclude: string[]): Promise<Found[]> {
   // Keyed by the `.git` directory's identity, not its path.
-  const found = new Map<string, Found>();
+  const found: Found[] = [];
+  const seen = new Set<string>();
   let budget = MAX_DIRS;
 
   const consider = async (dir: string, depth: number): Promise<void> => {
@@ -125,8 +144,10 @@ async function scan(roots: string[], exclude: string[]): Promise<Map<string, Fou
       try {
         const info = await stat(git);
         // A `.git` file is a worktree or submodule, not a checkout of its own.
-        const id = `${info.dev}:${info.ino}`;
-        if (info.isDirectory() && !found.has(id)) found.set(id, { path: dir, mtime: info.mtimeMs });
+        if (!info.isDirectory()) return;
+        const ids = await identities(git);
+        if (ids.length === 0) ids.push(`path:${git}`);
+        if (claim(seen, ids)) found.push({ path: dir, mtime: info.mtimeMs, ids });
       } catch {
         // Vanished between the two calls; skip it.
       }
@@ -147,11 +168,9 @@ async function scan(roots: string[], exclude: string[]): Promise<Map<string, Fou
   const seenRoots = new Set<string>();
   const distinct: string[] = [];
   for (const root of roots) {
-    const id = (await isDir(root)) ? await identity(root) : null;
-    if (id && !seenRoots.has(id)) {
-      seenRoots.add(id);
-      distinct.push(root);
-    }
+    if (!(await isDir(root))) continue;
+    const ids = await identities(root);
+    if (ids.length > 0 && claim(seenRoots, ids)) distinct.push(root);
   }
   await Promise.all(distinct.map((root) => consider(root, 2)));
   return found;
@@ -179,16 +198,17 @@ export async function discoverRepos(options: DiscoverOptions): Promise<RepoCandi
   if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) {
     found = cache.found;
   } else {
-    const byId = await scan(uniqueRoots, [options.worktreesRoot]);
+    found = await scan(uniqueRoots, [options.worktreesRoot]);
     for (const repo of options.linkedRepos) {
       if (!(await isDir(repo))) continue;
-      const id = (await identity(join(repo, ".git"))) ?? `path:${repo}`;
+      const ids = await identities(join(repo, ".git"));
+      if (ids.length === 0) ids.push(`path:${repo}`);
       // A linked repo keeps the spelling it was linked under, so it still
       // reads as linked when the scan reached it by another.
-      const seen = byId.get(id);
-      byId.set(id, { path: repo, mtime: seen?.mtime ?? 0 });
+      const at = found.findIndex((f) => f.ids.some((id) => ids.includes(id)));
+      if (at >= 0) found[at] = { ...found[at]!, path: repo };
+      else found.push({ path: repo, mtime: 0, ids });
     }
-    found = [...byId.values()];
     cache = { key, at: Date.now(), found };
   }
 
