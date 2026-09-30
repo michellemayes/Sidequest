@@ -13,7 +13,7 @@
  *   - and a running daemon is restarted on the new code.
  */
 import { createHash } from "node:crypto";
-import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { run, CommandError } from "./util/exec.js";
@@ -79,6 +79,10 @@ export async function build(root: string, commit: string): Promise<void> {
     await rm(next, { recursive: true, force: true });
     throw err;
   }
+  // tsc writes files without the execute bit, and `npm link` only set it on
+  // the dist/index.js it linked, so the fresh one needs it back or the
+  // `sidequest` command fails with "permission denied".
+  await chmod(join(next, "index.js"), 0o755);
   await writeFile(join(next, BUILD_STAMP), `${commit}\n`);
   if (await exists(dist)) await rename(dist, old);
   await rename(next, dist);
