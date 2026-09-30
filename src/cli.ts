@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { openSync } from "node:fs";
 import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join } from "node:path";
 import { configFile, configRoot, daemonLogFile, shellHookFile } from "./config/paths.js";
 import {
   allPrompts,
@@ -16,8 +16,8 @@ import {
 import { assertGitAvailable, inspectRepo, isMergedInto } from "./git/repo.js";
 import { listWorktrees, pruneWorktrees, removeWorktree } from "./git/worktree.js";
 import { shellHookSource } from "./warp/autorun.js";
-import { colorForPrompt, launchWarp } from "./warp/launcher.js";
-import { warpConfigName } from "./session/naming.js";
+import { findSession, openSession } from "./session/reopen.js";
+import { computeStats, latestSession, loadHistory, MILESTONES } from "./session/history.js";
 import { AGENT_DEFINITIONS, agentDefinition, resolveAgent } from "./agents/agents.js";
 import {
   clearDaemonRecord,
@@ -44,6 +44,12 @@ export async function runCli(argv: string[]): Promise<void> {
     .version("0.1.0");
 
   program
+    .command("setup")
+    .description("everything in one go: config, shell hook, checks, then start")
+    .option("--force", "quit a running Slack that has no DevTools port", false)
+    .action((options: { force: boolean }) => wrap(() => setup(options)));
+
+  program
     .command("start")
     .description("launch Slack with the overlay attached (runs in the background by default)")
     .option("--force", "quit a running Slack that has no DevTools port", false)
@@ -66,9 +72,14 @@ export async function runCli(argv: string[]): Promise<void> {
     .action(() => wrap(agents));
 
   program
-    .command("reopen <ref>")
-    .description("open Warp on an existing session's worktree (branch name or path)")
-    .action((ref: string) => wrap(() => reopen(ref)));
+    .command("reopen [ref]")
+    .description("open Warp on a session again (branch name or path; default: the latest)")
+    .action((ref: string | undefined) => wrap(() => reopen(ref)));
+
+  program
+    .command("stats")
+    .description("how many sidequests, how many today, and your streak")
+    .action(() => wrap(stats));
 
   program
     .command("link <path>")
@@ -106,7 +117,7 @@ export async function runCli(argv: string[]): Promise<void> {
   program
     .command("init")
     .description("write a starter config to ~/.sidequest")
-    .action(() => wrap(init));
+    .action(() => wrap(() => init()));
 
   program
     .command("install-hook")
@@ -197,10 +208,12 @@ async function startDaemonized(): Promise<void> {
     const rec = await readDaemonRecord();
     if (rec && daemonAlive(rec.pid)) {
       const agent = resolveAgent((await loadConfig()).settings.agent);
+      const config = await loadConfig();
       console.log(`Sidequest is running in the background (pid ${rec.pid}).`);
       console.log(`  agent: ${agent.label} — hover a message in Slack and click Sidequest.`);
       console.log(`  log:   ${logFile}`);
       console.log("  `sidequest stop` stops it; `sidequest status` checks on it.");
+      for (const tip of await startTips(config)) console.log(`\ntip: ${tip}`);
       return;
     }
     if (Date.now() > deadline) break;
@@ -210,6 +223,21 @@ async function startDaemonized(): Promise<void> {
     "Sidequest did not stay up.",
     `Something failed during startup — see ${logFile}.`,
   );
+}
+
+/** What would make the first minutes smoother, said once at start. */
+async function startTips(config: Config): Promise<string[]> {
+  const tips: string[] = [];
+  if (Object.keys(config.channels).length === 0) {
+    tips.push(
+      "no channel has a repo yet. Hover any message, click Sidequest, and pick one of the " +
+        "repos it suggests — it looks for checkouts that match the channel's name.",
+    );
+  }
+  if (!(await fileExists(shellHookFile())) && config.settings.warpStrategy !== "launch_config") {
+    tips.push("run `sidequest install-hook` so the agent starts even when Warp ignores the launch config.");
+  }
+  return tips;
 }
 
 async function stop(): Promise<void> {
@@ -247,6 +275,14 @@ async function status(): Promise<void> {
   }
   console.log(`Agent: ${agent.label} (${[agent.command, ...agent.args].join(" ")})`);
   console.log(`Linked channels: ${Object.keys(config.channels).length}`);
+  const s = computeStats(await loadHistory());
+  if (s.total > 0) {
+    console.log(
+      `Sidequests: ${s.total} (${s.today} today` +
+        (s.streak > 1 ? `, ${s.streak}-day streak` : "") +
+        ") — `sidequest stats` for more",
+    );
+  }
 }
 
 /** Best-effort read of the attach count from the daemon's log tail. */
@@ -280,64 +316,91 @@ async function agents(): Promise<void> {
 }
 
 /**
- * Open Warp on a worktree Sidequest created earlier, by branch name or path.
- * Handy when Warp opened in the wrong place or the agent never started: if the
- * session's pending marker is still unclaimed, the shell hook starts the agent
- * on arrival.
+ * Open Warp on a worktree Sidequest created earlier, by branch name or path —
+ * or, with nothing named, the most recent one. Handy when Warp opened in the
+ * wrong place or the agent never started: if the session's pending marker is
+ * still unclaimed, the shell hook starts the agent on arrival.
  */
-async function reopen(ref: string): Promise<void> {
+async function reopen(ref: string | undefined): Promise<void> {
   const config = await loadConfig();
-  const repos = uniqueRepoPaths(config.channels);
-  if (repos.length === 0) {
-    console.log("No repos are linked yet.");
-    return;
-  }
-
-  const wanted = resolve(ref);
-  for (const repoPath of repos) {
-    const worktrees = (await listWorktrees(repoPath)).filter(
-      (w) => !w.isMain && w.path.startsWith(config.settings.worktreesRoot),
-    );
-    const match = worktrees.find((w) => w.branch === ref || w.path === wanted);
-    if (!match) continue;
-
-    try {
-      await stat(match.path);
-    } catch {
+  const history = await loadHistory();
+  let wanted = ref?.trim() ?? "";
+  if (!wanted) {
+    const latest = latestSession(history);
+    if (!latest) {
       throw new UserFacingError(
-        `The worktree for ${match.branch} is gone (${match.path}).`,
-        "Run `sidequest clean` to drop its registration.",
+        "No sessions yet.",
+        "Hover a message in Slack and click Sidequest to start one.",
       );
     }
+    wanted = latest.branch;
+  }
 
-    const scriptFile = join(match.path, ".sidequest", "autorun.sh");
-    let scriptExists = false;
-    try {
-      await stat(scriptFile);
-      scriptExists = true;
-    } catch {
-      // No launcher script; just open the directory.
-    }
+  const known = history.filter((h) => h.branch === wanted).map((h) => h.repoPath);
+  const found = await findSession(config, wanted, known);
+  if (!found) {
+    throw new UserFacingError(
+      `No Sidequest session found for "${wanted}".`,
+      "Pass a branch name or worktree path from `sidequest sessions`.",
+    );
+  }
+  const strategy = await openSession(config, found);
+  console.log(`Opened Warp on ${found.worktree.path} (${strategy}).`);
+}
 
-    const prefix = match.branch.split("/")[0] ?? "";
-    const launch = await launchWarp({
-      strategy: scriptExists ? config.settings.warpStrategy : "new_tab",
-      preview: config.settings.warpPreview,
-      spec: {
-        name: warpConfigName(match.branch),
-        title: `${match.branch} · ${basename(repoPath)}`,
-        color: colorForPrompt(prefix),
-        cwd: match.path,
-        command: scriptExists ? scriptFile : "true",
-      },
-    });
-    console.log(`Opened Warp on ${match.path} (${launch.strategy}).`);
+async function stats(): Promise<void> {
+  const history = await loadHistory();
+  const s = computeStats(history);
+  if (s.total === 0) {
+    console.log("No sidequests yet. Hover a message in Slack and click Sidequest to start your first.");
     return;
   }
-  throw new UserFacingError(
-    `No Sidequest session found for "${ref}".`,
-    "Pass a branch name or worktree path from `sidequest sessions`.",
-  );
+
+  const next = MILESTONES.find((m) => m > s.total);
+  console.log(`\n  ✦ ${s.total} sidequest${s.total === 1 ? "" : "s"}` + (next ? `  (${next - s.total} to #${next})` : ""));
+  console.log(`    today:        ${s.today}`);
+  console.log(`    streak:       ${s.streak} day${s.streak === 1 ? "" : "s"}${s.streak > 0 && s.today === 0 ? " — start one today to keep it" : ""}`);
+  console.log(`    best streak:  ${s.bestStreak} day${s.bestStreak === 1 ? "" : "s"}`);
+
+  const bar = (n: number, max: number): string => "█".repeat(Math.max(1, Math.round((n / max) * 24)));
+  const section = (title: string, counts: Record<string, number>, prefix = ""): void => {
+    const rows = Object.entries(counts).sort(([, a], [, b]) => b - a).slice(0, 6);
+    if (rows.length === 0) return;
+    const max = rows[0]![1];
+    const width = Math.max(...rows.map(([k]) => k.length + prefix.length));
+    console.log(`\n  ${title}`);
+    for (const [key, n] of rows) console.log(`    ${(prefix + key).padEnd(width)}  ${bar(n, max)} ${n}`);
+  };
+  section("by prompt", s.byPrompt);
+  section("by channel", s.byChannel, "#");
+
+  console.log("\n  latest");
+  for (const entry of history.slice(-5).reverse()) {
+    const when = new Date(entry.createdAt).toLocaleString();
+    console.log(`    ${entry.branch}  ·  #${entry.channel}  ·  ${when}`);
+  }
+  console.log("\n`sidequest reopen` jumps back into the latest one.\n");
+}
+
+/**
+ * First run, start to finish: a config to edit, the shell hook, a doctor
+ * pass, and — if nothing is broken — Slack with the overlay on it. Each step
+ * is the command of the same name, so running it twice changes nothing.
+ */
+async function setup(options: { force: boolean }): Promise<void> {
+  console.log("1/4  config");
+  await init({ quiet: true });
+  console.log("2/4  shell hook");
+  if (await fileExists(shellHookFile())) console.log(`     already installed at ${shellHookFile()}`);
+  else await installHook({ print: false });
+  console.log("3/4  checks");
+  await doctor();
+  if (process.exitCode) {
+    console.log("Fix what doctor flagged above, then run `sidequest setup` again.");
+    return;
+  }
+  console.log("4/4  start");
+  await start({ force: options.force, foreground: false });
 }
 
 async function runAttacherLoop(options: {
@@ -481,7 +544,7 @@ async function list(): Promise<void> {
 
   console.log("\nlinked channels");
   if (entries.length === 0) {
-    console.log("  (none yet — run `/sidequest link ~/path/to/repo` in Slack)");
+    console.log("  (none yet — hover a message in Slack, click Sidequest, and pick a repo)");
     return;
   }
   for (const [id, l] of entries) {
@@ -578,12 +641,13 @@ function baseBranchFor(
   return "";
 }
 
-async function init(): Promise<void> {
+async function init(options: { quiet?: boolean } = {}): Promise<void> {
   const root = await ensureConfigRoot();
   // Round-trips defaults into the file so it is there to edit.
   await saveConfig(await loadConfig());
 
-  console.log(`Wrote ${configFile()}`);
+  console.log(`${options.quiet ? "     " : ""}Wrote ${configFile()}`);
+  if (options.quiet) return;
   console.log(`Config lives in ${root}.`);
   console.log("\nNext:");
   console.log("  1. sidequest install-hook   (so sessions start when the Warp tab opens)");

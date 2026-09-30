@@ -167,6 +167,8 @@ describeIfChrome("overlay over CDP", () => {
           warpStrategy: "new_tab",
           fetchBeforeCreate: false,
           agent: { id: "claude", command: "true", args: [] },
+          // Suggestions look here, and only here, for checkouts.
+          repoSearchRoots: [root],
         },
         channels: {
           "eng-alerts": { repoPath, channel: "eng-alerts", baseBranch: "", label: "" },
@@ -450,8 +452,8 @@ describeIfChrome("overlay over CDP", () => {
       await sleep(600);
 
       // Results from earlier tests are still on screen — this page is never
-      // reloaded. Clicking one dismisses it, which is also how a reader does it.
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result').forEach((el) => el.click())`);
+      // reloaded. Their × dismisses them, which is also how a reader does it.
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
       await sleep(150);
       expect(await evaluate(session, `${UI}.querySelectorAll('.sq-result').length`)).toBe(0);
 
@@ -739,6 +741,189 @@ describeIfChrome("overlay over CDP", () => {
       session.close();
     }
   }, 30_000);
+  /** Wait for the line on a message to stop saying it is starting. */
+  async function settledResult(session: CdpSession): Promise<string> {
+    let text = "";
+    const deadline = Date.now() + 25_000;
+    while (Date.now() < deadline) {
+      text = String(
+        (await evaluate(
+          session,
+          `${UI}.querySelector('.sq-result:not([data-kind="busy"]) .sq-result-text')?.textContent || ''`,
+        )) ?? "",
+      );
+      if (text) break;
+      await sleep(300);
+    }
+    return text;
+  }
+
+  async function press(session: CdpSession, key: string, code: string, keyCode: number): Promise<void> {
+    await session.send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode: keyCode });
+    await session.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: keyCode });
+  }
+
+  it("starts a session from the keyboard, celebrates it, and marks the message", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, "window.__shortcuts.length = 0");
+
+      await hover(session, "row-1");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+
+      // Each prompt wears its key, and its text is still just its label.
+      const keys = await evaluate(
+        session,
+        `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-menu-prompt')).map(b => [b.textContent, b.dataset.key]))`,
+      );
+      expect(JSON.parse(String(keys))).toEqual([["Investigate", "1"], ["Fix", "2"], ["Review", "3"]]);
+
+      await press(session, "3", "Digit3", 51);
+      expect(await evaluate(session, `!!${UI}.querySelector('.sq-menu')`)).toBe(false);
+      // The key picked a prompt; Slack never saw it.
+      expect(await evaluate(session, "window.__shortcuts.length")).toBe(0);
+
+      expect(await settledResult(session)).toContain("review/checkout-total-is-wrong-for-gift-cards");
+
+      // The history for this test is fresh, so this is the first one ever.
+      const toast = await evaluate(session, `${UI}.querySelector('.sq-toast-title')?.textContent || ''`);
+      expect(String(toast)).toBe("Your first sidequest is underway");
+
+      // Once the line is dismissed, the message keeps a quiet mark instead…
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await sleep(300);
+      const mark = await evaluate(session, `(() => {
+        const marks = Array.from(${UI}.querySelectorAll('.sq-mark')).filter((m) => !m.classList.contains('sq-off'));
+        const row = document.getElementById('row-1').getBoundingClientRect();
+        const hit = marks.find((m) => {
+          const r = m.getBoundingClientRect();
+          return r.top >= row.top - 1 && r.bottom <= row.bottom + 1;
+        });
+        return hit ? hit.textContent : '';
+      })()`);
+      expect(String(mark)).toMatch(/^Review/);
+
+      // …and its menu offers the way back before the way forward.
+      await hover(session, "row-1");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      const first = await evaluate(session, `${UI}.querySelector('.sq-menu button')?.className || ''`);
+      expect(String(first)).toBe("sq-menu-reopen");
+      const back = await evaluate(session, `${UI}.querySelector('.sq-menu-reopen').textContent`);
+      expect(String(back)).toContain("Back to Review");
+      await press(session, "Escape", "Escape", 27);
+      await sleep(100);
+      expect(await evaluate(session, `!!${UI}.querySelector('.sq-menu')`)).toBe(false);
+    } finally {
+      attacher.stop();
+      session.close();
+    }
+  }, 45_000);
+
+  it("offers the channel's own repo in the menu and goes straight on to the prompts", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      // The test repo's directory is called "repo", so #repo-eng is its channel.
+      await evaluate(session, "window.__setChannel('repo-eng')");
+      await sleep(400);
+
+      await hover(session, "row-2");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+
+      let pick = "";
+      const deadline = Date.now() + 10_000;
+      while (!pick && Date.now() < deadline) {
+        await sleep(150);
+        pick = String(
+          (await evaluate(session, `${UI}.querySelector('.sq-menu-suggest')?.textContent || ''`)) ?? "",
+        );
+      }
+      expect(pick).toContain("Link repo");
+      // The suggestions sit above the fallback, which is still there.
+      expect(await evaluate(session, `${UI}.querySelector('.sq-menu-link').textContent`)).toBe("Link a repo…");
+
+      await evaluate(session, `${UI}.querySelector('.sq-menu-suggest').click()`);
+
+      let prompts = 0;
+      const until = Date.now() + 10_000;
+      while (prompts === 0 && Date.now() < until) {
+        await sleep(200);
+        prompts = Number(await evaluate(session, `${UI}.querySelectorAll('.sq-menu-prompt').length`));
+      }
+      // Linked, and the menu came back on the same message ready to go.
+      expect(prompts).toBe(3);
+      const stored = JSON.parse(await readFile(join(configHome, "config.json"), "utf8"));
+      expect(stored.channels["repo-eng"].repoPath).toBe(repoPath);
+    } finally {
+      await evaluate(session, `${UI}.querySelector('.sq-menu') && document.body.click()`);
+      await evaluate(session, "window.__setChannel('eng-alerts')");
+      attacher.stop();
+      session.close();
+    }
+  }, 30_000);
+
+  it("filters the panel's repo list as you type, and links on Enter", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, "window.__setChannel('type-ahead')");
+      await sleep(400);
+      await evaluate(session, `${UI}.querySelector('.sq-channel').click()`);
+
+      let names = "";
+      const deadline = Date.now() + 10_000;
+      while (!names && Date.now() < deadline) {
+        await sleep(150);
+        names = String(
+          (await evaluate(
+            session,
+            `Array.from(${UI}.querySelectorAll('.sq-suggest-name')).map((n) => n.textContent).join(',')`,
+          )) ?? "",
+        );
+      }
+      expect(names.split(",")).toContain("repo");
+
+      await evaluate(session, `(() => {
+        const input = ${UI}.querySelector('.sq-panel input');
+        input.value = 'nothing-matches-this';
+        input.dispatchEvent(new Event('input'));
+      })()`);
+      await sleep(100);
+      expect(await evaluate(session, `${UI}.querySelectorAll('.sq-suggest').length`)).toBe(0);
+
+      await evaluate(session, `(() => {
+        const input = ${UI}.querySelector('.sq-panel input');
+        input.value = 'rep';
+        input.dispatchEvent(new Event('input'));
+        input.focus();
+      })()`);
+      await sleep(100);
+      expect(await evaluate(session, `${UI}.querySelector('.sq-suggest[data-active="1"] .sq-suggest-name')?.textContent`))
+        .toBe("repo");
+
+      await press(session, "Enter", "Enter", 13);
+      let label = "";
+      const until = Date.now() + 10_000;
+      while (label !== "repo" && Date.now() < until) {
+        await sleep(200);
+        label = String(
+          (await evaluate(session, `${UI}.querySelector('.sq-channel .sq-channel-label').textContent`)) ?? "",
+        );
+      }
+      expect(label).toBe("repo");
+      expect(await evaluate(session, `!!${UI}.querySelector('.sq-panel')`)).toBe(false);
+    } finally {
+      await evaluate(session, `${UI}.querySelector('.sq-panel-actions button')?.click()`);
+      await evaluate(session, "window.__setChannel('eng-alerts')");
+      attacher.stop();
+      session.close();
+    }
+  }, 30_000);
+
   /*
    * `sidequest start` normally runs before Slack has finished opening a
    * workspace, so the first sweep finding nothing is ordinary rather than

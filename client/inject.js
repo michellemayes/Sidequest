@@ -7,8 +7,12 @@
  * __sidequestResult.
  *
  * Two pieces of UI:
- *   1. A button on the message under the pointer, opening the three prompts.
+ *   1. A button on the message under the pointer, opening the three prompts —
+ *      or, in a channel with no repo yet, the repos that look like its own.
  *   2. A button beside the channel name showing which repo the channel is on.
+ * And three that follow from them: a line on a message while its session
+ * starts, a quiet mark on every message that already has one (click it to be
+ * back in that session), and a toast when a session lands.
  *
  * Both are drawn in a layer of sidequest's own: one zero-sized, pointer-events:
  * none host at the end of <body>, with a shadow root holding every element and
@@ -34,6 +38,8 @@
     linkedChannels: [],
     repoLabels: {},
     agentLabel: 'Claude Code',
+    sessions: {},
+    stats: { total: 0, today: 0, streak: 0 },
     verbose: false,
   }, window.__SIDEQUEST_CONFIG || {});
 
@@ -44,6 +50,10 @@
   const RESULT_TTL_MS = 10 * 60 * 1000;
   const MAX_RESULTS = 20;
   const TICK_MS = 250;
+  const TOAST_MS = 5200;
+  /* Suggestions shown in the message menu for a channel with no repo. */
+  const MENU_SUGGESTIONS = 3;
+  const PANEL_SUGGESTIONS = 6;
   // What the overlay leaves between itself and anything of Slack's.
   const GAP = 8;
 
@@ -78,6 +88,19 @@
       '<circle cx="46.5" cy="17.5" r="3.4" fill="#fff" opacity=".9"/>' +
       '<circle cx="17.5" cy="46.5" r="2.6" fill="#fff" opacity=".75"/>' +
       '</svg>';
+  };
+
+  /* Prompts carry Slack shortcode names; the menu wants the glyph. */
+  const GLYPHS = {
+    mag: '🔍', mag_right: '🔎', wrench: '🔧', hammer: '🔨', eyes: '👀', bug: '🐛',
+    rocket: '🚀', sparkles: '✨', memo: '📝', test_tube: '🧪', bulb: '💡', zap: '⚡',
+  };
+  const glyphFor = (emoji) => {
+    const name = String(emoji || '').replace(/^:|:$/g, '');
+    if (!name) return '✦';
+    if (GLYPHS[name]) return GLYPHS[name];
+    // Already a glyph rather than a shortcode.
+    return /[^\x00-\x7f]/.test(name) ? name : '✦';
   };
 
   const log = (...args) => { if (CONFIG.verbose) console.log('[sidequest]', ...args); };
@@ -158,8 +181,25 @@
       color: inherit; text-align: left;
       background: transparent; border: 0; border-radius: 5px; cursor: pointer;
     }
-    .sq-menu button:hover { background: var(--sq-wash); }
+    .sq-menu button:hover, .sq-menu button[data-active="1"] { background: var(--sq-wash); }
     .sq-menu-link { font-weight: 500; }
+    /* The glyph and the key are drawn by CSS, so an entry's text is its label
+       and nothing else. */
+    .sq-menu-prompt::before {
+      content: attr(data-glyph); flex: 0 0 18px; text-align: center;
+    }
+    .sq-menu-prompt::after {
+      content: attr(data-key); margin-left: auto; min-width: 8px; padding: 0 4px;
+      font-size: 10px; line-height: 15px; text-align: center; opacity: .5;
+      border: 1px solid var(--sq-line); border-radius: 4px;
+    }
+    .sq-menu-reopen, .sq-menu-suggest { font-size: 12px !important; }
+    .sq-menu-reopen > span, .sq-menu-suggest > span {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .sq-menu-reopen > .sq-glyph, .sq-menu-suggest > .sq-glyph { flex: 0 0 18px; text-align: center; }
+    .sq-sub { margin-left: auto; padding-left: 6px; font-size: 11px; opacity: .55; }
+    .sq-menu-sep { height: 1px; margin: 4px 2px; background: var(--sq-line); }
     /* A sentence, not a menu item. It wraps inside the menu rather than
        stretching it into a bar across the message underneath. */
     .sq-note {
@@ -176,17 +216,88 @@
     .sq-result {
       position: fixed; left: 0; top: 0;
       box-sizing: border-box;
-      max-width: 60vw; padding: 1px 8px;
+      display: flex; align-items: flex-start; gap: 6px;
+      max-width: 60vw; padding: 1px 4px 1px 8px;
       font-family: inherit; font-size: 11px; line-height: 16px;
       color: inherit; opacity: .9;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       background: var(--sq-bg, #fff);
       border: 1px solid var(--sq-line); border-radius: 5px;
       cursor: pointer; pointer-events: auto;
     }
-    .sq-result:hover {
-      white-space: normal; overflow: visible; opacity: 1;
-      box-shadow: 0 6px 18px var(--sq-shade);
+    .sq-result-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sq-result:hover { opacity: 1; box-shadow: 0 6px 18px var(--sq-shade); }
+    .sq-result:hover .sq-result-text { white-space: normal; overflow: visible; }
+    .sq-result-x {
+      flex: 0 0 auto; padding: 0 3px; margin: 0;
+      font: inherit; color: inherit; opacity: .45;
+      background: transparent; border: 0; border-radius: 3px; cursor: pointer;
+    }
+    .sq-result-x:hover { opacity: 1; background: var(--sq-wash); }
+    /* Working on it: the words shimmer rather than sit there looking done. */
+    .sq-result[data-kind="busy"] .sq-result-text {
+      background: linear-gradient(90deg, currentColor 35%, #a78bfa 50%, currentColor 65%);
+      background-size: 250% 100%;
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: sq-shimmer 1.3s linear infinite;
+    }
+
+    /* A message that already has a session. Quiet until pointed at, and one
+       click from being back in it. */
+    .sq-mark {
+      position: fixed; left: 0; top: 0;
+      box-sizing: border-box;
+      display: inline-flex; align-items: center; gap: 4px;
+      max-width: 40vw; height: 18px; padding: 0 7px;
+      font-family: inherit; font-size: 11px; line-height: 16px;
+      color: inherit; opacity: .6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      background: var(--sq-bg, #fff);
+      border: 1px solid var(--sq-line); border-radius: 9px;
+      cursor: pointer; pointer-events: auto;
+    }
+    .sq-mark:hover { opacity: 1; border-color: var(--sq-line-hover); }
+    .sq-mark::before { content: '✦'; color: #8b5cf6; }
+
+    .sq-toast {
+      position: fixed; left: 0; top: 0;
+      box-sizing: border-box;
+      display: flex; align-items: center; gap: 12px;
+      max-width: 440px; padding: 10px 14px 10px 12px;
+      font-family: inherit; color: inherit;
+      background: var(--sq-bg, #fff);
+      border: 1px solid var(--sq-line); border-radius: 10px;
+      box-shadow: 0 12px 32px var(--sq-shade);
+      cursor: pointer; pointer-events: auto;
+      animation: sq-pop .34s cubic-bezier(.2, 1.5, .4, 1) both;
+    }
+    .sq-toast[data-leaving="1"] { animation: sq-fade .25s ease-in both; }
+    .sq-toast-icon { position: relative; flex: 0 0 28px; width: 28px; height: 28px; display: inline-flex; }
+    .sq-toast-icon svg { width: 28px; height: 28px; display: block; }
+    .sq-toast-body { min-width: 0; display: flex; flex-direction: column; }
+    .sq-toast-title { font-size: 13px; line-height: 18px; font-weight: 700; }
+    .sq-toast-sub {
+      font-size: 12px; line-height: 16px; opacity: .72;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .sq-spark {
+      position: absolute; left: 50%; top: 50%;
+      width: 5px; height: 5px; margin: -2.5px; border-radius: 50%;
+      background: var(--c, #a78bfa);
+      animation: sq-burst .75s ease-out forwards;
+    }
+    @keyframes sq-burst {
+      from { transform: rotate(var(--a)) translateX(4px) scale(1); opacity: 1; }
+      to { transform: rotate(var(--a)) translateX(30px) scale(.2); opacity: 0; }
+    }
+    @keyframes sq-pop {
+      from { transform: translateY(-8px) scale(.96); opacity: 0; }
+      to { transform: none; opacity: 1; }
+    }
+    @keyframes sq-fade { to { transform: translateY(-4px); opacity: 0; } }
+    @keyframes sq-shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .sq-toast, .sq-toast[data-leaving="1"], .sq-result-text { animation: none !important; }
+      .sq-spark { display: none; }
     }
     /* An error is the one line worth interrupting for, so it gets an edge as
        well as a colour — a red-on-dark word alone is easy to scroll past. */
@@ -230,6 +341,19 @@
     }
     .sq-panel-actions button[data-primary="1"]:hover { background: #148567; }
     .sq-panel[data-busy="1"] { opacity: .5; pointer-events: none; }
+    .sq-suggest-list { display: flex; flex-direction: column; gap: 1px; max-height: 204px; overflow-y: auto; }
+    .sq-suggest {
+      display: flex; align-items: baseline; gap: 8px;
+      width: 100%; padding: 5px 8px; margin: 0;
+      font-family: inherit; font-size: 12px; line-height: 16px;
+      color: inherit; text-align: left;
+      background: transparent; border: 0; border-radius: 5px; cursor: pointer;
+    }
+    .sq-suggest:hover, .sq-suggest[data-active="1"] { background: var(--sq-wash); }
+    .sq-suggest-name { font-weight: 600; flex: 0 0 auto; }
+    .sq-suggest-path { min-width: 0; opacity: .55; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sq-suggest[data-match="1"] .sq-suggest-name::after { content: ' ★'; color: #8b5cf6; }
+    .sq-panel-actions .sq-panel-unlink { order: -1; margin-right: auto; opacity: .75; }
   `;
 
   /* ----------------------------------------------------------------- layer */
@@ -241,9 +365,13 @@
   let menuEl = null;
   let menuRow = null;
   let menuSig = '';
+  let menuIndex = -1;
   let panelEl = null;
   let panelKeys = null;
+  let toastEl = null;
+  let toastTimer = 0;
   const resultEls = new Map();
+  const markEls = new Map();
 
   /** Everything drawn lives in here, so losing the host means losing all of it. */
   function resetLayer() {
@@ -253,10 +381,13 @@
     menuEl = null;
     menuRow = null;
     menuSig = '';
+    menuIndex = -1;
     panelEl = null;
     panelKeys = null;
+    toastEl = null;
     themeSig = '';
     resultEls.clear();
+    markEls.clear();
   }
 
   function ensureLayer() {
@@ -558,6 +689,55 @@
     menuEl = null;
     menuRow = null;
     menuSig = '';
+    menuIndex = -1;
+  }
+
+  const stop = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  /** Sessions already started from this message, oldest first. */
+  function sessionsFor(sig) {
+    const list = sig && CONFIG.sessions ? CONFIG.sessions[sig] : null;
+    return Array.isArray(list) ? list : [];
+  }
+
+  function menuButton(className, onClick) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.addEventListener('click', (event) => {
+      stop(event);
+      onClick();
+    });
+    return button;
+  }
+
+  function spans(button, parts) {
+    for (const [className, text] of parts) {
+      const span = document.createElement('span');
+      if (className) span.className = className;
+      span.textContent = text;
+      button.append(span);
+    }
+    return button;
+  }
+
+  /**
+   * A first letter that belongs to one prompt only, so "f" can mean Fix
+   * without a custom prompt that also starts with F making it ambiguous.
+   */
+  function promptLetters() {
+    const counts = {};
+    for (const prompt of CONFIG.prompts) {
+      const letter = String(prompt.label || '').trim().charAt(0).toLowerCase();
+      if (letter) counts[letter] = (counts[letter] || 0) + 1;
+    }
+    return (label) => {
+      const letter = String(label || '').trim().charAt(0).toLowerCase();
+      return letter && counts[letter] === 1 && /[a-z]/.test(letter) ? letter : '';
+    };
   }
 
   function openMenu(row) {
@@ -566,7 +746,9 @@
 
     const menu = document.createElement('div');
     menu.className = 'sq-menu';
+    menu.setAttribute('role', 'menu');
     const channel = currentChannel();
+    const sig = rowSignature(row);
 
     if (!isLinked(channel)) {
       const note = document.createElement('div');
@@ -578,50 +760,189 @@
 
       // Sending the reader off to hunt for another button is a dead end, and
       // in a narrow window that button may have no room to be shown at all.
-      // The way out of the menu is in the menu.
+      // The way out of the menu is in the menu — and usually it is one click:
+      // the repos that look like this channel's are offered right here.
       if (channel) {
-        const link = document.createElement('button');
-        link.type = 'button';
-        link.className = 'sq-menu-link';
-        link.textContent = 'Link a repo…';
-        link.addEventListener('click', (event) => {
-          event.preventDefault();
-          event.stopPropagation();
+        const link = menuButton('sq-menu-link', () => {
+          const target = menuRow;
           closeMenu();
-          openPanel();
+          openPanel(target);
           schedule();
         });
+        link.textContent = 'Link a repo…';
         menu.append(link);
+        loadMenuSuggestions(menu, link, channel);
       }
     } else {
-      for (const prompt of CONFIG.prompts) {
-        const entry = document.createElement('button');
-        entry.type = 'button';
-        entry.className = 'sq-menu-prompt';
-        entry.textContent = prompt.label;
-        entry.addEventListener('click', (event) => {
-          event.preventDefault();
-          event.stopPropagation();
+      const past = sessionsFor(sig).slice(-2).reverse();
+      for (const entry of past) {
+        const again = menuButton('sq-menu-reopen', () => {
+          closeMenu();
+          reopen(entry.branch, sig);
+          schedule();
+        });
+        again.title = `Open ${entry.branch} in Warp again`;
+        spans(again, [['sq-glyph', '↩'], ['', `Back to ${entry.label || 'session'}`], ['sq-sub', shortBranch(entry.branch)]]);
+        menu.append(again);
+      }
+      if (past.length > 0) {
+        const sep = document.createElement('div');
+        sep.className = 'sq-menu-sep';
+        menu.append(sep);
+      }
+
+      const letterFor = promptLetters();
+      CONFIG.prompts.forEach((prompt, index) => {
+        const entry = menuButton('sq-menu-prompt', () => {
           const target = menuRow;
           closeMenu();
           if (target && target.isConnected) startSession(target, prompt);
           schedule();
         });
+        entry.textContent = prompt.label;
+        entry.dataset.glyph = glyphFor(prompt.emoji);
+        if (index < 9) entry.dataset.key = String(index + 1);
+        const letter = letterFor(prompt.label);
+        if (letter) entry.dataset.letter = letter;
+        entry.title = `${prompt.label} with ${CONFIG.agentLabel} — press ${index + 1}${letter ? ` or ${letter.toUpperCase()}` : ''}`;
         menu.append(entry);
-      }
+      });
     }
 
     menuEl = menu;
     menuRow = row;
-    menuSig = rowSignature(row);
+    menuSig = sig;
     ui.append(menu);
     schedule();
   }
+
+  function shortBranch(branch) {
+    const text = String(branch || '');
+    return text.length > 28 ? `${text.slice(0, 27)}…` : text;
+  }
+
+  /** Arrow keys, Enter, and a digit or first letter to pick a prompt. */
+  function menuKeys(event) {
+    if (!menuEl || event.metaKey || event.ctrlKey || event.altKey) return false;
+    // Someone typing into Slack's composer with the menu still open is
+    // typing, not choosing.
+    const active = document.activeElement;
+    if (active && active !== host && active !== document.body
+      && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) {
+      return false;
+    }
+    const items = Array.from(menuEl.querySelectorAll('button'));
+    if (items.length === 0) return false;
+    const key = event.key;
+
+    if (key === 'ArrowDown' || key === 'ArrowUp') {
+      const step = key === 'ArrowDown' ? 1 : -1;
+      menuIndex = menuIndex < 0
+        ? (step > 0 ? 0 : items.length - 1)
+        : (menuIndex + step + items.length) % items.length;
+      items.forEach((item, i) => {
+        if (i === menuIndex) item.dataset.active = '1';
+        else delete item.dataset.active;
+      });
+      return true;
+    }
+    // Enter only once the reader has moved through the menu: a bare Enter is
+    // too likely to be meant for Slack.
+    if (key === 'Enter' && menuIndex >= 0 && items[menuIndex]) {
+      items[menuIndex].click();
+      return true;
+    }
+    const lower = String(key).toLowerCase();
+    const hit = items.find((b) => b.dataset.key === key || (b.dataset.letter && b.dataset.letter === lower));
+    if (hit) {
+      hit.click();
+      return true;
+    }
+    return false;
+  }
+
+  /* ------------------------------------------------------------ repo picks */
+
+  const suggestionCache = new Map();
+
+  /** Checkouts on this machine, best match for the channel first. */
+  function suggestRepos(channel) {
+    const key = channelKey(channel);
+    const cached = suggestionCache.get(key);
+    if (cached && Date.now() - cached.at < 30000) return Promise.resolve(cached.repos);
+    return ask({ op: 'suggest-repos', channel }).then((res) => {
+      const repos = Array.isArray(res.repos) ? res.repos : [];
+      suggestionCache.set(key, { at: Date.now(), repos });
+      return repos;
+    }).catch(() => []);
+  }
+
+  function loadMenuSuggestions(menu, before, channel) {
+    suggestRepos(channel).then((repos) => {
+      if (menuEl !== menu || repos.length === 0) return;
+      for (const repo of repos.slice(0, MENU_SUGGESTIONS)) {
+        const pick = menuButton('sq-menu-suggest', () => {
+          const target = menuRow;
+          closeMenu();
+          linkRepo(channel, repo.path, target);
+          schedule();
+        });
+        pick.title = `Link #${channel} to ${repo.display || repo.path}`;
+        // The name is the whole label; the menu is too narrow for a path, and
+        // the tooltip has it.
+        spans(pick, [['sq-glyph', repo.score > 0 ? '★' : '+'], ['', `Link ${repo.name}`]]);
+        menu.insertBefore(pick, before);
+      }
+      schedule();
+    });
+  }
+
+  /**
+   * Link, then carry straight on: the menu reopens on the message it came
+   * from with the prompts in it, so linking is a step on the way to a
+   * session rather than a detour away from one.
+   */
+  function linkRepo(channel, repoPath, row, onError) {
+    return ask({ op: 'link-repo', channel, repoPath }).then((res) => {
+      if (res.error) {
+        const text = res.hint ? `${res.error} — ${res.hint}` : res.error;
+        if (onError) onError(text);
+        else toast({ title: 'Could not link that repo', sub: text, kind: 'error' });
+        return false;
+      }
+      // The daemon broadcasts the new config too; this just saves waiting for it.
+      const key = channelKey(channel);
+      if (res.linked === false) {
+        CONFIG.linkedChannels = CONFIG.linkedChannels.filter((c) => c !== key);
+        delete CONFIG.repoLabels[key];
+        toast({ title: `Unlinked #${channel}` });
+        return true;
+      }
+      if (!CONFIG.linkedChannels.includes(key)) CONFIG.linkedChannels = CONFIG.linkedChannels.concat(key);
+      CONFIG.repoLabels = Object.assign({}, CONFIG.repoLabels, { [key]: res.repo || '' });
+      toast({
+        title: `#${channel} → ${res.repo}`,
+        sub: row ? 'Linked. Now pick what to do with this message.' : 'Linked. Hover any message to start a sidequest.',
+        burst: true,
+      });
+      if (row && row.isConnected && currentChannel() === channel) openMenu(row);
+      return true;
+    }).catch((err) => {
+      if (onError) onError(err.message);
+      else toast({ title: 'Could not link that repo', sub: err.message, kind: 'error' });
+      return false;
+    }).finally(() => schedule());
+  }
+
+  /* ------------------------------------------------------------- sessions */
 
   function startSession(row, prompt) {
     // Read everything now: the row can be recycled long before the daemon
     // answers, and the answer belongs to the message that was clicked.
     const sig = rowSignature(row);
+    // One click, one session: a second click while the first is still being
+    // cut would only make a -2 branch.
+    if (results.get(sig)?.kind === 'busy') return;
     const meta = messageMeta(row);
     const payload = {
       op: 'start-session',
@@ -634,8 +955,7 @@
       ts: meta.ts,
     };
 
-    launchBtn.dataset.busy = '1';
-    setResult(sig, `Starting ${prompt.label}…`, 'info');
+    setResult(sig, `Starting ${prompt.label}…`, 'busy');
 
     ask(payload).then((res) => {
       if (res.error) {
@@ -643,13 +963,138 @@
         return;
       }
       const base = `${prompt.label} → ${res.branch}`;
-      setResult(sig, res.warning ? `${base} — ${res.warning}` : base, 'info');
+      setResult(sig, res.warning ? `${base} — ${res.warning}` : base, res.warning ? 'warn' : 'info', res.branch);
+      if (res.stats) CONFIG.stats = res.stats;
+      if (meta.ts) {
+        // Mark the message now rather than on the broadcast that follows.
+        const list = sessionsFor(meta.ts).concat({ key: prompt.key, label: prompt.label, branch: res.branch, at: new Date().toISOString() });
+        CONFIG.sessions = Object.assign({}, CONFIG.sessions, { [meta.ts]: list });
+      }
+      celebrate(prompt, res);
     }).catch((err) => {
       setResult(sig, err.message, 'error');
     }).finally(() => {
-      delete launchBtn.dataset.busy;
       schedule();
     });
+  }
+
+  /** Back into a session started earlier. */
+  function reopen(branch, sig) {
+    if (!branch) return;
+    if (sig) setResult(sig, `Opening ${branch}…`, 'busy');
+    ask({ op: 'reopen', branch }).then((res) => {
+      if (res.error) {
+        const text = res.hint ? `${res.error} ${res.hint}` : res.error;
+        if (sig) setResult(sig, text, 'error');
+        else toast({ title: 'Could not reopen that session', sub: text, kind: 'error' });
+        return;
+      }
+      if (sig) setResult(sig, `Back in ${branch}`, 'info', branch);
+    }).catch((err) => {
+      if (sig) setResult(sig, err.message, 'error');
+    }).finally(() => schedule());
+  }
+
+  /* ----------------------------------------------------------------- toast */
+
+  /**
+   * The moment a session lands is worth marking. Counting them — this one's
+   * number, how many today, how many days running — turns a tool you reach
+   * for into a habit you keep, and the milestones are there to be hit.
+   */
+  function celebrate(prompt, res) {
+    const s = res.stats;
+    const where = res.warning
+      ? 'Worktree ready — Warp did not open'
+      : `${CONFIG.agentLabel} is starting in Warp`;
+    if (!s) {
+      toast({ title: `${prompt.label} is underway`, sub: where, burst: true });
+      return;
+    }
+    let title;
+    if (s.total === 1) title = 'Your first sidequest is underway';
+    else if (s.milestone) title = `Sidequest #${s.total} — milestone!`;
+    else if (s.firstToday && s.streak >= 2) title = `${s.streak}-day streak — sidequest #${s.total}`;
+    else title = `Sidequest #${s.total} is underway`;
+
+    const bits = [where];
+    if (s.today > 1) bits.push(`${s.today} today`);
+    if (s.streak >= 2 && !(s.firstToday && title.includes('streak'))) bits.push(`🔥 ${s.streak}-day streak`);
+    toast({ title, sub: bits.join(' · '), burst: true, big: Boolean(s.milestone) || s.total === 1 });
+  }
+
+  function toast({ title, sub = '', kind = 'info', burst = false, big = false }) {
+    if (!ensureLayer()) return;
+    clearTimeout(toastTimer);
+    toastEl?.remove();
+
+    const el = document.createElement('div');
+    el.className = 'sq-toast';
+    el.dataset.kind = kind;
+    el.setAttribute('role', 'status');
+
+    const icon = document.createElement('span');
+    icon.className = 'sq-toast-icon';
+    icon.innerHTML = iconSvg();
+    if (burst) {
+      const colors = ['#a78bfa', '#7c3aed', '#f472b6', '#facc15', '#34d399'];
+      const count = big ? 16 : 10;
+      for (let i = 0; i < count; i += 1) {
+        const spark = document.createElement('span');
+        spark.className = 'sq-spark';
+        spark.style.setProperty('--a', `${Math.round((360 / count) * i)}deg`);
+        spark.style.setProperty('--c', colors[i % colors.length]);
+        spark.style.animationDelay = `${(i % 3) * 40}ms`;
+        icon.append(spark);
+      }
+    }
+
+    const body = document.createElement('div');
+    body.className = 'sq-toast-body';
+    const head = document.createElement('div');
+    head.className = 'sq-toast-title';
+    head.textContent = title;
+    body.append(head);
+    if (sub) {
+      const line = document.createElement('div');
+      line.className = 'sq-toast-sub';
+      line.textContent = sub;
+      line.title = sub;
+      body.append(line);
+    }
+    el.append(icon, body);
+
+    const dismiss = () => {
+      if (toastEl !== el) return;
+      el.dataset.leaving = '1';
+      setTimeout(() => {
+        el.remove();
+        if (toastEl === el) toastEl = null;
+      }, 250);
+    };
+    el.addEventListener('click', (event) => {
+      stop(event);
+      dismiss();
+    });
+    // Reading it is a reason to keep it up.
+    el.addEventListener('mouseenter', () => clearTimeout(toastTimer));
+    el.addEventListener('mouseleave', () => { toastTimer = setTimeout(dismiss, 1800); });
+
+    toastEl = el;
+    ui.append(el);
+    toastTimer = setTimeout(dismiss, kind === 'error' ? TOAST_MS * 2 : TOAST_MS);
+    schedule();
+  }
+
+  /** Top centre of the message list: where the eye already is. */
+  function placeToast(clip) {
+    if (!toastEl) return;
+    const area = clip || { top: 0, left: 0, right: window.innerWidth };
+    const header = document.querySelector(SEL.header);
+    const headerBottom = header ? header.getBoundingClientRect().bottom : 0;
+    const top = Math.max(area.top, headerBottom) + 12;
+    const left = area.left + ((area.right - area.left) - toastEl.offsetWidth) / 2;
+    placeAt(toastEl, left, top);
   }
 
   /* ---------------------------------------------------------------- results */
@@ -657,10 +1102,10 @@
   /** Keyed by message, not by row, so scrolling away and back keeps the line. */
   const results = new Map();
 
-  function setResult(sig, text, kind) {
+  function setResult(sig, text, kind, branch = '') {
     if (!sig) return;
     results.delete(sig);
-    results.set(sig, { text, kind, at: Date.now() });
+    results.set(sig, { text, kind, branch, at: Date.now() });
     while (results.size > MAX_RESULTS) results.delete(results.keys().next().value);
     schedule();
   }
@@ -672,16 +1117,55 @@
     }
   }
 
+  /**
+   * Clicking the line takes you back to the session it names; the × is how
+   * it goes away. A line with no session behind it — an error, or one still
+   * starting — just goes away.
+   */
   function buildResult(sig) {
     const el = document.createElement('div');
     el.className = 'sq-result';
-    el.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
+    const text = document.createElement('span');
+    text.className = 'sq-result-text';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'sq-result-x';
+    close.textContent = '×';
+    close.title = 'Dismiss';
+    close.setAttribute('aria-label', 'Dismiss');
+    close.addEventListener('click', (event) => {
+      stop(event);
       results.delete(sig);
       schedule();
     });
+    el.append(text, close);
+    el.addEventListener('click', (event) => {
+      stop(event);
+      const entry = results.get(sig);
+      if (!entry || entry.kind === 'busy') return;
+      if (entry.branch) reopen(entry.branch, sig);
+      else results.delete(sig);
+      schedule();
+    });
     return el;
+  }
+
+  function buildMark(sig) {
+    const el = document.createElement('div');
+    el.className = 'sq-mark';
+    el.addEventListener('click', (event) => {
+      stop(event);
+      const list = sessionsFor(sig);
+      const last = list[list.length - 1];
+      if (last) reopen(last.branch, sig);
+    });
+    return el;
+  }
+
+  function markText(list) {
+    const last = list[list.length - 1];
+    const label = last.label || 'Session';
+    return list.length > 1 ? `${label} +${list.length - 1}` : label;
   }
 
   /* -------------------------------------------------------- channel button */
@@ -704,7 +1188,7 @@
       event.preventDefault();
       event.stopPropagation();
       if (panelEl) closePanel();
-      else openPanel();
+      else openPanel(null);
       schedule();
     });
     return button;
@@ -743,7 +1227,12 @@
     input.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  function openPanel() {
+  /**
+   * Opened from the channel pill, or from the message menu — in which case
+   * `returnRow` is the message it came from, and linking goes straight back
+   * to that message's prompts.
+   */
+  function openPanel(returnRow = null) {
     closeMenu();
     closePanel();
 
@@ -761,13 +1250,16 @@
     const input = document.createElement('input');
     input.type = 'text';
     input.spellcheck = false;
-    input.placeholder = '/Users/you/code/checkout';
+    input.placeholder = 'Search your repos, or paste a path';
+
+    const list = document.createElement('div');
+    list.className = 'sq-suggest-list';
 
     const note = document.createElement('div');
     note.className = 'sq-panel-note';
     note.textContent = current
-      ? `Linked to ${current}. Enter a new path, or leave empty to unlink.`
-      : 'Absolute path to a git checkout.';
+      ? `Linked to ${current}. Pick another to switch.`
+      : 'Pick a checkout, or paste the path to one.';
 
     const error = document.createElement('div');
     error.className = 'sq-panel-error sq-off';
@@ -781,40 +1273,88 @@
     submit.type = 'button';
     submit.dataset.primary = '1';
     submit.textContent = current ? 'Save' : 'Link';
-    actions.append(cancel, submit);
+    actions.append(cancel);
+    if (current) {
+      const unlink = document.createElement('button');
+      unlink.type = 'button';
+      unlink.className = 'sq-panel-unlink';
+      unlink.textContent = 'Unlink';
+      unlink.addEventListener('click', (event) => {
+        stop(event);
+        send('');
+      });
+      actions.append(unlink);
+    }
+    actions.append(submit);
 
-    panel.append(title, input, note, error, actions);
+    panel.append(title, input, list, note, error, actions);
 
-    const send = () => {
+    let repos = [];
+    let visible = [];
+    let active = -1;
+    const pathLike = (value) => /^[~/]/.test(value.trim());
+
+    const render = () => {
+      const query = input.value.trim().toLowerCase();
+      visible = pathLike(query)
+        ? repos.filter((r) => r.path.toLowerCase().startsWith(query) || (r.display || '').toLowerCase().startsWith(query))
+        : repos.filter((r) => !query || r.name.toLowerCase().includes(query) || (r.display || r.path).toLowerCase().includes(query));
+      visible = visible.slice(0, PANEL_SUGGESTIONS);
+      // A path being typed or pasted is the answer; the list only helps finish it.
+      active = visible.length > 0 && !pathLike(query) ? Math.min(Math.max(active, 0), visible.length - 1) : -1;
+      list.replaceChildren(...visible.map((repo, i) => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'sq-suggest';
+        if (i === active) item.dataset.active = '1';
+        if (repo.score > 0) item.dataset.match = '1';
+        item.title = repo.path;
+        const name = document.createElement('span');
+        name.className = 'sq-suggest-name';
+        name.textContent = repo.name;
+        const where = document.createElement('span');
+        where.className = 'sq-suggest-path';
+        where.textContent = repo.display || repo.path;
+        item.append(name, where);
+        item.addEventListener('click', (event) => {
+          stop(event);
+          send(repo.path);
+        });
+        return item;
+      }));
+      if (visible.length > 0) show(list);
+      else hide(list);
+      schedule();
+    };
+    hide(list);
+
+    function send(forced) {
+      const value = input.value.trim();
+      const picked = active >= 0 && !pathLike(value) ? visible[active] : null;
+      const repoPath = forced !== undefined ? forced : picked ? picked.path : value;
       panel.dataset.busy = '1';
       hide(error);
-      ask({ op: 'link-repo', channel, repoPath: input.value }).then((res) => {
-        if (res.error) {
-          error.textContent = res.hint ? `${res.error} — ${res.hint}` : res.error;
-          show(error);
-          delete panel.dataset.busy;
-          input.focus();
-          return;
-        }
-        closePanel();
-      }).catch((err) => {
-        error.textContent = err.message;
+      linkRepo(channel, repoPath, returnRow, (text) => {
+        error.textContent = text;
         show(error);
         delete panel.dataset.busy;
-      }).finally(() => {
-        schedule();
+        input.focus();
+      }).then((ok) => {
+        if (ok && panelEl === panel) closePanel();
       });
-    };
+    }
 
+    input.addEventListener('input', () => {
+      active = 0;
+      render();
+    });
     cancel.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
+      stop(event);
       closePanel();
       schedule();
     });
     submit.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
+      stop(event);
       send();
     });
     // Reached from the window-level claim in the triggers section rather than
@@ -824,11 +1364,22 @@
     panelKeys = (event) => {
       if (event.key === 'Enter') send();
       if (event.key === 'Escape') { closePanel(); schedule(); }
+      if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && visible.length > 0) {
+        event.preventDefault();
+        const step = event.key === 'ArrowDown' ? 1 : -1;
+        active = active < 0 ? 0 : (active + step + visible.length) % visible.length;
+        render();
+      }
     };
 
     panelEl = panel;
     ui.append(panel);
     input.focus();
+    suggestRepos(channel).then((found) => {
+      if (panelEl !== panel) return;
+      repos = found;
+      render();
+    });
     schedule();
   }
 
@@ -985,6 +1536,13 @@
     if (activeRect && clip && onScreen(activeRect, clip)) {
       const flag = isLinked(currentChannel()) ? '1' : '0';
       if (launchBtn.dataset.linked !== flag) launchBtn.dataset.linked = flag;
+      const total = CONFIG.stats?.total || 0;
+      const streak = CONFIG.stats?.streak || 0;
+      const tally = total > 0
+        ? ` · ${total} so far${streak >= 2 ? `, ${streak}-day streak` : ''}`
+        : '';
+      const tip = `Start a ${CONFIG.agentLabel} session from this message${tally}`;
+      if (launchBtn.title !== tip) launchBtn.title = tip;
       show(launchBtn);
       // Slack's own hover actions and an unread divider's "New" label both live
       // at a row's top-right corner, so the pill takes the bottom-right and
@@ -1033,10 +1591,13 @@
         resultEls.set(sig, el);
         ui.append(el);
       }
-      if (el.textContent !== entry.text) {
-        el.textContent = entry.text;
+      const text = el.firstChild;
+      if (text.textContent !== entry.text) {
+        text.textContent = entry.text;
         // The line is one line wide; the tooltip is where all of it lives.
-        el.title = `${entry.text}\n\nClick to dismiss.`;
+        el.title = entry.branch
+          ? `${entry.text}\n\nClick to open ${entry.branch} in Warp again.`
+          : entry.text;
       }
       if (el.dataset.kind !== entry.kind) el.dataset.kind = entry.kind;
 
@@ -1062,6 +1623,48 @@
       }
     }
 
+    // Messages that already have a session, and no live line of their own.
+    for (const [sig, el] of markEls) {
+      if (results.has(sig) || !bySig.has(sig) || sessionsFor(sig).length === 0) {
+        el.remove();
+        markEls.delete(sig);
+      }
+    }
+    for (const [sig, row] of bySig) {
+      if (results.has(sig)) continue;
+      const list = sessionsFor(sig);
+      if (list.length === 0) continue;
+      let el = markEls.get(sig);
+      if (!el) {
+        el = buildMark(sig);
+        markEls.set(sig, el);
+        ui.append(el);
+      }
+      const text = markText(list);
+      if (el.textContent !== text) {
+        el.textContent = text;
+        const last = list[list.length - 1];
+        el.title = `Sidequested → ${last.branch}` +
+          (list.length > 1 ? ` (and ${list.length - 1} more)` : '') +
+          '\nClick to open it in Warp again.';
+      }
+      const rect = row.getBoundingClientRect();
+      if (clip && onScreen(rect, clip)) {
+        show(el);
+        const reserve = row === activeRow && !launchBtn.classList.contains('sq-off')
+          ? launchBtn.offsetWidth + GAP
+          : 0;
+        placeAt(
+          el,
+          rect.right - GAP - reserve - el.offsetWidth,
+          Math.min(rect.bottom, clip.bottom) - el.offsetHeight - 4,
+        );
+      } else {
+        hide(el);
+      }
+    }
+
+    placeToast(clip);
     refreshChannelButton();
   }
 
@@ -1129,6 +1732,12 @@
   }
 
   window.addEventListener('keydown', (event) => {
+    if (menuKeys(event)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      schedule();
+      return;
+    }
     const input = panelInput();
     if (!input) return;
     // The same stop keeps a keystroke meant for the path box from also being a

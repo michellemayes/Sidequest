@@ -34,3 +34,8 @@ export function daemonPidFile(): string {
 export function daemonLogFile(): string {
   return join(configRoot(), "sidequest.log");
 }
+
+/** Every session Sidequest has started, newest last. */
+export function historyFile(): string {
+  return join(configRoot(), "history.json");
+}

@@ -70,9 +70,11 @@ cd CCSlackAssist
 npm install
 npm run build
 npm link              # puts `sidequest` on your PATH
-Sidequest init          # creates ~/.Sidequest/config.json
-Sidequest install-hook  # so Claude starts when the Warp tab opens
+sidequest setup       # config, shell hook, checks, then starts Slack with the overlay
 ```
+
+`setup` is `init`, `install-hook`, `doctor` and `start` in one go, and safe to
+run again: each step leaves alone what is already done.
 
 ## Run it
 
@@ -88,18 +90,32 @@ Pass `--foreground` to keep the old behavior while debugging.
 
 Leave it running. In Slack:
 
-1. Open a channel and click **Link a repo** beside the channel name. Paste an
-   absolute path to a git checkout. The panel that opens is Sidequest's own —
-   Electron does not implement `window.prompt`. In a narrow window there may be
-   no room for that pill beside Slack's own header buttons; the same panel is
-   one click away under **Sidequest** → **Link a repo…**, and `sidequest link`
-   does it from the terminal.
-2. Hover any message → **Sidequest** → **Investigate** / **Fix** / **Review**.
+1. Hover any message → **Sidequest**. In a channel with no repo yet, the menu
+   offers the checkouts on your machine that look like the channel's — for
+   `#storefront-eng`, that is `storefront` — and one click links it and takes
+   you straight on to the prompts. (It looks in `~/code`, `~/src`,
+   `~/Developer`, `~/projects` and the like, two levels deep, and beside repos
+   you have already linked; `repoSearchRoots` changes where.)
+2. Pick **Investigate** / **Fix** / **Review** — or press **1** / **2** / **3**
+   (or **I** / **F** / **R**) while the menu is open.
 
-A Warp tab opens on a new worktree with your agent already working. The result —
-the branch name, or what went wrong — appears on the message you clicked. It is
-one line, so it covers nothing; hover it to read a long one in full, click it to
-dismiss it.
+A Warp tab opens on a new worktree with your agent already working, and a toast
+says so — with the running count, how many today, and your streak of days in a
+row. The result — the branch name, or what went wrong — appears on the message
+you clicked. It is one line, so it covers nothing; hover it to read a long one in
+full, click it to open that session in Warp again, and **×** to dismiss it.
+
+Every message you have started a session from keeps a small **✦ Fix** mark.
+Click it and you are back in that session; open its menu and **Back to Fix**
+sits above the prompts. A second click on the same message takes you back
+rather than cutting a `-2` branch you did not want.
+
+The channel pill beside the channel name shows which repo a channel is on;
+click it to switch, unlink, or search every checkout Sidequest found (type to
+filter, arrows and Enter to pick, or paste any path). The panel is Sidequest's
+own — Electron does not implement `window.prompt`. In a narrow window there may
+be no room for that pill beside Slack's header buttons; the same panel is under
+**Sidequest** → **Link a repo…**, and `sidequest link` does it from the terminal.
 
 Stopping Sidequest leaves Slack running; the overlay disappears on Slack's next
 reload.
@@ -116,11 +132,13 @@ quietly.
 
 | Command | What it does |
 | --- | --- |
+| `sidequest setup` | First run in one command: config, shell hook, checks, start |
 | `sidequest start` | Launch Slack with the overlay attached. Runs in the background; `--force`, `--foreground` |
 | `sidequest stop` | Stop the background daemon |
 | `sidequest status` | Show whether the daemon is running, and what it's doing |
 | `sidequest agents` | List the coding agents Sidequest can launch |
-| `sidequest reopen <ref>` | Open Warp on an existing session (branch name or worktree path) |
+| `sidequest reopen [ref]` | Open Warp on a session again (branch name or worktree path; the latest if omitted) |
+| `sidequest stats` | Your count, today's, your streak and best streak, and where they went |
 | `sidequest doctor` | Check git, Warp, the agent, Slack.app and the debug port |
 | `sidequest list` | Show settings and linked channels |
 | `sidequest sessions` | List every worktree Sidequest created |
@@ -171,7 +189,9 @@ so renaming a prompt renames it in the menu.
 
 ## Settings
 
-`~/.sidequest/config.json`, under `settings`:
+`~/.sidequest/config.json`, under `settings`. Sessions are logged to
+`~/.sidequest/history.json` — that is what the marks, the reopen entries and
+`sidequest stats` read.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -180,6 +200,7 @@ so renaming a prompt renames it in the menu.
 | `warpPreview` | `false` | Use Warp Preview (`warppreview://`) |
 | `agent` | `{ "id": "claude" }` | Which coding agent to launch (`claude`, `codex`); `command`/`args` override its executable and flags |
 | `fetchBeforeCreate` | `true` | Fetch the base branch before branching |
+| `repoSearchRoots` | `[]` | Where to look for checkouts to suggest; empty means `~/code`, `~/src`, `~/Developer`, `~/projects` and friends |
 | `threadContextLimit` | `10` | Preceding messages included in the prompt |
 | `pruneBranchesOnClean` | `true` | Also delete merged branches on `clean` |
 | `cdpPort` | `9222` | DevTools port Slack is launched with |
@@ -237,8 +258,12 @@ name, or **Sidequest** → **Link a repo…** on any message. If the pill beside
 channel name is only a dot, or missing, Slack's own header buttons left it no
 room — widen the window, or use the menu.
 
+**The repo I want isn't suggested.** Sidequest looks two levels under the usual
+code directories. Add yours to `repoSearchRoots`, or paste the path into the panel.
+
 **Warp opens but the agent doesn't start.** Run `sidequest install-hook`, then open a
-new terminal. Or run `sidequest reopen <branch>` to open Warp on the session again —
+new terminal. Or run `sidequest reopen <branch>` (or just `sidequest reopen` for
+the latest) to open Warp on the session again —
 if its start marker is still unclaimed, the agent launches on arrival.
 
 **Warp doesn't open at all.** Sidequest still creates the worktree and says so under
@@ -251,7 +276,7 @@ Check with `sidequest sessions`, then use `--force` once you're sure.
 
 ```bash
 npm run dev -- doctor   # run from source
-npm test                # 58 tests
+npm test                # 84 tests
 npm run typecheck
 ```
 
@@ -269,6 +294,11 @@ no Chromium is found.
 - The overlay only reads the DOM of Slack windows and only talks to the local
   daemon over the CDP binding. It makes no network requests, and writes nothing
   into Slack's own DOM.
+- The overlay runs inside Slack's renderer, so what the daemon hands it is
+  readable there too. That is the channel links, the prompt labels, the branch
+  names of past sessions, and — only when a link menu or panel asks — the
+  paths of the checkouts it found to suggest. Prompts, repo contents and
+  history files stay on the daemon's side.
 - Commands are executed with an argv array, never through a shell, so message
   text cannot inject shell syntax. The generated `autorun.sh` single-quotes every
   interpolated value, and the prompt is passed via a file rather than the command
