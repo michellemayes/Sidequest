@@ -40,6 +40,11 @@ export interface SessionResult {
   launchStrategy: string;
   fellBackToNewTab: boolean;
   promptFile: string;
+  /**
+   * What to post in the message's thread, rendered; empty when
+   * settings.autoReply is off or the prompt has no reply.
+   */
+  reply: string;
   /** Set when the worktree is ready but Warp could not be opened, or the agent did not start. */
   launchError?: string;
 }
@@ -99,14 +104,19 @@ export async function createSession(
     fetch: config.settings.fetchBeforeCreate,
   });
 
-  const body = renderPrompt(prompt.template, buildContext(message, {
+  const context = buildContext(message, {
     branch: worktree.branch,
     baseBranch: worktree.baseBranch,
     repo: repo.root,
     worktree: worktree.path,
     threadLimit: config.settings.threadContextLimit,
     ticket,
-  }));
+  });
+  const body = renderPrompt(prompt.template, context);
+  // The repo in a reply is its label: a path on your machine means nothing in Slack.
+  const reply = config.settings.autoReply
+    ? renderPrompt(prompt.reply, { ...context, repo: repoLabel }).trim()
+    : "";
 
   const files = await writeAutorun({
     worktreePath: worktree.path,
@@ -125,6 +135,7 @@ export async function createSession(
     promptLabel: prompt.label,
     promptFile: files.promptFile,
     agentLabel: agent.label,
+    reply,
   };
 
   // The worktree and prompt are already on disk and usable. If Warp will not

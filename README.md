@@ -15,7 +15,7 @@ See [`docs/demo`](docs/demo) to re-record it.</sub>
 - **No Slack app, no bot token, no workspace install.** Sidequest attaches to the
   Slack desktop app you already use.
 - **Nothing leaves your machine.** The message goes from Slack's window into a
-  prompt file on disk.
+  prompt file on disk. (Unless you turn on thread replies, which post to Slack as you.)
 - **Your checkout is never touched.** Every session gets its own branch and
   worktree, cut from an up-to-date base branch.
 
@@ -107,6 +107,7 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force` |
 | `sidequest link <path> -c <channel>` | Link a repo to a channel from the terminal. Linking a second repo adds it; the first stays the default |
 | `sidequest unlink [repo] -c <channel>` | Unlink one repo (by path or label) from a channel, or all of them if you name none |
+| `sidequest replies [on\|off]` | Show the thread replies sessions post, or turn them on or off |
 | `sidequest agents [claude\|codex]` | Show the available agents, or switch the one new sessions use |
 | `sidequest list` / `prompts` | Show linked channels and prompt templates |
 
@@ -134,6 +135,31 @@ Tokens: `{{author}}` `{{channel}}` `{{message}}` `{{thread}}` `{{permalink}}`
 the Ask box, empty otherwise). Sidequest
 leaves unknown tokens in the prompt as written, so typos are easy to spot.
 
+**Thread replies.** Turn on `autoReply` (or run `sidequest replies on`) and
+starting a session also posts a short reply, as you, in the thread of the
+message you started it from, so whoever asked knows it's being handled:
+
+| | Default reply |
+| --- | --- |
+| **Investigate** | Investigating this. |
+| **Fix** | Working on a fix. |
+| **Review** | Reviewing this. |
+| **Ask** | (none) |
+| **Linear** | Picking up DATA-3051. |
+
+Each prompt's `reply` sets its text and takes the same tokens as its template
+(`{{repo}}` is the repo's label). An empty `reply` turns it off for that prompt:
+
+```json
+{
+  "settings": { "autoReply": true },
+  "prompts": {
+    "fix": { "reply": "On it, fixing this on {{branch}}." },
+    "review": { "reply": "" }
+  }
+}
+```
+
 **Settings** (under `settings`):
 
 | Setting | Default | |
@@ -149,6 +175,7 @@ leaves unknown tokens in the prompt as written, so typos are easy to spot.
 | `cdpPort` | `9222` | DevTools port for Slack |
 | `relaunchSlack` | `true` | While Sidequest runs, relaunch a Slack reopened from the Dock (without the DevTools port) so the overlay comes back |
 | `targetUrlPattern` | `app\.slack\.com\|/client/` | Which windows count as Slack |
+| `autoReply` | `false` | Reply in the message's thread when a session starts. See Thread replies above |
 | `verbose` | `false` | Log overlay activity to Slack's devtools console |
 
 ## Troubleshooting
@@ -179,7 +206,10 @@ Start with `sidequest doctor`.
 
 ## Security
 
-The overlay makes no network requests and only talks to the local daemon.
+The overlay only talks to the local daemon. The one exception is the thread
+reply, which is off unless you turn on `autoReply`: the overlay then posts it
+to your workspace's own Slack API with the session Slack's window is already
+signed in with. That token stays in the window and never reaches the daemon.
 Sidequest runs commands from argv arrays, never through a shell, and passes the
 prompt in a file, so message text can't inject commands. The overlay runs inside
 Slack's window, so what the daemon sends it is visible there: channel links,

@@ -2,9 +2,10 @@
  * sidequest overlay — runs inside the Slack desktop app's renderer.
  *
  * Injected over CDP by src/cdp/attacher.ts, which also installs the
- * __sidequestAsk binding this talks to. Nothing here reaches the network; every
- * request goes down to the local daemon and comes back through
- * __sidequestResult.
+ * __sidequestAsk binding this talks to. Every request goes down to the local
+ * daemon and comes back through __sidequestResult. The one exception is the
+ * thread reply a session can post when settings.autoReply is on, which goes
+ * to Slack's own API as you (see postReply).
  *
  * Two pieces of UI:
  *   1. A button on the message under the pointer, opening the prompts —
@@ -1339,11 +1340,71 @@
         CONFIG.sessions = Object.assign({}, CONFIG.sessions, { [meta.ts]: list });
       }
       celebrate(prompt, res);
+      if (res.reply) {
+        postReply(meta.permalink, res.reply).catch((err) => {
+          toast({ title: 'Could not reply in the thread', sub: err.message, kind: 'error' });
+        });
+      }
     }).catch((err) => {
       setResult(sig, err.message, 'error');
     }).finally(() => {
       schedule();
     });
+  }
+
+  /**
+   * Where a reply to a message goes, read off its permalink: the channel id,
+   * and the thread it starts or already sits in.
+   */
+  function replyTarget(permalink) {
+    const match = String(permalink || '').match(/\/archives\/([A-Z0-9]+)\/p(\d{10})(\d{6})/);
+    if (!match) return null;
+    const inThread = String(permalink).match(/[?&]thread_ts=(\d{10}\.\d{4,6})/);
+    return { channel: match[1], threadTs: inThread ? inThread[1] : `${match[2]}.${match[3]}` };
+  }
+
+  /**
+   * The workspace this window is signed in to, as Slack's own client keeps it:
+   * its API host and your session token. Neither leaves this window; the
+   * daemon never sees them.
+   */
+  function slackTeam() {
+    let teams;
+    try {
+      teams = JSON.parse(localStorage.getItem('localConfig_v2') || '{}').teams || {};
+    } catch {
+      teams = {};
+    }
+    const list = Object.entries(teams).map(([id, team]) => Object.assign({ id }, team));
+    const fromUrl = location.pathname.match(/\/client\/([A-Z0-9]+)/);
+    const team = (fromUrl && list.find((t) => t.id === fromUrl[1] || t.enterprise_id === fromUrl[1])) ||
+      (list.length === 1 ? list[0] : null);
+    return team && team.token && team.url ? team : null;
+  }
+
+  /**
+   * Say in the thread that you're on it, as you. The only request the overlay
+   * makes itself, sent only when settings.autoReply is on, and only to the
+   * workspace's own API.
+   */
+  async function postReply(permalink, text) {
+    const target = replyTarget(permalink);
+    if (!target) throw new Error('Slack gave that message no link to reply under.');
+    const team = slackTeam();
+    if (!team) throw new Error('Could not find which Slack workspace this window is signed in to.');
+    const form = new FormData();
+    form.append('token', team.token);
+    form.append('channel', target.channel);
+    form.append('thread_ts', target.threadTs);
+    form.append('text', text);
+    const res = await fetch(new URL('api/chat.postMessage', team.url).href, {
+      method: 'POST',
+      body: form,
+      credentials: 'include',
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!body.ok) throw new Error(`Slack said ${body.error || `HTTP ${res.status}`}.`);
+    log('replied in thread', target);
   }
 
   /** Back into a session started earlier. */

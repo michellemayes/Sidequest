@@ -93,6 +93,11 @@ export async function runCli(argv: string[]): Promise<void> {
     .action((id: string | undefined) => wrap(() => agents(id)));
 
   program
+    .command("replies [state]")
+    .description("show the thread replies sessions post, or turn them on or off")
+    .action((state: string | undefined) => wrap(() => replies(state)));
+
+  program
     .command("reopen [ref]")
     .description("open Warp on a session again (branch name or path; default: the latest)")
     .action((ref: string | undefined) => wrap(() => reopen(ref)));
@@ -360,6 +365,34 @@ async function agents(id?: string): Promise<void> {
   console.log("\nSwitch with `sidequest agents <id>`, or in " + `${configFile()}:`);
   console.log(`  { "settings": { "agent": { "id": "codex" } } }`);
   console.log("`command` and `args` override the agent's executable and flags.");
+}
+
+async function replies(state?: string): Promise<void> {
+  const wanted = state?.trim().toLowerCase();
+  if (wanted) {
+    if (wanted !== "on" && wanted !== "off") {
+      throw new UserFacingError(`Unknown state "${state}".`, "Use `sidequest replies on` or `sidequest replies off`.");
+    }
+    await updateConfig((config) => {
+      config.settings.autoReply = wanted === "on";
+    });
+    console.log(
+      wanted === "on"
+        ? "New sessions will reply in the message's thread, as you. A running daemon picks this up on the next click."
+        : "New sessions will not reply in Slack.",
+    );
+    return;
+  }
+
+  const config = await loadConfig();
+  console.log(`Thread replies are ${config.settings.autoReply ? "on" : "off"}.\n`);
+  for (const { prompt } of allPrompts(config)) {
+    console.log(`  ${prompt.label.padEnd(12)} ${prompt.reply.trim() || "(no reply)"}`);
+  }
+  console.log(`\nTurn them ${config.settings.autoReply ? "off" : "on"} with \`sidequest replies ${config.settings.autoReply ? "off" : "on"}\`.`);
+  console.log(`Change one in ${configFile()}:`);
+  console.log(`  { "prompts": { "fix": { "reply": "On it, fixing on {{branch}}." } } }`);
+  console.log('An empty "reply" turns it off for that prompt.');
 }
 
 /**
