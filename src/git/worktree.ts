@@ -20,6 +20,17 @@ export interface CreateWorktreeOptions {
   /** Parent directory that will hold the worktree directory. */
   worktreesRoot: string;
   fetch: boolean;
+  /**
+   * How long the fetch may hold up the session. A slower one keeps running in
+   * the background and the worktree is cut from the local ref.
+   */
+  fetchWaitMs?: number;
+  /**
+   * Runs alongside `git worktree add` once the names are settled, so work that
+   * only needs the path (writing Warp's tab config) overlaps the checkout. If
+   * the checkout fails, this has still run.
+   */
+  alongsideCheckout?: (names: { branch: string; path: string }) => Promise<void>;
 }
 
 export interface Worktree {
@@ -39,21 +50,30 @@ export interface Worktree {
 export async function createWorktree(options: CreateWorktreeOptions): Promise<Worktree> {
   const { repo, baseBranch, worktreesRoot } = options;
 
-  if (options.fetch && repo.hasRemote) {
-    await fetchQuietly(repo.root, baseBranch);
+  // The fetch is the slowest step and needs nothing else, so the local lookups
+  // run while it is in flight.
+  const fetched = options.fetch && repo.hasRemote ? fetchQuietly(repo.root, baseBranch) : null;
+
+  await mkdir(worktreesRoot, { recursive: true });
+  const { branch, path } = await findFreeNames(repo, options.branch, worktreesRoot);
+
+  if (fetched) {
+    const waitMs = options.fetchWaitMs ?? FETCH_WAIT_MS;
+    const inTime = await Promise.race([fetched.then(() => true), sleep(waitMs).then(() => false)]);
+    if (!inTime) log.warn(`fetching origin/${baseBranch} is taking over ${waitMs}ms; cutting from the local ref`);
   }
 
   const baseRef = await resolveBaseRef(repo.root, baseBranch, repo.hasRemote);
-  await mkdir(worktreesRoot, { recursive: true });
 
-  const { branch, path } = await findFreeNames(repo, options.branch, worktreesRoot);
-
-  try {
-    await run("git", ["worktree", "add", "-b", branch, path, baseRef], {
+  const [added] = await Promise.allSettled([
+    run("git", ["worktree", "add", "-b", branch, path, baseRef], {
       cwd: repo.root,
       timeoutMs: 180_000,
-    });
-  } catch (err) {
+    }),
+    options.alongsideCheckout?.({ branch, path }),
+  ]);
+  if (added.status === "rejected") {
+    const err: unknown = added.reason;
     throw new UserFacingError(
       `Could not create a worktree in ${repo.root}: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -64,6 +84,16 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<Wo
 
   log.info(`created worktree ${path} on ${branch} from ${baseRef}`);
   return { path, branch, baseBranch, baseRef };
+}
+
+/**
+ * A fetch over a good link finishes well inside this; one that does not is
+ * better skipped than waited on, since the local ref is usually close.
+ */
+const FETCH_WAIT_MS = 3_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms).unref());
 }
 
 /**
@@ -82,7 +112,8 @@ async function findFreeNames(
     const branch = `${desiredBranch}${suffix}`;
     const path = join(worktreesRoot, `${dirName}${suffix}`);
 
-    const taken = (await branchExists(repo.root, branch)) || (await pathExists(path));
+    const [branchTaken, pathTaken] = await Promise.all([branchExists(repo.root, branch), pathExists(path)]);
+    const taken = branchTaken || pathTaken;
     if (!taken) return { branch, path };
   }
 

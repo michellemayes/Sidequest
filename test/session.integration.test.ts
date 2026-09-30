@@ -105,6 +105,48 @@ describe("createWorktree", () => {
     expect(second.path.endsWith("fix-dup-2")).toBe(true);
   });
 
+  it("cuts from the fetched base when the fetch is quick", async () => {
+    const remote = join(root, "remote.git");
+    await git(["clone", "--bare", repoPath, remote], root);
+    await git(["remote", "add", "origin", remote], repoPath);
+    await git(["fetch", "origin"], repoPath);
+
+    // Someone else pushes a commit the local checkout has not seen.
+    const other = join(root, "other");
+    await git(["clone", remote, other], root);
+    await writeFile(join(other, "NEW.md"), "new\n");
+    await git(["add", "."], other);
+    await git(["commit", "-m", "upstream"], other);
+    await git(["push", "origin", "main"], other);
+
+    const repo = await inspectRepo(repoPath);
+    const worktree = await createWorktree({
+      repo,
+      branch: "fix/fresh",
+      baseBranch: "main",
+      worktreesRoot: join(root, "worktrees"),
+      fetch: true,
+    });
+    expect(worktree.baseRef).toBe("origin/main");
+    await expect(stat(join(worktree.path, "NEW.md"))).resolves.toBeTruthy();
+  });
+
+  it("runs the caller's work alongside the checkout with the final names", async () => {
+    const repo = await inspectRepo(repoPath);
+    const seen: Array<{ branch: string; path: string }> = [];
+    const worktree = await createWorktree({
+      repo,
+      branch: "fix/alongside",
+      baseBranch: "main",
+      worktreesRoot: join(root, "worktrees"),
+      fetch: false,
+      alongsideCheckout: async (names) => {
+        seen.push(names);
+      },
+    });
+    expect(seen).toEqual([{ branch: worktree.branch, path: worktree.path }]);
+  });
+
   it("fails clearly when the base branch does not exist", async () => {
     const repo = await inspectRepo(repoPath);
     await expect(

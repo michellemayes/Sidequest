@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 import { warpLaunchConfigDir, warpTabConfigDir } from "../util/platform.js";
@@ -75,6 +75,11 @@ export async function writeTabConfig(spec: WarpSessionSpec, preview: boolean): P
 
   await writeFile(join(dir, `${spec.name}.toml`), toml, "utf8");
   return spec.name;
+}
+
+/** Remove a tab config written by writeTabConfig; missing is fine. */
+export async function removeTabConfig(name: string, preview: boolean): Promise<void> {
+  await rm(join(warpTabConfigDir(preview), `${name}.toml`), { force: true });
 }
 
 /** TOML basic string: escape backslashes, quotes and control characters. */

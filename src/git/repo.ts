@@ -51,15 +51,20 @@ export async function inspectRepo(path: string): Promise<RepoInfo> {
     throw err;
   }
 
+  // Independent probes, so they run side by side: each is a process spawn.
+  const [hasCommits, remotes] = await Promise.all([
+    succeeds("git", ["rev-parse", "HEAD"], { cwd: root }),
+    run("git", ["remote"], { cwd: root }),
+  ]);
   // A repo with no commits has no branch to cut a worktree from.
-  if (!(await succeeds("git", ["rev-parse", "HEAD"], { cwd: root }))) {
+  if (!hasCommits) {
     throw new UserFacingError(
       `${root} has no commits yet.`,
       "Make at least one commit before linking the repo.",
     );
   }
 
-  const hasRemote = (await run("git", ["remote"], { cwd: root })).stdout.trim().length > 0;
+  const hasRemote = remotes.stdout.trim().length > 0;
   return {
     root,
     name: basename(root),
@@ -86,9 +91,10 @@ export async function detectDefaultBranch(root: string, hasRemote: boolean): Pro
     }
   }
 
-  for (const candidate of ["main", "master", "develop", "trunk"]) {
-    if (await branchExists(root, candidate)) return candidate;
-  }
+  const candidates = ["main", "master", "develop", "trunk"];
+  const found = await Promise.all(candidates.map((candidate) => branchExists(root, candidate)));
+  const conventional = candidates.find((_, i) => found[i]);
+  if (conventional) return conventional;
 
   try {
     const { stdout } = await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: root });
@@ -129,7 +135,8 @@ export async function resolveBaseRef(
 /** Best-effort fetch. A network failure must not block creating the session. */
 export async function fetchQuietly(root: string, baseBranch: string): Promise<void> {
   try {
-    await run("git", ["fetch", "--quiet", "origin", baseBranch], { cwd: root, timeoutMs: 45_000 });
+    // Only the base branch matters here; skipping tags saves a round of ref negotiation.
+    await run("git", ["fetch", "--quiet", "--no-tags", "origin", baseBranch], { cwd: root, timeoutMs: 45_000 });
   } catch (err) {
     log.warn(`could not fetch origin/${baseBranch}; using the local ref instead`, describe(err));
   }
@@ -170,6 +177,9 @@ export async function ensureSessionDirIgnored(
   sessionDir: string,
 ): Promise<void> {
   const rule = `/${sessionDir}/`;
+  const key = `${repoRoot}\0${rule}`;
+  // Once a repo has the rule, it keeps it; later sessions skip the git call.
+  if (ignoredAlready.has(key)) return;
   try {
     const { stdout } = await run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
       cwd: repoRoot,
@@ -177,14 +187,21 @@ export async function ensureSessionDirIgnored(
     const excludeFile = join(stdout.trim(), "info", "exclude");
 
     const existing = await readFile(excludeFile, "utf8").catch(() => "");
-    if (existing.split("\n").some((line) => line.trim() === rule)) return;
+    if (existing.split("\n").some((line) => line.trim() === rule)) {
+      ignoredAlready.add(key);
+      return;
+    }
 
     await mkdir(dirname(excludeFile), { recursive: true });
     const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
     await appendFile(excludeFile, `${separator}# sidequest session files\n${rule}\n`, "utf8");
+    ignoredAlready.add(key);
     log.debug(`added ${rule} to ${excludeFile}`);
   } catch (err) {
     // Not fatal: sessions still work, `sidequest clean` just needs --force.
     log.warn(`could not add ${rule} to the repo's exclude file`, describe(err));
   }
 }
+
+/** Repos (and rules) already known to carry the exclude rule, this process. */
+const ignoredAlready = new Set<string>();

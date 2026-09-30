@@ -5,8 +5,15 @@ import { resolveAgent } from "../agents/agents.js";
 import type { Config, PromptKey } from "../config/schema.js";
 import { inspectRepo } from "../git/repo.js";
 import { createWorktree } from "../git/worktree.js";
-import { writeAutorun } from "../warp/autorun.js";
-import { colorForPrompt, launchWarp } from "../warp/launcher.js";
+import { autorunPaths, writeAutorun } from "../warp/autorun.js";
+import {
+  colorForPrompt,
+  launchWarp,
+  prepareTabConfig,
+  strategyOrder,
+  type PreparedTabConfig,
+} from "../warp/launcher.js";
+import { removeTabConfig, type WarpSessionSpec } from "../warp/configFiles.js";
 import { branchNameFor, tabTitle, warpConfigName } from "./naming.js";
 import { describeError, UserFacingError } from "../util/errors.js";
 import { stripSlackMarkup } from "../util/slug.js";
@@ -58,6 +65,7 @@ export async function createSession(
   message: MessageContext,
   configOverride?: Config,
 ): Promise<SessionResult> {
+  const startedAt = Date.now();
   const config = configOverride ?? (await loadConfig());
   const link = repoForChannelName(config, message.channelName, message.repo ?? "");
 
@@ -96,12 +104,44 @@ export async function createSession(
     ticketId: promptKey === "linear" ? ticket?.id : undefined,
   });
 
+  const title = tabTitle(prompt.label, repoLabel);
+  const specFor = (names: { branch: string; path: string }): WarpSessionSpec => ({
+    name: warpConfigName(names.branch),
+    title,
+    color: colorForPrompt(promptKey),
+    cwd: names.path,
+    command: autorunPaths(names.path).scriptFile,
+  });
+
+  // A tab config has to sit on disk a moment before Warp will open it, so
+  // write it while git checks the worktree out rather than after.
+  let preparedTabConfig: PreparedTabConfig | undefined;
+  const preview = config.settings.warpPreview;
+  const tabConfigFirst = strategyOrder(config.settings.warpStrategy)[0] === "tab_config";
+
+  let tabConfigName: string | undefined;
   const worktree = await createWorktree({
     repo,
     branch,
     baseBranch,
     worktreesRoot: config.settings.worktreesRoot,
     fetch: config.settings.fetchBeforeCreate,
+    alongsideCheckout: tabConfigFirst
+      ? async (names) => {
+          try {
+            const spec = specFor(names);
+            tabConfigName = spec.name;
+            preparedTabConfig = await prepareTabConfig(spec, preview);
+          } catch (err) {
+            // The launcher writes it again when it gets there.
+            log.debug(`could not write the tab config early: ${describeError(err).message}`);
+          }
+        }
+      : undefined,
+  }).catch(async (err: unknown) => {
+    // No worktree, so no tab to open: don't leave Warp a config pointing nowhere.
+    if (tabConfigName) await removeTabConfig(tabConfigName, preview).catch(() => {});
+    throw err;
   });
 
   const context = buildContext(message, {
@@ -143,18 +183,13 @@ export async function createSession(
   try {
     const launch = await launchWarp({
       strategy: config.settings.warpStrategy,
-      preview: config.settings.warpPreview,
-      spec: {
-        name: warpConfigName(worktree.branch),
-        title: tabTitle(prompt.label, repoLabel),
-        color: colorForPrompt(promptKey),
-        cwd: worktree.path,
-        command: files.scriptFile,
-      },
+      preview,
+      spec: specFor(worktree),
       pendingFile: files.pendingFile,
+      preparedTabConfig,
     });
 
-    log.info(`session ready: ${worktree.path} (${launch.strategy})`);
+    log.info(`session ready in ${Date.now() - startedAt}ms: ${worktree.path} (${launch.strategy})`);
     return {
       ...base,
       launchStrategy: launch.strategy,
