@@ -8,9 +8,10 @@ Codex) is already working on it, with the message and its thread as the prompt.
 
 ![Sidequest demo: pick Fix on a Slack message, watch Claude Code fix it in a Warp tab on a new worktree, and find the branch linked back in Slack](docs/demo/demo.gif)
 
-<sub>End to end: the real overlay over a mock channel, then the Warp tab it opens and the
-agent committing a fix on the new branch (the terminal is scripted for the recording).
-See [`docs/demo`](docs/demo) to re-record it.</sub>
+<sub>End to end: the real overlay running over a mock of the Slack desktop app, then the Warp
+tab it opens with Claude Code finding, testing and committing the fix on the new branch, then
+the branch linked back under the message. The Slack window and the terminal session are staged
+for the recording; see [`docs/demo`](docs/demo) to re-record it.</sub>
 
 - **No Slack app, no bot token, no workspace install.** Sidequest attaches to the
   Slack desktop app you already use.
