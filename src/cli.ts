@@ -870,6 +870,9 @@ const PROMPT_TOKENS = [
   "baseBranch",
   "repo",
   "worktree",
+  "ticket",
+  "ticketId",
+  "question",
 ] as const;
 
 async function doctor(): Promise<void> {

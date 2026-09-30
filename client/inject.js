@@ -51,6 +51,7 @@
   const MAX_RESULTS = 20;
   /* The prompt that works a Linear issue; shown only when a message links one. */
   const LINEAR_KEY = 'linear';
+  const ASK_KEY = 'ask';
   const TICK_MS = 250;
   const TOAST_MS = 5200;
   /* Suggestions shown in the message menu for a channel with no repo. */
@@ -203,6 +204,25 @@
     .sq-menu-reopen > .sq-glyph, .sq-menu-suggest > .sq-glyph { flex: 0 0 18px; text-align: center; }
     .sq-sub { margin-left: auto; padding-left: 6px; font-size: 11px; opacity: .55; }
     .sq-menu-sep { height: 1px; margin: 4px 2px; background: var(--sq-line); }
+    /* Ask trades the menu's entries for a box to type the question into. */
+    .sq-menu[data-asking="1"] { width: 264px; gap: 6px; padding: 8px; }
+    .sq-ask-title { font-size: 13px; line-height: 18px; font-weight: 700; }
+    .sq-ask-input {
+      box-sizing: border-box; width: 100%; min-height: 58px; max-height: 180px;
+      padding: 6px 8px; resize: vertical;
+      font-family: inherit; font-size: 12px; line-height: 17px;
+      color: inherit; background: transparent;
+      border: 1px solid var(--sq-line-hover); border-radius: 5px;
+    }
+    .sq-ask-input:focus { border-color: currentColor; outline: none; }
+    .sq-ask-foot { display: flex; align-items: center; gap: 8px; }
+    .sq-ask-hint { font-size: 11px; line-height: 15px; opacity: .6; }
+    .sq-menu .sq-ask-send {
+      width: auto; margin-left: auto; padding: 4px 12px;
+      font-size: 12px; line-height: 16px; font-weight: 500;
+      color: #fff; background: #007a5a;
+    }
+    .sq-menu .sq-ask-send:hover { background: #148567; }
     /* A sentence, not a menu item. It wraps inside the menu rather than
        stretching it into a bar across the message underneath. */
     .sq-note {
@@ -370,7 +390,8 @@
   let menuSig = '';
   let menuIndex = -1;
   let panelEl = null;
-  let panelKeys = null;
+  /** Keys for whichever text box holds the keyboard: the path box or the Ask box. */
+  let boxKeys = null;
   let toastEl = null;
   let toastTimer = 0;
   const resultEls = new Map();
@@ -386,7 +407,7 @@
     menuSig = '';
     menuIndex = -1;
     panelEl = null;
-    panelKeys = null;
+    boxKeys = null;
     toastEl = null;
     themeSig = '';
     resultEls.clear();
@@ -824,6 +845,7 @@
     menuRow = null;
     menuSig = '';
     menuIndex = -1;
+    boxKeys = null;
   }
 
   const stop = (event) => {
@@ -936,6 +958,10 @@
       const letterFor = promptLetters(entries.map((e) => e.prompt));
       entries.forEach(({ prompt, ticket }, index) => {
         const entry = menuButton('sq-menu-prompt', () => {
+          if (prompt.key === ASK_KEY && !ticket) {
+            openAskBox(prompt);
+            return;
+          }
           const target = menuRow;
           closeMenu();
           if (target && target.isConnected) startSession(target, prompt, ticket);
@@ -959,6 +985,64 @@
     schedule();
   }
 
+  /**
+   * Ask asks for the question first, in the menu itself, so the agent starts
+   * on it rather than waiting to be told. The box is optional: sending it
+   * empty starts the session with just the message.
+   */
+  function openAskBox(prompt) {
+    const menu = menuEl;
+    if (!menu) return;
+    menu.dataset.asking = '1';
+    menuIndex = -1;
+
+    const title = document.createElement('div');
+    title.className = 'sq-ask-title';
+    title.textContent = `${glyphFor(prompt.emoji)} ${prompt.label}`;
+
+    const box = document.createElement('textarea');
+    box.className = 'sq-ask-input';
+    box.rows = 3;
+    box.spellcheck = true;
+    box.placeholder = 'What do you want to know? (optional)';
+
+    const foot = document.createElement('div');
+    foot.className = 'sq-ask-foot';
+    const hint = document.createElement('span');
+    hint.className = 'sq-ask-hint';
+    hint.textContent = '⇧↵ new line · Esc cancel';
+    const submit = menuButton('sq-ask-send', () => send());
+    submit.textContent = prompt.label;
+    submit.title = `Start ${prompt.label} with ${CONFIG.agentLabel} — Enter`;
+    foot.append(hint, submit);
+
+    menu.replaceChildren(title, box, foot);
+
+    function send() {
+      const target = menuRow;
+      const question = box.value.trim();
+      closeMenu();
+      if (target && target.isConnected) startSession(target, prompt, null, question);
+      schedule();
+    }
+
+    // Like the path box, reached from the window-level claim in the triggers
+    // section: Slack would otherwise take these keys for its composer.
+    boxKeys = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeMenu();
+        schedule();
+      } else if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        send();
+      }
+    };
+
+    box.focus();
+    schedule();
+  }
+
   function shortBranch(branch) {
     const text = String(branch || '');
     return text.length > 28 ? `${text.slice(0, 27)}…` : text;
@@ -967,6 +1051,8 @@
   /** Arrow keys, Enter, and a digit or first letter to pick a prompt. */
   function menuKeys(event) {
     if (!menuEl || event.metaKey || event.ctrlKey || event.altKey) return false;
+    // In the Ask box a digit is part of the question, not a pick.
+    if (menuEl.dataset.asking) return false;
     // Someone typing into Slack's composer with the menu still open is
     // typing, not choosing.
     const active = document.activeElement;
@@ -1079,7 +1165,7 @@
 
   /* ------------------------------------------------------------- sessions */
 
-  function startSession(row, prompt, ticket = null) {
+  function startSession(row, prompt, ticket = null, question = '') {
     // Read everything now: the row can be recycled long before the daemon
     // answers, and the answer belongs to the message that was clicked.
     const sig = rowSignature(row);
@@ -1097,6 +1183,7 @@
       permalink: meta.permalink,
       ts: meta.ts,
       ticket: ticket ? ticket.url : '',
+      question,
     };
     const label = ticket ? `${prompt.label} ${ticket.id}` : prompt.label;
 
@@ -1348,23 +1435,24 @@
   function closePanel() {
     panelEl?.remove();
     panelEl = null;
-    panelKeys = null;
+    boxKeys = null;
   }
 
   /**
-   * The panel's input, while it holds the keyboard. Focus inside a shadow root
-   * reads as the host from the outside, so this is the only way to tell an
-   * event meant for the path box from one meant for Slack.
+   * The panel's path box or the menu's Ask box, while it holds the keyboard.
+   * Focus inside a shadow root reads as the host from the outside, so this is
+   * the only way to tell an event meant for the box from one meant for Slack.
    */
-  function panelInput() {
-    if (!panelEl || !ui) return null;
+  function typingBox() {
+    if (!ui) return null;
     const active = ui.activeElement;
-    return active && active.tagName === 'INPUT' && panelEl.contains(active) ? active : null;
+    if (!active || !/^(INPUT|TEXTAREA)$/.test(active.tagName)) return null;
+    return (panelEl && panelEl.contains(active)) || (menuEl && menuEl.contains(active)) ? active : null;
   }
 
-  /** A path is one line, whatever shape the clipboard carried it in. */
+  /** A path is one line, whatever shape the clipboard carried it in; a question keeps its lines. */
   function insertText(input, text) {
-    const flat = text.replace(/\s*[\r\n]+\s*/g, ' ').trim();
+    const flat = input.tagName === 'TEXTAREA' ? text : text.replace(/\s*[\r\n]+\s*/g, ' ').trim();
     if (!flat) return;
     const start = input.selectionStart ?? input.value.length;
     const end = input.selectionEnd ?? start;
@@ -1506,7 +1594,7 @@
     // from a listener here: that claim has to stop the event before Slack's
     // own document listeners see it, which is early enough that it never
     // reaches this input at all.
-    panelKeys = (event) => {
+    boxKeys = (event) => {
       if (event.key === 'Enter') send();
       if (event.key === 'Escape') { closePanel(); schedule(); }
       if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && visible.length > 0) {
@@ -1864,7 +1952,7 @@
 
   for (const type of ['paste', 'copy', 'cut']) {
     window.addEventListener(type, (event) => {
-      if (!panelInput()) return;
+      if (!typingBox()) return;
       if (event.type === 'paste') pasteTicket = 0;
       event.stopImmediatePropagation();
     }, true);
@@ -1877,13 +1965,13 @@
       schedule();
       return;
     }
-    const input = panelInput();
+    const input = typingBox();
     if (!input) return;
-    // The same stop keeps a keystroke meant for the path box from also being a
+    // The same stop keeps a keystroke meant for the box from also being a
     // Slack shortcut, and keeps anything downstream from cancelling the key's
     // own paste.
     event.stopImmediatePropagation();
-    panelKeys?.(event);
+    boxKeys?.(event);
     if (!(event.metaKey || event.ctrlKey) || String(event.key).toLowerCase() !== 'v') return;
 
     // A paste normally follows as that key's default action, and the handler
@@ -1891,16 +1979,16 @@
     // for itself and no paste ever arrives, read the clipboard directly.
     const ticket = ++pasteTicket;
     setTimeout(() => {
-      if (pasteTicket !== ticket || panelInput() !== input) return;
+      if (pasteTicket !== ticket || typingBox() !== input) return;
       Promise.resolve(navigator.clipboard?.readText?.()).then((text) => {
-        if (text && pasteTicket === ticket && panelInput() === input) insertText(input, text);
+        if (text && pasteTicket === ticket && typingBox() === input) insertText(input, text);
       }).catch(() => {});
     }, 0);
   }, true);
 
   for (const type of ['keypress', 'keyup']) {
     window.addEventListener(type, (event) => {
-      if (panelInput()) event.stopImmediatePropagation();
+      if (typingBox()) event.stopImmediatePropagation();
     }, true);
   }
 
