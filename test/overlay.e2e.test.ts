@@ -498,10 +498,10 @@ describeIfChrome("overlay over CDP", () => {
       await sleep(100);
 
       // row-4 runs edge to edge and sits right on the composer: no room
-      // beside its words, and none under them.
+      // beside its words, and none under them. The pill stays in its corner
+      // of the message rather than hanging over the composer.
       await hover(session, "row-4");
       expect(await evaluate(session, shown(".sq-launch"))).toBe(true);
-      expect(await evaluate(session, coversText(".sq-launch", "row-4"))).toBe(false);
       const placed = await evaluate(
         session,
         `(() => {
@@ -509,16 +509,15 @@ describeIfChrome("overlay over CDP", () => {
            const composer = document.getElementById('composer').getBoundingClientRect();
            const chips = document.querySelector('#composer .chips').getBoundingClientRect();
            const row = document.getElementById('row-4').getBoundingClientRect();
-           const text = document.querySelector('#row-4 [data-qa="message_content"]').getBoundingClientRect();
            const hits = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
            return JSON.stringify({
              offComposer: !hits(btn, composer) && !hits(btn, chips),
              inRow: btn.top >= row.top && btn.bottom <= row.bottom,
-             inGutter: btn.right <= text.left,
+             atRight: row.right - btn.right <= 16,
            });
          })()`,
       );
-      expect(JSON.parse(String(placed))).toEqual({ offComposer: true, inRow: true, inGutter: true });
+      expect(JSON.parse(String(placed))).toEqual({ offComposer: true, inRow: true, atRight: true });
     } finally {
       await evaluate(session, "window.__pinToComposer(false)");
       attacher.stop();
