@@ -4,7 +4,7 @@ import { renderPrompt, renderReply, type PromptContext } from "../config/prompts
 import { firstTicket, isTicketPrompt, keepsBranchCase, ticketFor, type Ticket } from "../config/tickets.js";
 import { linkPrompt, resolveAgent, type DesktopApp, type ResolvedAgent } from "../agents/agents.js";
 import type { Config } from "../config/schema.js";
-import { inspectRepo } from "../git/repo.js";
+import { defaultBranchCached, forgetRepos, locateRepoCached } from "../git/repo.js";
 import { createWorktree } from "../git/worktree.js";
 import { autorunPaths, writeAutorun } from "../warp/autorun.js";
 import { colorForPrompt, prepareTabConfig, strategyOrder, type PreparedTabConfig } from "../warp/launcher.js";
@@ -112,8 +112,9 @@ export async function createSession(
     throw new UserFacingError(`That message has no ${TRACKER_NAMES[ticketPrompt]} issue link to work from.`);
   }
 
-  const repo = await inspectRepo(link.repoPath);
-  const baseBranch = link.baseBranch.trim() || repo.defaultBranch;
+  const repo = await locateRepoCached(link.repoPath);
+  // A link that names its base needs no guessing at the default branch.
+  const baseBranch = link.baseBranch.trim() || (await defaultBranchCached(repo));
   const repoLabel = link.label.trim() || repo.name;
   const agent = resolveAgent(config.settings.agent);
   const terminal = config.settings.terminal;
@@ -146,7 +147,7 @@ export async function createSession(
   });
 
   // A tab config has to sit on disk a moment before Warp will open it, so
-  // write it while git checks the worktree out rather than after.
+  // write it while git fetches and checks the worktree out rather than after.
   let preparedTabConfig: PreparedTabConfig | undefined;
   const preview = config.settings.warpPreview;
   const tabConfigFirst =
@@ -174,6 +175,8 @@ export async function createSession(
   }).catch(async (err: unknown) => {
     // No worktree, so no tab to open: don't leave Warp a config pointing nowhere.
     if (tabConfigName) await removeTabConfig(tabConfigName, preview).catch(() => {});
+    // The repo may have moved or changed under what was remembered about it.
+    forgetRepos();
     throw err;
   });
 

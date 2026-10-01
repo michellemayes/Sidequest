@@ -32,6 +32,8 @@ export interface PageStatus {
   pr?: { number: number; url: string } | null;
   /** The agent left a reply for the thread that has not been posted yet. */
   reply: boolean;
+  /** When that reply was last written, so a rewrite is news again. */
+  replyAt?: number;
 }
 
 /**
@@ -122,7 +124,7 @@ function sessionsByMessage(
       label: entry.promptLabel,
       branch: entry.branch,
       at: entry.createdAt,
-      ...(status ? { status: progress ? pageStatus(status) : { reply: status.resultPending } } : {}),
+      ...(status ? { status: progress ? pageStatus(status) : replyStatus(status) } : {}),
       ...(launchError ? { launchError } : {}),
     });
   }
@@ -136,8 +138,14 @@ function pageStatus(status: SessionStatus): PageStatus {
     commits: status.commits,
     dirty: status.dirty,
     pr: status.pr ? { number: status.pr.number, url: status.pr.url } : null,
-    reply: status.resultPending,
+    ...replyStatus(status),
   };
+}
+
+function replyStatus(status: SessionStatus): Pick<PageStatus, "reply" | "replyAt"> {
+  return status.resultPending && status.resultMs !== null
+    ? { reply: true, replyAt: status.resultMs }
+    : { reply: false };
 }
 
 /**

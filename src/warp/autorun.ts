@@ -64,10 +64,13 @@ export async function writeAutorun(options: WriteAutorunOptions): Promise<Autoru
   const paths = autorunPaths(options.worktreePath);
   await mkdir(paths.dir, { recursive: true });
 
-  await writeFile(paths.promptFile, `${options.prompt}\n`, "utf8");
-  if (options.pending !== false) await writeFile(paths.pendingFile, "", "utf8");
-  await writeFile(paths.scriptFile, renderScript(options), "utf8");
-  await chmod(paths.scriptFile, 0o755);
+  // Separate files, and nothing runs the script until this returns, so they
+  // are written side by side.
+  await Promise.all([
+    writeFile(paths.promptFile, `${options.prompt}\n`, "utf8"),
+    options.pending !== false ? writeFile(paths.pendingFile, "", "utf8") : null,
+    writeFile(paths.scriptFile, renderScript(options), "utf8").then(() => chmod(paths.scriptFile, 0o755)),
+  ]);
 
   return paths;
 }

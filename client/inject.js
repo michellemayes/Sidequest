@@ -220,6 +220,15 @@
     .sq-icon svg { display: block; }
     /* In compact mode the pill is a 22px dot-only button; the icon would not fit. */
     .sq-pill[data-compact="1"] > .sq-icon { display: none; }
+    /* Replies waiting to be read, on the pill that is always in the header,
+       so one that scrolled away or outlived its toast is a click away. */
+    .sq-reply-count {
+      flex: 0 0 auto; padding: 0 6px; margin-right: -4px;
+      font-size: 11px; line-height: 16px; font-weight: 600;
+      color: #fff; background: #8b5cf6; border-radius: 8px;
+    }
+    .sq-reply-count:hover { background: #7c3aed; }
+    .sq-pill[data-compact="1"] > .sq-reply-count { display: none; }
 
     .sq-menu {
       position: fixed; left: 0; top: 0;
@@ -472,6 +481,18 @@
       background: transparent; border: 0; border-radius: 3px; cursor: pointer;
     }
     .sq-session-x:hover { opacity: 1; background: var(--sq-wash); }
+    .sq-chip[data-tone="reply"] { color: #8b5cf6; border-color: color-mix(in srgb, #8b5cf6 45%, transparent); opacity: 1; }
+    /* Replies an agent left that have not been posted or dropped: first in
+       the panel, since they are the thing waiting on you. */
+    .sq-replies { display: flex; flex-direction: column; gap: 1px; margin: 0 -4px 6px; padding-bottom: 6px; border-bottom: 1px solid var(--sq-line); }
+    .sq-replies-head { padding: 0 8px 2px; font-size: 11px; font-weight: 600; opacity: .65; }
+    .sq-reply-row {
+      display: flex; align-items: baseline; gap: 6px; padding: 5px 8px; margin: 0;
+      font-family: inherit; font-size: 12px; line-height: 16px; color: inherit; text-align: left;
+      background: transparent; border: 0; border-radius: 5px; cursor: pointer;
+    }
+    .sq-reply-row:hover { background: var(--sq-wash); }
+    .sq-reply-row > .sq-session-branch { flex: 1 1 auto; }
     /* Asking before removing, in the row itself, so what is being removed
        stays in view while the question is asked. */
     .sq-session-confirm {
@@ -1020,28 +1041,47 @@
    * comes back as a sign-in page, is left out rather than failing the session.
    */
   async function fetchFiles(files) {
-    const out = [];
+    // Downloaded side by side, then kept or dropped in the message's order,
+    // so the size limits keep the same files as fetching them one by one.
+    const blobs = await Promise.all(files.map(fetchFile));
+    const kept = [];
     let total = 0;
-    for (const file of files) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), FILE_TIMEOUT_MS);
-      try {
-        const res = await fetch(file.url, { credentials: 'include', signal: controller.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
-        if (/text\/html/i.test(blob.type)) throw new Error('got a page, not the file');
-        if (blob.size === 0 || blob.size > MAX_FILE_BYTES || total + blob.size > MAX_FILES_TOTAL) {
-          throw new Error(`${blob.size} bytes is over the limit`);
-        }
-        total += blob.size;
-        out.push({ name: file.name, type: blob.type, data: await base64Of(blob) });
-      } catch (err) {
-        log('could not fetch', file.url, err.message);
-      } finally {
-        clearTimeout(timer);
+    files.forEach((file, i) => {
+      const blob = blobs[i];
+      if (!blob) return;
+      if (blob.size === 0 || blob.size > MAX_FILE_BYTES || total + blob.size > MAX_FILES_TOTAL) {
+        log('could not fetch', file.url, `${blob.size} bytes is over the limit`);
+        return;
       }
+      total += blob.size;
+      kept.push({ file, blob });
+    });
+    const encoded = await Promise.all(kept.map(({ file, blob }) => base64Of(blob).then(
+      (data) => ({ name: file.name, type: blob.type, data }),
+      (err) => {
+        log('could not fetch', file.url, err.message);
+        return null;
+      },
+    )));
+    return encoded.filter(Boolean);
+  }
+
+  /** One file's contents, or null when it will not come in time or is not a file. */
+  async function fetchFile(file) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FILE_TIMEOUT_MS);
+    try {
+      const res = await fetch(file.url, { credentials: 'include', signal: controller.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      if (/text\/html/i.test(blob.type)) throw new Error('got a page, not the file');
+      return blob;
+    } catch (err) {
+      log('could not fetch', file.url, err.message);
+      return null;
+    } finally {
+      clearTimeout(timer);
     }
-    return out;
   }
 
   function base64Of(blob) {
@@ -1353,6 +1393,7 @@
     } else {
       const repos = reposFor(channel);
       if (repos.length > 1) menu.append(repoSwitcher(channel, repos));
+      prefetch(channel);
 
       // A reply an agent left is the first thing worth doing with its message.
       for (const entry of sessionsFor(sig).filter((e) => e.status && e.status.reply).reverse()) {
@@ -1446,6 +1487,7 @@
 
   function pickRepo(channel, repo) {
     repoPicks.set(channelKey(channel), repo);
+    prefetch(channel);
     if (!menuEl) return;
     menuEl.querySelectorAll('.sq-repo').forEach((chip) => {
       const on = chip.dataset.repo === repo;
@@ -1453,6 +1495,16 @@
       else delete chip.dataset.on;
       chip.setAttribute('aria-checked', on ? 'true' : 'false');
     });
+  }
+
+  /**
+   * Have the daemon start fetching the repo a session from this channel would
+   * be cut from, while the reader is still choosing a prompt. Nothing waits
+   * on it: the daemon skips a fetch it has just done and joins one running.
+   */
+  function prefetch(channel) {
+    const repo = reposFor(channel).length > 1 ? pickedRepo(channel) : '';
+    ask({ op: 'prefetch', channel, repo }).catch(() => {});
   }
 
   /**
@@ -2173,15 +2225,23 @@
 
   /* --------------------------------------------------------------- replies */
 
-  /** Branches whose reply has been announced, so each is announced once. */
+  /**
+   * Replies announced, by branch and the write of result.md they came from,
+   * so each is announced once and a rewritten one is announced again.
+   */
   const announced = new Set();
 
+  function replyKey(entry) {
+    return `${entry.branch}\u0000${(entry.status && entry.status.replyAt) || ''}`;
+  }
+
+  /** Every reply waiting to be posted or dropped, newest first. */
   function pendingReplies() {
     const out = [];
     for (const list of Object.values(CONFIG.sessions || {})) {
       for (const entry of list) if (entry.status && entry.status.reply) out.push(entry);
     }
-    return out;
+    return out.sort((a, b) => ((b.status.replyAt || 0) - (a.status.replyAt || 0)) || String(b.at).localeCompare(String(a.at)));
   }
 
   /**
@@ -2191,21 +2251,29 @@
    * their messages; they are not news.
    */
   function announceReplies() {
-    for (const entry of pendingReplies()) {
-      if (announced.has(entry.branch)) continue;
-      announced.add(entry.branch);
+    const pending = pendingReplies();
+    for (const entry of pending) {
+      const key = replyKey(entry);
+      if (announced.has(key)) continue;
+      const rewritten = Array.from(announced).some((k) => k.startsWith(`${entry.branch}\u0000`));
+      announced.add(key);
       if (CONFIG.postResults !== 'ask') continue;
       toast({
-        title: `${entry.label || 'A session'} has a reply for the thread`,
-        sub: entry.branch,
+        title: rewritten
+          ? `${entry.label || 'A session'} updated its reply for the thread`
+          : `${entry.label || 'A session'} has a reply for the thread`,
+        sub: `${entry.branch} · also under 💬 in the header`,
         action: { label: 'Review', run: () => openReplyPanel(entry.branch) },
       });
     }
-    for (const branch of Array.from(announced)) {
-      if (!pendingReplies().some((e) => e.branch === branch)) announced.delete(branch);
+    // Keep only the latest write per branch, so the next one reads as a rewrite.
+    const live = new Set(pending.map(replyKey));
+    for (const key of Array.from(announced)) {
+      const branch = key.split('\u0000')[0];
+      if (!live.has(key) && pending.some((e) => e.branch === branch)) announced.delete(key);
     }
   }
-  for (const entry of pendingReplies()) announced.add(entry.branch);
+  for (const entry of pendingReplies()) announced.add(replyKey(entry));
 
   /**
    * The agent's reply, to read and edit before it goes out as you. Nothing
@@ -2214,6 +2282,7 @@
   function openReplyPanel(branch) {
     closeMenu();
     closePanel();
+    closeSessions();
     if (!ensureLayer()) return;
 
     const panel = document.createElement('div');
@@ -2239,7 +2308,7 @@
         return;
       }
       title.textContent = `${res.label || 'Session'}'s reply${res.channel ? ` in #${res.channel}` : ''}`;
-      note.textContent = 'Posted in the thread as you. Edit it first if you like.';
+      note.textContent = `Posted in the thread as you, marked as written by ${res.agent || CONFIG.agentLabel}. Edit it first if you like.`;
 
       const box = document.createElement('textarea');
       box.className = 'sq-ask-input sq-reply-input';
@@ -2313,11 +2382,19 @@
     icon.innerHTML = iconSvg();
     const label = document.createElement('span');
     label.className = 'sq-label sq-channel-label';
-    button.append(dot, icon, label);
+    const count = document.createElement('span');
+    count.className = 'sq-reply-count';
+    hide(count);
+    button.append(dot, icon, label, count);
 
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (count.contains(event.target)) {
+        toggleSessions();
+        schedule();
+        return;
+      }
       if (panelEl) closePanel();
       else openPanel(null);
       schedule();
@@ -2648,6 +2725,16 @@
         : `#${channel} starts ${CONFIG.agentLabel} sessions in ${repo} — click to add another or unlink`
       : `Link #${channel} to a git repo so messages can start ${CONFIG.agentLabel} sessions`;
     title += `\n${SESSIONS_KEY_LABEL} lists your sessions`;
+    const waiting = CONFIG.postResults === 'ask' ? pendingReplies().length : 0;
+    const count = channelBtn.querySelector('.sq-reply-count');
+    const countText = waiting ? `💬 ${waiting}` : '';
+    if (count.textContent !== countText) {
+      count.textContent = countText;
+      count.title = `${waiting} ${waiting === 1 ? 'reply' : 'replies'} from your sessions waiting to be posted — click to see them`;
+      if (waiting) show(count);
+      else hide(count);
+    }
+    if (waiting) title += `\n${waiting} ${waiting === 1 ? 'reply is' : 'replies are'} waiting: click 💬 to review`;
     if (channelBtn.title !== title) channelBtn.title = title;
 
     const box = channelAnchorBox(anchor);
@@ -2817,10 +2904,40 @@
     error.textContent = sessionsError;
     if (!sessionsError) hide(error);
 
-    panel.replaceChildren(head, list, note, error);
+    const replies = repliesSection();
+    panel.replaceChildren(...[head, replies, list, note, error].filter(Boolean));
     list.scrollTop = scrollTop;
     keepActiveInView(list);
     schedule();
+  }
+
+  /**
+   * Every reply still waiting, whichever message or channel it belongs to,
+   * so one whose toast is gone and whose message has scrolled away can still
+   * be read, edited and posted. Drawn from the config the daemon pushes, so
+   * it covers sessions the list below has no room for.
+   */
+  function repliesSection() {
+    if (CONFIG.postResults !== 'ask') return null;
+    const pending = pendingReplies();
+    if (pending.length === 0) return null;
+    const box = document.createElement('div');
+    box.className = 'sq-replies';
+    const head = document.createElement('div');
+    head.className = 'sq-replies-head';
+    head.textContent = `💬 ${pending.length === 1 ? 'Reply' : 'Replies'} waiting to post`;
+    box.append(head);
+    for (const entry of pending) {
+      const row = menuButton('sq-reply-row', () => openReplyPanel(entry.branch));
+      row.title = `Read ${entry.label || 'the session'}'s reply, edit it, and post it in the thread`;
+      spans(row, [
+        ['sq-session-branch', entry.branch],
+        ['sq-sub', entry.label || ''],
+        ['sq-sub', entry.status.replyAt ? ageOf(new Date(entry.status.replyAt).toISOString()) : ''],
+      ].filter(([, text]) => text));
+      box.append(row);
+    }
+    return box;
   }
 
   /** Scrolled by hand: scrollIntoView could move a scroller of Slack's as well. */
@@ -2860,6 +2977,9 @@
     }
     if (typeof s.dirty === 'number' && s.dirty > 0) {
       chips.push([`${s.dirty} uncommitted`, 'warn', 'Changed or new files not yet committed.']);
+    }
+    if (pendingReplies().some((e) => e.branch === s.branch)) {
+      chips.push(['reply ready', 'reply', 'The agent left a reply for the thread. It is listed at the top.']);
     }
     return chips;
   }
