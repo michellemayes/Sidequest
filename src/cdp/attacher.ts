@@ -25,6 +25,7 @@ import { StatusWatcher, type SessionStatus } from "../session/status.js";
 import { readResult, resultReply } from "../session/result.js";
 import type { IncomingAttachment } from "../session/attachments.js";
 import { findSession, openSession } from "../session/reopen.js";
+import { findById, listSessions, removeSession, UncommittedWorkError } from "../session/sessions.js";
 import { discoverRepos } from "../git/discover.js";
 import { describeError } from "../util/errors.js";
 import { log } from "../util/log.js";
@@ -84,6 +85,10 @@ interface AskRequest {
   resultMs?: number;
   error?: string;
   dismissed?: boolean;
+  /** A session in the sessions panel, by its worktree's directory name. */
+  session?: string;
+  /** Remove a session even though it has uncommitted changes. */
+  force?: boolean;
 }
 
 export class Attacher {
@@ -361,6 +366,12 @@ export class Attacher {
       case "result-posted":
         await this.handleResultPosted(session, contextId, request);
         return;
+      case "list-sessions":
+        await this.handleListSessions(session, contextId, request);
+        return;
+      case "remove-session":
+        await this.handleRemoveSession(session, contextId, request);
+        return;
       default:
         await this.reply(session, contextId, { id: request.id, error: `unknown op ${request.op}` });
     }
@@ -543,18 +554,26 @@ export class Attacher {
     }
   }
 
-  /** Back into a session started earlier, from the mark on its message. */
+  /**
+   * Back into a session started earlier, from the mark on its message — by
+   * branch — or from the sessions panel, by its worktree's name, which cannot
+   * be mistaken for a same-named branch in another repo.
+   */
   private async handleReopen(
     session: CdpSession,
     contextId: number | undefined,
     request: AskRequest,
   ): Promise<void> {
     try {
-      const branch = (request.branch ?? "").trim();
+      const id = typeof request.session === "string" ? request.session.trim() : "";
+      let branch = (request.branch ?? "").trim();
       const config = await loadConfig();
       const history = await loadHistory();
       const known = history.filter((h) => h.branch === branch).map((h) => h.repoPath);
-      const found = branch ? await findSession(config, branch, known) : null;
+      const found = id
+        ? await findById(config, history, id)
+        : branch ? await findSession(config, branch, known) : null;
+      if (found) branch = found.worktree.branch;
       if (!found) {
         await this.reply(session, contextId, {
           id: request.id,
@@ -623,6 +642,48 @@ export class Attacher {
     } catch (err) {
       const { message, hint } = describeError(err);
       await this.reply(session, contextId, { id: request.id, error: message, hint });
+    }
+  }
+
+  /**
+   * The sessions panel's list. Asked for each time the panel opens, so it
+   * says what git says now rather than what the config said at inject time.
+   */
+  private async handleListSessions(
+    session: CdpSession,
+    contextId: number | undefined,
+    request: AskRequest,
+  ): Promise<void> {
+    try {
+      const sessions = await listSessions(await loadConfig(), await loadHistory());
+      await this.reply(session, contextId, { id: request.id, ok: true, sessions });
+    } catch (err) {
+      const { message, hint } = describeError(err);
+      await this.reply(session, contextId, { id: request.id, error: message, hint, sessions: [] });
+    }
+  }
+
+  /**
+   * Remove a finished session from the panel. Uncommitted work is refused
+   * with how much of it there is, so the page can ask before sending `force`.
+   */
+  private async handleRemoveSession(
+    session: CdpSession,
+    contextId: number | undefined,
+    request: AskRequest,
+  ): Promise<void> {
+    try {
+      const result = await removeSession(await loadConfig(), await loadHistory(), request.session ?? "", {
+        force: request.force === true,
+      });
+      this.emit({ type: "remove-session", branch: result.branch });
+      await this.reply(session, contextId, { id: request.id, ok: true, ...result });
+      // Its mark now says it was cleaned up.
+      void this.refreshStatuses();
+    } catch (err) {
+      const { message, hint } = describeError(err);
+      const dirty = err instanceof UncommittedWorkError ? err.dirty : undefined;
+      await this.reply(session, contextId, { id: request.id, error: message, hint, dirty });
     }
   }
 
