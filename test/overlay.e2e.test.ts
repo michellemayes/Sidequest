@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile, utimes } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -39,13 +39,16 @@ const GEOMETRY = `JSON.stringify({
     return [Math.round(rect.top), Math.round(rect.height), getComputedStyle(row).position];
   }),
 })`;
-const PORT = 9333;
-const HTTP_PORT = 9334;
+// Overridable so two runs on one machine (say, two checkouts) do not collide.
+const PORT = Number(process.env.SIDEQUEST_E2E_PORT) || 9333;
+const HTTP_PORT = PORT + 1;
 
 let chrome: ChildProcess | null = null;
 let server: Server | null = null;
 let profileDir = "";
 let baseline = "";
+/** A tiny PNG's first bytes: enough to be a file, and to check it arrived intact. */
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 /** Bodies of what the overlay posted to the fixture's stand-in for Slack's API. */
 const posts: string[] = [];
 
@@ -81,6 +84,12 @@ describeIfChrome("overlay over CDP", () => {
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ ok: true, channel: { id: "C0SMOKE", name: "eng-alerts" } }));
         });
+        return;
+      }
+      // Stands in for Slack's file host, serving a message's attachments.
+      if (req.method === "GET" && req.url?.startsWith("/files/")) {
+        res.writeHead(200, { "content-type": "image/png" });
+        res.end(PNG);
         return;
       }
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -206,8 +215,14 @@ describeIfChrome("overlay over CDP", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  async function attachAndEval(): Promise<{ attacher: Attacher; session: CdpSession }> {
-    const attacher = new Attacher({ cdpPort: PORT, targetUrlPattern: "127\\.0\\.0\\.1" });
+  async function attachAndEval(
+    options: { watchIntervalMs?: number | false } = {},
+  ): Promise<{ attacher: Attacher; session: CdpSession }> {
+    const attacher = new Attacher({
+      cdpPort: PORT,
+      targetUrlPattern: "127\\.0\\.0\\.1",
+      watchIntervalMs: options.watchIntervalMs ?? false,
+    });
     await attacher.start();
 
     const targets = await listTargets(PORT);
@@ -1076,6 +1091,226 @@ describeIfChrome("overlay over CDP", () => {
       expect(field("text")).toBe("Reviewing this in repo.");
     } finally {
       await evaluate(session, "localStorage.removeItem('localConfig_v2')").catch(() => undefined);
+      attacher.stop();
+      session.close();
+    }
+  }, 45_000);
+
+  /** The worktree a session made, found by a fragment of its branch. */
+  async function worktreeFor(fragment: string): Promise<string> {
+    const worktrees = await exec("git", ["worktree", "list"], { cwd: repoPath });
+    const line = worktrees.stdout.split("\n").find((l) => l.includes(fragment));
+    return line?.split(/\s+/)[0] ?? "";
+  }
+
+  /** The text of the mark drawn on a row, or '' when there is none. */
+  function markOn(rowId: string): string {
+    return `(() => {
+      const marks = Array.from(${UI}.querySelectorAll('.sq-mark')).filter((m) => !m.classList.contains('sq-off'));
+      const row = document.getElementById('${rowId}').getBoundingClientRect();
+      const hit = marks.find((m) => {
+        const r = m.getBoundingClientRect();
+        return r.top >= row.top - 1 && r.bottom <= row.bottom + 1;
+      });
+      return hit ? hit.textContent : '';
+    })()`;
+  }
+
+  async function waitFor(session: CdpSession, expression: string, ok: (v: string) => boolean, ms = 15_000): Promise<string> {
+    const deadline = Date.now() + ms;
+    let value = "";
+    while (Date.now() < deadline) {
+      value = String(await evaluate(session, expression));
+      if (ok(value)) return value;
+      await sleep(200);
+    }
+    return value;
+  }
+
+  it("hands the files attached to a message to the agent", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      // Here the fixture's own server plays Slack's file host.
+      await evaluate(session, `window.__sidequestSetConfig(JSON.stringify({ fileHosts: '^127\\\\.0\\\\.0\\\\.1$' }))`);
+      // A screenshot the way Slack draws one: a thumbnail inside a link to the original.
+      await evaluate(session, `(() => {
+        const link = document.createElement('a');
+        link.href = '/files/T0SMOKE-F0SHOT1234/screen_shot.png';
+        const img = document.createElement('img');
+        img.src = '/files/files-tmb/T0SMOKE-F0SHOT1234-abc/screen_shot_720.png';
+        img.width = 20; img.height = 12;
+        link.append(img);
+        document.getElementById('row-1').querySelector('[data-qa="message_content"]').append(link);
+      })()`);
+
+      await hover(session, "row-1");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      await press(session, "2", "Digit2", 50);
+      const line = await settledResult(session);
+      expect(line).toContain("with 1 file");
+
+      const worktree = await worktreeFor("fix-checkout");
+      const saved = await readFile(join(worktree, ".sidequest", "attachments", "screen_shot.png"));
+      expect(saved.equals(PNG)).toBe(true);
+      const prompt = await readFile(join(worktree, ".sidequest", "prompt.md"), "utf8");
+      expect(prompt).toContain("### Attachments");
+      expect(prompt).toContain("- .sidequest/attachments/screen_shot.png (image/png");
+      // And the agent is asked to leave a reply for the thread.
+      expect(prompt).toContain(".sidequest/result.md");
+    } finally {
+      await evaluate(session, `document.querySelectorAll('#row-1 a[href^="/files/"]').forEach((a) => a.remove())`).catch(() => undefined);
+      attacher.stop();
+      session.close();
+    }
+  }, 45_000);
+
+  it("follows a session on its message, and offers the agent's reply to post", async () => {
+    const { attacher, session } = await attachAndEval({ watchIntervalMs: 300 });
+    try {
+      await sleep(600);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `localStorage.setItem('localConfig_v2', JSON.stringify({
+        teams: { T0SMOKE: { url: location.origin + '/', token: 'xoxc-test' } },
+      }))`);
+
+      await hover(session, "row-1");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      await press(session, "1", "Digit1", 49);
+      expect(await settledResult(session)).toContain("investigate/checkout-total");
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      // The pointer moves on, as it would, and leaves the mark its corner.
+      await hover(session, null);
+
+      expect(await waitFor(session, markOn("row-1"), (t) => t.includes("working"))).toBe("Investigate · working");
+
+      // The agent finishes and leaves its answer, written a moment ago.
+      const worktree = await worktreeFor("investigate-checkout");
+      const result = join(worktree, ".sidequest", "result.md");
+      await writeFile(result, "## Cause\nThe **gift card** is applied twice.\n");
+      const past = (Date.now() - 10_000) / 1000;
+      await utimes(result, past, past);
+
+      expect(await waitFor(session, markOn("row-1"), (t) => t.includes("reply ready")))
+        .toBe("Investigate · answered · reply ready");
+      const toastAction = await waitFor(session, `${UI}.querySelector('.sq-toast-action')?.textContent || ''`, Boolean);
+      expect(toastAction).toBe("Review");
+
+      // The mark opens the reply to read, in Slack's markup, before it posts.
+      await evaluate(session, `(() => {
+        const mark = Array.from(${UI}.querySelectorAll('.sq-mark')).find((m) => m.textContent.includes('reply ready'));
+        mark.click();
+      })()`);
+      const draft = await waitFor(session, `${UI}.querySelector('.sq-reply-input')?.value || ''`, Boolean);
+      expect(draft).toBe("*Cause*\nThe *gift card* is applied twice.");
+      await evaluate(session, `(() => {
+        const box = ${UI}.querySelector('.sq-reply-input');
+        box.value = box.value + '\\nFix coming.';
+        ${UI}.querySelector('.sq-reply .sq-ask-send').click();
+      })()`);
+
+      const deadline = Date.now() + 5000;
+      while (posts.length === 0 && Date.now() < deadline) await sleep(100);
+      expect(posts).toHaveLength(1);
+      const field = (name: string) =>
+        posts[0]!.match(new RegExp(`name="${name}"\\r\\n\\r\\n([^]*?)\\r\\n--`))?.[1];
+      expect(field("thread_ts")).toBe("1757430000.000100");
+      // Form encoding sends line breaks as CRLF; Slack reads them the same.
+      expect(field("text")?.replace(/\r\n/g, "\n")).toBe("*Cause*\nThe *gift card* is applied twice.\nFix coming.");
+
+      // Posted once: the mark stops offering it, and history remembers.
+      expect(await waitFor(session, markOn("row-1"), (t) => !t.includes("reply ready"))).toBe("Investigate · answered");
+      const history = JSON.parse(await readFile(join(configHome, "history.json"), "utf8"));
+      expect(history.sessions.at(-1).resultPostedMs).toBeGreaterThan(0);
+
+      // Commits show up as they land.
+      await exec("git", ["commit", "--allow-empty", "-m", "fix"], {
+        cwd: worktree,
+        env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@x", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@x" },
+      });
+      expect(await waitFor(session, markOn("row-1"), (t) => t.includes("commit"))).toBe("Investigate · 1 commit");
+    } finally {
+      await evaluate(session, "localStorage.removeItem('localConfig_v2')").catch(() => undefined);
+      attacher.stop();
+      session.close();
+    }
+  }, 60_000);
+
+  it("posts the agent's reply by itself when postResults is auto, once", async () => {
+    const file = join(configHome, "config.json");
+    const config = JSON.parse(await readFile(file, "utf8"));
+    config.settings.postResults = "auto";
+    await writeFile(file, JSON.stringify(config));
+
+    const { attacher, session } = await attachAndEval({ watchIntervalMs: 300 });
+    try {
+      await sleep(600);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `localStorage.setItem('localConfig_v2', JSON.stringify({
+        teams: { T0SMOKE: { url: location.origin + '/', token: 'xoxc-test' } },
+      }))`);
+      await hover(session, "row-1");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      await press(session, "1", "Digit1", 49);
+      expect(await settledResult(session)).toContain("investigate/checkout-total");
+
+      const worktree = await worktreeFor("investigate-checkout");
+      const prompt = await readFile(join(worktree, ".sidequest", "prompt.md"), "utf8");
+      expect(prompt).toContain("as soon as you write it");
+      const result = join(worktree, ".sidequest", "result.md");
+      await writeFile(result, "It is the rounding in `total()`.\n");
+      const past = (Date.now() - 10_000) / 1000;
+      await utimes(result, past, past);
+
+      const deadline = Date.now() + 10_000;
+      while (posts.length === 0 && Date.now() < deadline) await sleep(100);
+      expect(posts).toHaveLength(1);
+      expect(posts[0]).toContain("It is the rounding in `total()`.");
+      // No second post for the same reply, however many passes follow.
+      await sleep(1500);
+      expect(posts).toHaveLength(1);
+      const history = JSON.parse(await readFile(join(configHome, "history.json"), "utf8"));
+      expect(history.sessions.at(-1).resultPostedMs).toBeGreaterThan(0);
+    } finally {
+      await evaluate(session, "localStorage.removeItem('localConfig_v2')").catch(() => undefined);
+      attacher.stop();
+      session.close();
+    }
+  }, 45_000);
+
+  it("offers prompts of your own from the config, and runs them", async () => {
+    const file = join(configHome, "config.json");
+    const config = JSON.parse(await readFile(file, "utf8"));
+    config.prompts = {
+      review: { hidden: true },
+      triage: { label: "Triage", emoji: "bug", template: "Triage this from @{{author}}:\n{{message}}" },
+    };
+    await writeFile(file, JSON.stringify(config));
+
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await hover(session, "row-1");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      const entries = await evaluate(
+        session,
+        `JSON.stringify(Array.from(${UI}.querySelectorAll('.sq-menu-prompt')).map(b => [b.textContent, b.dataset.key, b.dataset.glyph]))`,
+      );
+      expect(JSON.parse(String(entries))).toEqual([
+        ["Investigate", "1", "🔍"], ["Fix", "2", "🔧"], ["Ask", "3", "💬"], ["Triage", "4", "🐛"],
+      ]);
+
+      await press(session, "t", "KeyT", 84);
+      expect(await settledResult(session)).toContain("Triage → triage/checkout-total");
+      const prompt = await readFile(join(await worktreeFor("triage-checkout"), ".sidequest", "prompt.md"), "utf8");
+      expect(prompt).toMatch(/^Triage this from @/);
+    } finally {
       attacher.stop();
       session.close();
     }

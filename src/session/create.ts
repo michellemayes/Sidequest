@@ -3,7 +3,7 @@ import { linksForChannel, repoForChannelName } from "../config/channels.js";
 import { renderPrompt, renderReply, type PromptContext } from "../config/prompts.js";
 import { firstTicket, isTicketPrompt, keepsBranchCase, ticketFor, type Ticket } from "../config/tickets.js";
 import { linkPrompt, resolveAgent, type DesktopApp, type ResolvedAgent } from "../agents/agents.js";
-import type { Config, PromptKey } from "../config/schema.js";
+import type { Config } from "../config/schema.js";
 import { inspectRepo } from "../git/repo.js";
 import { createWorktree } from "../git/worktree.js";
 import { autorunPaths, writeAutorun } from "../warp/autorun.js";
@@ -16,6 +16,8 @@ import {
 } from "../warp/launcher.js";
 import { removeTabConfig, type WarpSessionSpec } from "../warp/configFiles.js";
 import { branchNameFor, tabTitle, warpConfigName } from "./naming.js";
+import { formatAttachments, saveAttachments, type IncomingAttachment } from "./attachments.js";
+import { resultInstructions } from "./result.js";
 import { describeError, UserFacingError } from "../util/errors.js";
 import { openUri } from "../util/openUri.js";
 import { stripSlackMarkup } from "../util/slug.js";
@@ -36,6 +38,8 @@ export interface MessageContext {
   question?: string;
   /** Which of the channel's repos to work in, by label or path; empty means its default. */
   repo?: string;
+  /** Files attached to the message, fetched by the overlay. */
+  attachments?: IncomingAttachment[];
 }
 
 export interface SessionResult {
@@ -54,6 +58,8 @@ export interface SessionResult {
    * settings.autoReply is off or the prompt has no reply.
    */
   reply: string;
+  /** How many of the message's files were saved into the worktree. */
+  attachments: number;
   /** Set when the worktree is ready but Warp or the agent's app could not be opened, or the agent did not start. */
   launchError?: string;
 }
@@ -64,12 +70,19 @@ export interface SessionResult {
  * desktop app, for an agent that lives in one).
  */
 export async function createSession(
-  promptKey: PromptKey,
+  promptKey: string,
   message: MessageContext,
   configOverride?: Config,
 ): Promise<SessionResult> {
   const startedAt = Date.now();
   const config = configOverride ?? (await loadConfig());
+  const prompt = promptFor(config, promptKey);
+  if (!prompt) {
+    throw new UserFacingError(
+      `There is no "${promptKey}" prompt any more.`,
+      "Reload Slack to pick up the prompts as they are now.",
+    );
+  }
   const link = repoForChannelName(config, message.channelName, message.repo ?? "");
 
   if (!link) {
@@ -96,7 +109,6 @@ export async function createSession(
   const repo = await inspectRepo(link.repoPath);
   const baseBranch = link.baseBranch.trim() || repo.defaultBranch;
   const repoLabel = link.label.trim() || repo.name;
-  const prompt = promptFor(config, promptKey);
   const agent = resolveAgent(config.settings.agent);
 
   const branch = branchNameFor({
@@ -148,6 +160,12 @@ export async function createSession(
     throw err;
   });
 
+  // Best-effort: a screenshot that will not save is no reason to lose the session.
+  const attachments = await saveAttachments(worktree.path, message.attachments).catch((err: unknown) => {
+    log.warn(`could not save the message's attachments: ${describeError(err).message}`);
+    return [];
+  });
+
   const context = buildContext(message, {
     branch: worktree.branch,
     baseBranch: worktree.baseBranch,
@@ -155,8 +173,14 @@ export async function createSession(
     worktree: worktree.path,
     threadLimit: config.settings.threadContextLimit,
     ticket,
+    attachments: formatAttachments(attachments),
   });
-  const body = renderPrompt(prompt.template, context);
+  let body = renderPrompt(prompt.template, context);
+  // A template written before attachments existed still gets told about them.
+  if (context.attachments && !/\{\{\s*attachments\s*\}\}/.test(prompt.template)) {
+    body = `${body.trimEnd()}\n${context.attachments}`;
+  }
+  body += resultInstructions(config.settings.postResults);
   const reply = config.settings.autoReply
     ? renderReply(prompt.reply, context, repoLabel, message.question ?? "")
     : "";
@@ -183,6 +207,7 @@ export async function createSession(
     promptFile: files.promptFile,
     agentLabel: agent.label,
     reply,
+    attachments: attachments.length,
   };
 
   if (agent.app) return openInApp(agent, agent.app, worktree.path, body, base, startedAt);
@@ -259,6 +284,7 @@ interface ContextExtras {
   worktree: string;
   threadLimit: number;
   ticket: Ticket | null;
+  attachments: string;
 }
 
 function buildContext(message: MessageContext, extras: ContextExtras): PromptContext {
@@ -276,6 +302,7 @@ function buildContext(message: MessageContext, extras: ContextExtras): PromptCon
     ticket: extras.ticket?.url ?? "",
     ticketId: extras.ticket?.id ?? "",
     question: formatQuestion(message.question ?? ""),
+    attachments: extras.attachments,
   };
 }
 

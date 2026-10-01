@@ -1,8 +1,7 @@
 import { slugify, stripSlackMarkup, timeFragment } from "../util/slug.js";
-import type { PromptKey } from "../config/schema.js";
 
 export interface BranchNameInput {
-  promptKey: PromptKey;
+  promptKey: string;
   branchPrefix: string;
   messageText: string;
   /** Slack message ts, used when the message has no usable words. */

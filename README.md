@@ -16,8 +16,12 @@ for the recording; see [`docs/demo`](docs/demo) to re-record it.</sub>
 
 - **No Slack app, no bot token, no workspace install.** Sidequest attaches to the
   Slack desktop app you already use.
-- **Nothing leaves your machine.** The message goes from Slack's window into a
-  prompt file on disk. (Unless you turn on thread replies, which post to Slack as you.)
+- **Nothing leaves your machine** unless you say so. The message and its files
+  go from Slack's window into the worktree on disk. The only things posted to
+  Slack are the replies you choose to send, as you.
+- **It follows the session through.** The message shows how far its session has
+  got (working, commits, PR open, merged). When the agent is done, its answer
+  waits on the message for you to read, edit and post in the thread.
 - **Your checkout is never touched.** Every session gets its own branch and
   worktree, cut from an up-to-date base branch.
 
@@ -75,6 +79,37 @@ Messages you've already started a session from keep a small **✦ Fix** mark.
 Click it to jump back into that session. Its menu also leads with **Back to Fix**,
 so you don't cut a duplicate branch by accident.
 
+The mark also says where the session has got to, and keeps up as it moves:
+
+| Mark | Means |
+| --- | --- |
+| **✦ Fix · working** | Started; nothing committed yet |
+| **✦ Investigate · answered** | The agent left an answer and committed nothing |
+| **✦ Fix · 2 commits** | Commits on the branch that its base doesn't have |
+| **✦ Fix · PR #123** | A pull request is open for the branch |
+| **✦ Fix · merged** | …and it merged |
+| **✦ Fix · PR closed** / **cleaned up** | Closed without merging / the worktree is gone |
+
+Hover the mark for the details (uncommitted changes, the PR's link). Pull
+requests are looked up with [`gh`](https://cli.github.com/) when it's installed
+and signed in; without it, the mark stops at commits. Sidequest follows the
+sessions of the last two weeks, checking every 15 seconds.
+
+**Replies from the agent.** Every prompt ends by asking the agent to write a
+short answer for the thread to `.sidequest/result.md` when it's done: what it
+found, or what it changed and why. When one appears, a toast says so, and the
+mark reads **· reply ready**. Click either (or **Review Fix's reply** at the top
+of the message's menu) to read it in Slack's formatting, edit it, and **Post in thread**
+(**⌘↵**), as you. **Don't post** drops it. Nothing goes out without that click
+unless you set `postResults` to `auto`. If the branch has a pull request, the
+reply links it. If the agent rewrites the file later, the new answer is offered
+again.
+
+**Screenshots and files.** Files attached to the message (a screenshot of the
+bug, a log) come along. The overlay fetches them with Slack's own session, saves
+them to `.sidequest/attachments/` in the worktree, and the prompt lists them so
+the agent opens them. Up to 6 files, 10 MB each and 20 MB in all.
+
 Press **⌃⇧S** anywhere in Slack (or click **Sessions ›** in the repo button's
 panel) for your recent sessions that still have a worktree, newest first. Each
 shows its branch, the prompt, repo and channel it came from, how long ago, and
@@ -108,9 +143,12 @@ overlay reads the message, its thread, the sender and the permalink from the pag
 and a local daemon then:
 
 1. creates `git worktree add -b <branch> <path> origin/<base>`,
-2. writes the prompt to `<worktree>/.sidequest/prompt.md` (git-excluded),
+2. writes the prompt to `<worktree>/.sidequest/prompt.md` (git-excluded), and
+   the message's files next to it in `.sidequest/attachments/`,
 3. opens Warp on the worktree and starts your agent (or opens your agent's desktop
-   app there, see [Desktop apps](#desktop-apps)).
+   app there, see [Desktop apps](#desktop-apps)),
+4. keeps an eye on the worktree (commits, pull request, `.sidequest/result.md`)
+   and tells the overlay, which updates the message's mark and offers the reply.
 
 ### Desktop apps
 
@@ -179,12 +217,39 @@ keeps its default:
 ```
 
 The keys are `investigate`, `fix`, `review`, `ask`, `linear`, `github` and `jira`.
+`"hidden": true` takes one out of the menu.
+
+**Prompts of your own.** Any other key adds a prompt to the menu, after the
+built-in ones, in the order your config lists them. It needs a `label` and a
+`template`. It can have an `emoji` (a Slack shortcode like `test_tube`), a
+`reply` for thread replies, and a `branchPrefix`, which is the key unless you
+set one. It gets a number key and, if no other prompt starts with the same
+letter, a letter key, just like the built-in ones:
+
+```json
+{
+  "prompts": {
+    "write-test": {
+      "label": "Write a test",
+      "emoji": "test_tube",
+      "template": "Write a failing test that reproduces this, from @{{author}} in #{{channel}}:\n{{message}}\n{{thread}}{{attachments}}\nCommit it on {{branch}}. Don't fix the bug."
+    },
+    "review": { "hidden": true }
+  }
+}
+```
+
+A key is lowercase letters, digits and dashes. `sidequest prompts` shows every
+prompt as it stands.
 
 Tokens: `{{author}}` `{{channel}}` `{{message}}` `{{thread}}` `{{permalink}}`
 `{{date}}` `{{branch}}` `{{baseBranch}}` `{{repo}}` `{{worktree}}`, plus
 `{{ticket}}` (the link) and `{{ticketId}}` (`DATA-3051`, `owner/repo#123` or
-`ABC-123`) for Linear, GitHub and Jira, and `{{question}}` (what you typed in
-the Ask box, empty otherwise). Sidequest
+`ABC-123`) for Linear, GitHub and Jira, `{{question}}` (what you typed in
+the Ask box, empty otherwise), and `{{attachments}}` (the list of the message's
+files saved in the worktree, empty when it had none; a template without it
+still gets the list at the end). Every prompt also ends with the request for a
+reply in `.sidequest/result.md`, unless `postResults` is `off`. Sidequest
 leaves unknown tokens in the prompt as written, so typos are easy to spot.
 
 **Thread replies.** Turn on `autoReply` (or run `sidequest replies on`) and
@@ -261,6 +326,8 @@ how to install it if that fails.
 | `relaunchSlack` | `true` | While Sidequest runs, relaunch a Slack reopened from the Dock (without the DevTools port) so the overlay comes back |
 | `targetUrlPattern` | `app\.slack\.com\|/client/` | Which windows count as Slack |
 | `autoReply` | `false` | Reply in the message's thread when a session starts. See Thread replies above |
+| `postResults` | `ask` | What to do with the reply the agent leaves in `.sidequest/result.md`: `ask` offers it on the message to review and post, `auto` posts it in the thread as soon as it's written, `off` doesn't ask the agent for one. See Replies from the agent above |
+| `trackStatus` | `true` | Follow each session's commits and pull request (with `gh`) and show them on its mark. With this and `postResults` both off, the daemon doesn't look in on sessions at all; turning either back on takes a `sidequest stop` and `start` |
 | `verbose` | `false` | Log overlay activity to Slack's devtools console |
 
 **Cleaning up.** Every session leaves a worktree behind. `sidequest clean`
@@ -307,10 +374,19 @@ Start with `sidequest doctor`.
 
 ## Security
 
-The overlay only talks to the local daemon. The one exception is the thread
-reply, which is off unless you turn on `autoReply`: the overlay then posts it
-to your workspace's own Slack API with the session Slack's window is already
-signed in with. That token stays in the window and never reaches the daemon.
+The overlay only talks to the local daemon, with two exceptions, and both use
+the session Slack's window is already signed in with. That token stays in the
+window and never reaches the daemon.
+
+- **Thread replies:** the one a session posts when it starts (off unless you
+  turn on `autoReply`) and the agent's answer, which posts only when you click
+  **Post in thread** (or on its own if you set `postResults` to `auto`). Both
+  go to your workspace's own Slack API.
+- **Attachments:** the overlay downloads the message's files from Slack's file
+  host and hands the bytes to the daemon, which writes them into the worktree.
+
+An agent's answer is written by the agent, which read the message, so read it
+before you post it; that's why `ask` is the default.
 Sidequest runs commands from argv arrays, never through a shell, and passes the
 prompt in a file, so message text can't inject commands. The overlay runs inside
 Slack's window, so what the daemon sends it is visible there: channel links,

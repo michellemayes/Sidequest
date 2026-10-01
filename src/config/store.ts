@@ -121,20 +121,40 @@ export function settingsOf(config: Config): Settings {
   return config.settings;
 }
 
-/** A user override merged over the built-in default for one prompt. */
-export function promptFor(config: Config, key: PromptKey): PromptConfig {
-  const override = config.prompts[key];
-  if (!override) return DEFAULT_PROMPTS[key];
+const isBuiltIn = (key: string): key is PromptKey => Object.hasOwn(DEFAULT_PROMPTS, key);
+
+/**
+ * One prompt as it stands: a built-in with the user's override merged over
+ * it, or a prompt of the user's own. Null for a key that is neither.
+ */
+export function promptFor(config: Config, key: string): PromptConfig | null {
+  const override = Object.hasOwn(config.prompts, key) ? config.prompts[key] : undefined;
   // Drop undefined keys so an absent override never clobbers a default.
   const defined = Object.fromEntries(
-    Object.entries(override).filter(([, value]) => value !== undefined),
+    Object.entries(override ?? {}).filter(([field, value]) => value !== undefined && field !== "hidden"),
   );
-  return promptSchema.parse({ ...DEFAULT_PROMPTS[key], ...defined });
+  if (isBuiltIn(key)) {
+    return override ? promptSchema.parse({ ...DEFAULT_PROMPTS[key], ...defined }) : DEFAULT_PROMPTS[key];
+  }
+  if (!override) return null;
+  // Named for its key unless it says otherwise, so its branches are findable.
+  return promptSchema.parse({ branchPrefix: key, ...defined });
 }
 
-export function allPrompts(config: Config): Array<{ key: PromptKey; prompt: PromptConfig }> {
-  return (Object.keys(DEFAULT_PROMPTS) as PromptKey[]).map((key) => ({
-    key,
-    prompt: promptFor(config, key),
-  }));
+/**
+ * Every prompt the menu offers, in menu order: the built-ins first, then the
+ * user's own in the order the config lists them. Hidden ones are left out.
+ */
+export function allPrompts(config: Config): Array<{ key: string; prompt: PromptConfig }> {
+  const keys = [
+    ...Object.keys(DEFAULT_PROMPTS),
+    ...Object.keys(config.prompts).filter((key) => !isBuiltIn(key)),
+  ];
+  const out: Array<{ key: string; prompt: PromptConfig }> = [];
+  for (const key of keys) {
+    if (config.prompts[key]?.hidden) continue;
+    const prompt = promptFor(config, key);
+    if (prompt) out.push({ key, prompt });
+  }
+  return out;
 }
