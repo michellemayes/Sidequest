@@ -118,6 +118,7 @@
     channel: '[data-qa="channel_name"]',
     header: '[data-qa="channel_header"]',
     timestamp: 'a.c-timestamp',
+    replyBar: '.c-message__reply_bar, [data-qa="reply_bar"]',
   };
 
   /* Anything in the channel header that owns its own clicks. */
@@ -2167,6 +2168,22 @@
     return { host, result, mark };
   }
 
+  /*
+   * Where the chip goes in a row, as [parent, before]: over the thread's
+   * "N replies" bar when there is one, so it sits under the words, the
+   * attachments and the reactions alike. Otherwise right after the content,
+   * unless the content is one column of a row laid out sideways (the avatar
+   * gutter and the message beside it), where a sibling would land off to the
+   * right of the message; then at the end of the content itself.
+   */
+  function inlineSpot(row, content) {
+    const bar = row.querySelector(SEL.replyBar);
+    if (bar && bar.parentNode) return [bar.parentNode, bar];
+    const outer = getComputedStyle(content.parentNode);
+    const sideways = /flex/.test(outer.display) ? !/column/.test(outer.flexDirection) : /grid/.test(outer.display);
+    return sideways ? [content, null] : [content.parentNode, content.nextSibling];
+  }
+
   function placeInline(bySig) {
     for (const [sig, inline] of inlines) {
       const row = bySig.get(sig);
@@ -2187,8 +2204,11 @@
         inline = buildInline(sig);
         inlines.set(sig, inline);
       }
-      // Right after the words, in whichever row holds the message now.
-      if (content.nextSibling !== inline.host) content.after(inline.host);
+      // Under the message, in whichever row holds the message now.
+      const [parent, before] = inlineSpot(row, content);
+      if (inline.host.parentNode !== parent || inline.host.nextSibling !== before) {
+        parent.insertBefore(inline.host, before);
+      }
 
       const { result, mark } = inline;
       if (entry) {
