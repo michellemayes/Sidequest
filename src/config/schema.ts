@@ -1,8 +1,12 @@
 import { z } from "zod";
 import { defaultWorktreesRoot } from "./paths.js";
 
+/** The built-in prompts. Config can add prompts of its own under any other key. */
 export const PROMPT_KEYS = ["investigate", "fix", "review", "ask", "linear", "github", "jira"] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
+
+/** What a custom prompt's key may look like: it names branches and Warp configs. */
+export const PROMPT_KEY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 export const promptSchema = z.object({
   /** Shown on the Slack button and in the Warp tab title. */
@@ -39,6 +43,14 @@ export const repoLinkSchema = z.object({
 });
 
 export type RepoLink = z.infer<typeof repoLinkSchema>;
+
+/**
+ * What happens to the reply an agent leaves in .sidequest/result.md: `ask`
+ * offers it on the message for you to read, edit and post; `auto` posts it
+ * as soon as it is written; `off` does not ask the agent for one at all.
+ */
+export const postResultsSchema = z.enum(["off", "ask", "auto"]);
+export type PostResults = z.infer<typeof postResultsSchema>;
 
 export const warpStrategySchema = z.enum(["auto", "tab_config", "launch_config", "new_tab"]);
 export type WarpStrategy = z.infer<typeof warpStrategySchema>;
@@ -128,6 +140,16 @@ export const settingsSchema = z.object({
    * Each prompt's `reply` sets the text.
    */
   autoReply: z.boolean().default(false),
+  /**
+   * Ask the agent to leave a reply for the thread in .sidequest/result.md
+   * when it is done, and offer it (or post it) in Slack. See postResultsSchema.
+   */
+  postResults: postResultsSchema.default("ask"),
+  /**
+   * Follow each session's progress (commits, pull request, merged) and show
+   * it on the message it came from. Needs `gh` for the pull request part.
+   */
+  trackStatus: z.boolean().default(true),
   /** Log what the injected overlay is doing to the Slack devtools console. */
   verbose: z.boolean().default(false),
 });
@@ -148,6 +170,8 @@ export const promptOverrideSchema = z.object({
     .optional(),
   /** Empty turns the thread reply off for this prompt alone. */
   reply: z.string().optional(),
+  /** Leave the prompt out of the menu, e.g. a built-in you never use. */
+  hidden: z.boolean().optional(),
 });
 
 export type PromptOverride = z.infer<typeof promptOverrideSchema>;
@@ -169,16 +193,33 @@ export const configSchema = z.object({
       ),
     )
     .default({}),
-  /** Per-prompt overrides of the built-in defaults. */
+  /**
+   * Per-prompt overrides of the built-in defaults, keyed by the built-in's
+   * key, plus prompts of your own under any other key. A prompt of your own
+   * has no default to fall back on, so it needs a label and a template.
+   */
   prompts: z
-    .object({
-      investigate: promptOverrideSchema.optional(),
-      fix: promptOverrideSchema.optional(),
-      review: promptOverrideSchema.optional(),
-      ask: promptOverrideSchema.optional(),
-      linear: promptOverrideSchema.optional(),
-      github: promptOverrideSchema.optional(),
-      jira: promptOverrideSchema.optional(),
+    .record(z.string(), promptOverrideSchema)
+    .superRefine((prompts, ctx) => {
+      for (const [key, prompt] of Object.entries(prompts)) {
+        if ((PROMPT_KEYS as readonly string[]).includes(key)) continue;
+        if (!PROMPT_KEY_PATTERN.test(key)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: "a prompt's key must be lowercase letters, digits and dashes",
+          });
+        }
+        for (const field of ["label", "template"] as const) {
+          if (prompt[field] === undefined) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: [key, field],
+              message: `a prompt of your own needs a ${field}`,
+            });
+          }
+        }
+      }
     })
     .default({}),
 });

@@ -59,12 +59,14 @@ export function renderHeadlessScript(options: WriteHeadlessOptions): string {
   const agentLine = options.agentLabel ? `# Agent: ${options.agentLabel}\n` : "";
 
   // stdin is /dev/null: nobody is there to answer a question, and an agent
-  // that waits for one would hang forever instead of failing.
+  // that waits for one would hang forever instead of failing. The prompt asks
+  // the agent for a reply in result.md; when it wrote one, that beats its
+  // whole stdout answer, so stdout only fills in for an agent that didn't.
   const runLine =
     headless.result === "stdout"
       ? `${command} </dev/null 2>>"$log" | tee "$partial" >>"$log"
 status=\${PIPESTATUS[0]}
-if [ "$status" -eq 0 ]; then mv "$partial" "$result"; else rm -f "$partial"; fi`
+if [ "$status" -eq 0 ] && [ ! -s "$result" ]; then mv "$partial" "$result"; else rm -f "$partial"; fi`
       : `${command} </dev/null >>"$log" 2>&1
 status=$?`;
 

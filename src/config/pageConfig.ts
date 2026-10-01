@@ -4,6 +4,7 @@ import { resolveAgent } from "../agents/agents.js";
 import { sessionHost } from "../terminals/registry.js";
 import type { Config } from "./schema.js";
 import { computeStats, type HistoryEntry } from "../session/history.js";
+import type { SessionState, SessionStatus } from "../session/status.js";
 
 /** How many past sessions the page is told about, newest kept. */
 const PAGE_HISTORY = 300;
@@ -13,6 +14,19 @@ export interface PageSession {
   label: string;
   branch: string;
   at: string;
+  /** Where the session has got to, when the daemon is following it. */
+  status?: PageStatus;
+}
+
+/** A session's progress, as much of it as the mark on its message shows. */
+export interface PageStatus {
+  /** The progress fields are left out when settings.trackStatus is off. */
+  state?: SessionState;
+  commits?: number;
+  dirty?: boolean;
+  pr?: { number: number; url: string } | null;
+  /** The agent left a reply for the thread that has not been posted yet. */
+  reply: boolean;
 }
 
 /**
@@ -50,10 +64,16 @@ export interface PageConfig {
   /** Message ts -> sessions started from it, oldest first. */
   sessions: Record<string, PageSession[]>;
   stats: { total: number; today: number; streak: number };
+  /** What to do with a reply an agent leaves: offer it, post it, or neither. */
+  postResults: string;
   verbose: boolean;
 }
 
-export function pageConfig(config: Config, history: HistoryEntry[] = []): PageConfig {
+export function pageConfig(
+  config: Config,
+  history: HistoryEntry[] = [],
+  statuses: Map<string, SessionStatus> = new Map(),
+): PageConfig {
   const repoLabels: Record<string, string[]> = {};
   for (const [key, links] of Object.entries(config.channels)) {
     if (links.length > 0) repoLabels[key] = links.map(linkLabel);
@@ -73,24 +93,42 @@ export function pageConfig(config: Config, history: HistoryEntry[] = []): PageCo
     agentHost: sessionHost(agent, config.settings.terminal),
     agentInApp: Boolean(agent.app),
     headless: !agent.app && config.settings.terminal === "headless",
-    sessions: sessionsByMessage(history),
+    sessions: sessionsByMessage(history, statuses, config.settings.trackStatus),
     stats: (({ total, today, streak }) => ({ total, today, streak }))(computeStats(history)),
+    postResults: config.settings.postResults,
     verbose: config.settings.verbose,
   };
 }
 
-function sessionsByMessage(history: HistoryEntry[]): Record<string, PageSession[]> {
+function sessionsByMessage(
+  history: HistoryEntry[],
+  statuses: Map<string, SessionStatus>,
+  progress: boolean,
+): Record<string, PageSession[]> {
   const out: Record<string, PageSession[]> = {};
   for (const entry of history.slice(-PAGE_HISTORY)) {
     if (!entry.ts) continue;
+    const status = statuses.get(entry.branch);
     (out[entry.ts] ??= []).push({
       key: entry.promptKey,
       label: entry.promptLabel,
       branch: entry.branch,
       at: entry.createdAt,
+      ...(status ? { status: progress ? pageStatus(status) : { reply: status.resultPending } } : {}),
     });
   }
   return out;
+}
+
+/** Paths and timestamps are the daemon's; the page gets what it draws. */
+function pageStatus(status: SessionStatus): PageStatus {
+  return {
+    state: status.state,
+    commits: status.commits,
+    dirty: status.dirty,
+    pr: status.pr ? { number: status.pr.number, url: status.pr.url } : null,
+    reply: status.resultPending,
+  };
 }
 
 /**

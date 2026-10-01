@@ -294,6 +294,14 @@ describe("headless runs", () => {
     await expect(stat(join(worktree, "pwned2"))).rejects.toThrow();
   });
 
+  it("keeps the reply the agent wrote to result.md over its stdout", async () => {
+    const agent = await fakeAgent(`printf 'For the thread.' > .sidequest/result.md\necho "the long answer"`);
+    const { runner, log } = await runHeadless(agent, { args: [], result: "stdout" });
+    expect(await readFile(runner.resultFile, "utf8")).toBe("For the thread.");
+    expect(log).toContain("the long answer");
+    await expect(stat(`${runner.resultFile}.partial`)).rejects.toThrow();
+  });
+
   it("leaves no answer when the agent fails", async () => {
     const agent = await fakeAgent(`echo "half an answer"\necho "broke" >&2\nexit 3`);
     const { runner, log } = await runHeadless(agent, { args: [], result: "stdout" });

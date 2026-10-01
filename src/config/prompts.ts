@@ -18,7 +18,7 @@ export const DEFAULT_PROMPTS: Record<PromptKey, PromptConfig> = {
 ## The report
 From @{{author}} in #{{channel}} on {{date}}:
 {{message}}
-{{thread}}
+{{thread}}{{attachments}}
 Slack permalink: {{permalink}}
 
 ## What I need
@@ -39,7 +39,7 @@ Report back in the terminal. Leave the working tree clean.`,
 ## The report
 From @{{author}} in #{{channel}} on {{date}}:
 {{message}}
-{{thread}}
+{{thread}}{{attachments}}
 Slack permalink: {{permalink}}
 
 ## What I need
@@ -61,7 +61,7 @@ If the report turns out to be wrong or the fix needs a decision I should make, s
 ## The request
 From @{{author}} in #{{channel}} on {{date}}:
 {{message}}
-{{thread}}
+{{thread}}{{attachments}}
 Slack permalink: {{permalink}}
 
 ## What I need
@@ -79,7 +79,7 @@ Give me findings ordered most severe first, each with the file, the line, and wh
     reply: "Looking into this: {{question}}",
     template: `From @{{author}} in #{{channel}} on {{date}}:
 {{message}}
-{{thread}}
+{{thread}}{{attachments}}
 Slack permalink: {{permalink}}
 {{question}}
 Read this and the code it touches. If I asked something above, answer it; otherwise wait for my instructions.`,
@@ -97,7 +97,7 @@ Read this and the code it touches. If I asked something above, answer it; otherw
 ## Where it came up
 From @{{author}} in #{{channel}} on {{date}}:
 {{message}}
-{{thread}}
+{{thread}}{{attachments}}
 Slack permalink: {{permalink}}
 
 ## What I need
@@ -122,7 +122,7 @@ If the ticket is wrong, already fixed, or needs a decision I should make, stop a
 ## Where it came up
 From @{{author}} in #{{channel}} on {{date}}:
 {{message}}
-{{thread}}
+{{thread}}{{attachments}}
 Slack permalink: {{permalink}}
 
 ## What I need
@@ -147,7 +147,7 @@ If the issue is wrong, already fixed, or needs a decision I should make, stop an
 ## Where it came up
 From @{{author}} in #{{channel}} on {{date}}:
 {{message}}
-{{thread}}
+{{thread}}{{attachments}}
 Slack permalink: {{permalink}}
 
 ## What I need
@@ -178,6 +178,8 @@ export interface PromptContext {
   ticketId: string;
   /** What the user typed into the Ask box, as its own section; empty otherwise. */
   question: string;
+  /** Files attached to the message, saved into the worktree, as a list; empty when there are none. */
+  attachments: string;
 }
 
 const TOKEN = /\{\{\s*([a-zA-Z]+)\s*\}\}/g;

@@ -30,6 +30,15 @@ export interface HistoryEntry {
   repoPath: string;
   repoLabel: string;
   createdAt: string;
+  /** The message's permalink, which is where its result gets posted. Missing on older entries. */
+  permalink?: string;
+  /** What the branch was cut from, for counting its commits. Missing on older entries. */
+  baseBranch?: string;
+  /**
+   * The mtime of the result.md last posted to the thread, so the same result
+   * is never offered twice and a rewritten one is offered again.
+   */
+  resultPostedMs?: number;
 }
 
 export interface Stats {
@@ -81,10 +90,31 @@ function isEntry(value: unknown): value is HistoryEntry {
 let writing: Promise<unknown> = Promise.resolve();
 
 export function recordSession(entry: HistoryEntry): Promise<HistoryEntry[]> {
-  const next = writing.then(async () => {
-    const history = await loadHistory();
+  return rewrite((history) => {
     history.push(entry);
-    const kept = history.slice(-HISTORY_LIMIT);
+    return history.slice(-HISTORY_LIMIT);
+  });
+}
+
+/**
+ * Change the entry for one branch in place, e.g. to note that its result was
+ * posted. Resolves to the history as written; a branch it does not know
+ * leaves the file as it was.
+ */
+export function updateSession(branch: string, patch: Partial<HistoryEntry>): Promise<HistoryEntry[]> {
+  return rewrite((history) => {
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      if (history[i]!.branch !== branch) continue;
+      history[i] = { ...history[i]!, ...patch, branch };
+      break;
+    }
+    return history;
+  });
+}
+
+function rewrite(change: (history: HistoryEntry[]) => HistoryEntry[]): Promise<HistoryEntry[]> {
+  const next = writing.then(async () => {
+    const kept = change(await loadHistory());
     const file = historyFile();
     await mkdir(dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.tmp`;

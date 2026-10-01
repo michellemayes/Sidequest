@@ -43,7 +43,7 @@ import {
   removeLink,
 } from "./config/channels.js";
 import { describeError, UserFacingError } from "./util/errors.js";
-import type { Config, TerminalId } from "./config/schema.js";
+import { PROMPT_KEYS, type Config, type TerminalId } from "./config/schema.js";
 import type { LaunchResult } from "./cdp/launch.js";
 import { run, succeeds } from "./util/exec.js";
 import {
@@ -1030,15 +1030,19 @@ function detectRcFile(): string {
 async function prompts(): Promise<void> {
   const config = await loadConfig();
   for (const { key, prompt } of allPrompts(config)) {
+    const builtIn = (PROMPT_KEYS as readonly string[]).includes(key);
     const overridden = config.prompts[key] !== undefined;
     console.log(`\n${"=".repeat(70)}`);
     console.log(`${prompt.label}  (key: ${key}, branch prefix: ${prompt.branchPrefix}/)`);
-    console.log(overridden ? "customised in config.json" : "built-in default");
+    console.log(!builtIn ? "your own, from config.json" : overridden ? "customised in config.json" : "built-in default");
     console.log("=".repeat(70));
     console.log(prompt.template);
   }
+  const hidden = Object.entries(config.prompts).filter(([, p]) => p.hidden).map(([key]) => key);
   console.log(`\n${"=".repeat(70)}`);
-  console.log(`Override any of these under "prompts" in ${configFile()}.`);
+  if (hidden.length > 0) console.log(`Hidden from the menu: ${hidden.join(", ")}`);
+  console.log(`Override any of these under "prompts" in ${configFile()}, or add your own:`);
+  console.log(`  { "prompts": { "write-test": { "label": "Write a test", "template": "..." } } }`);
   console.log(`Tokens: ${PROMPT_TOKENS.map((t) => `{{${t}}}`).join(", ")}`);
 }
 
@@ -1057,6 +1061,7 @@ const PROMPT_TOKENS = [
   "ticket",
   "ticketId",
   "question",
+  "attachments",
 ] as const;
 
 /**
@@ -1100,6 +1105,16 @@ async function doctor(): Promise<void> {
       agentOk,
       `${agent.label} (${agent.command})`,
       agentOk ? "" : agentDefinition(agent.id).installHint,
+    );
+  }
+
+  if (config.settings.trackStatus) {
+    const gh = await succeeds("gh", ["auth", "status"]);
+    console.log(`  ${gh ? "ok " : "-- "}  gh`);
+    console.log(
+      gh
+        ? "       signed in, so each session's mark follows its pull request"
+        : "       not installed or not signed in (optional). Without it, a session's mark stops at its commits.",
     );
   }
 

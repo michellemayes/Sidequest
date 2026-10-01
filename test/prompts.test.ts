@@ -18,6 +18,7 @@ const CONTEXT: PromptContext = {
   ticket: "https://linear.app/acme/issue/DATA-3051/checkout-is-broken",
   ticketId: "DATA-3051",
   question: "",
+  attachments: "",
 };
 
 describe("renderPrompt", () => {

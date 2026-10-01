@@ -48,6 +48,9 @@
     headless: false,
     sessions: {},
     stats: { total: 0, today: 0, streak: 0 },
+    postResults: 'ask',
+    /* Where Slack serves the files attached to messages from. */
+    fileHosts: '(^|\\.)files\\.slack\\.com$|(^|\\.)slack-files\\.com$',
     verbose: false,
   }, window.__SIDEQUEST_CONFIG || {});
 
@@ -64,6 +67,11 @@
   const MAX_RESULTS = 20;
   const ASK_KEY = 'ask';
   const TICK_MS = 250;
+  /* What a message may bring into a session. src/session/attachments.ts holds the daemon to the same. */
+  const MAX_FILES = 6;
+  const MAX_FILE_BYTES = 10 * 1024 * 1024;
+  const MAX_FILES_TOTAL = 20 * 1024 * 1024;
+  const FILE_TIMEOUT_MS = 10000;
   const TOAST_MS = 5200;
   /* Suggestions shown in the message menu for a channel with no repo. */
   const MENU_SUGGESTIONS = 3;
@@ -216,11 +224,12 @@
       font-size: 10px; line-height: 15px; text-align: center; opacity: .5;
       border: 1px solid var(--sq-line); border-radius: 4px;
     }
-    .sq-menu-reopen, .sq-menu-suggest { font-size: 12px !important; }
-    .sq-menu-reopen > span, .sq-menu-suggest > span {
+    .sq-menu-reopen, .sq-menu-suggest, .sq-menu-reply { font-size: 12px !important; }
+    .sq-menu-reopen > span, .sq-menu-suggest > span, .sq-menu-reply > span {
       min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    .sq-menu-reopen > .sq-glyph, .sq-menu-suggest > .sq-glyph { flex: 0 0 18px; text-align: center; }
+    .sq-menu-reopen > .sq-glyph, .sq-menu-suggest > .sq-glyph, .sq-menu-reply > .sq-glyph { flex: 0 0 18px; text-align: center; }
+    .sq-menu-reply { font-weight: 600; }
     .sq-sub { margin-left: auto; padding-left: 6px; font-size: 11px; opacity: .55; }
     .sq-menu-sep { height: 1px; margin: 4px 2px; background: var(--sq-line); }
     /* A channel with several repos: which one the prompts below run in. */
@@ -253,6 +262,21 @@
       color: #fff; background: #007a5a;
     }
     .sq-menu .sq-ask-send:hover { background: #148567; }
+    /* A reply to read before it goes out: wider than the path panel, and
+       with room for a few paragraphs. */
+    .sq-panel.sq-reply { width: min(520px, calc(100vw - 32px)); }
+    .sq-reply .sq-reply-input { min-height: 140px; max-height: 50vh; font-size: 13px; line-height: 18px; }
+    .sq-reply .sq-note[data-kind="error"] { color: var(--sq-bad); opacity: 1; }
+    .sq-reply-skip, .sq-reply .sq-ask-send {
+      padding: 4px 12px; margin: 0;
+      font-family: inherit; font-size: 12px; line-height: 16px; font-weight: 500;
+      color: inherit; background: transparent;
+      border: 1px solid var(--sq-line-hover); border-radius: 5px; cursor: pointer;
+    }
+    .sq-reply-skip { margin-left: auto; }
+    .sq-reply-skip:hover { background: var(--sq-wash); }
+    .sq-reply .sq-ask-send { color: #fff; background: #007a5a; border-color: #007a5a; }
+    .sq-reply .sq-ask-send:hover { background: #148567; }
     /* A sentence, not a menu item. It wraps inside the menu rather than
        stretching it into a bar across the message underneath. */
     .sq-note {
@@ -310,6 +334,10 @@
     }
     .sq-mark:hover { opacity: 1; border-color: var(--sq-line-hover); }
     .sq-mark::before { content: '✦'; color: #8b5cf6; }
+    /* Progress shows in the words; the few states worth a glance get colour too. */
+    .sq-mark[data-state="merged"]::before { color: var(--sq-ok); }
+    .sq-mark[data-state="pr-closed"], .sq-mark[data-state="gone"] { opacity: .45; }
+    .sq-mark[data-reply="1"] { opacity: 1; border-color: #8b5cf6; }
 
     .sq-toast {
       position: fixed; left: 0; top: 0;
@@ -328,6 +356,12 @@
     .sq-toast-icon svg { width: 28px; height: 28px; display: block; }
     .sq-toast-body { min-width: 0; display: flex; flex-direction: column; }
     .sq-toast-title { font-size: 13px; line-height: 18px; font-weight: 700; }
+    .sq-toast-action {
+      flex: 0 0 auto; margin-left: 4px; padding: 4px 10px;
+      font-family: inherit; font-size: 12px; line-height: 16px; font-weight: 600;
+      color: #fff; background: #7c3aed; border: 0; border-radius: 5px; cursor: pointer;
+    }
+    .sq-toast-action:hover { background: #6d28d9; }
     .sq-toast-sub {
       font-size: 12px; line-height: 16px; opacity: .72;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -626,16 +660,41 @@
     waiter.resolve(msg);
   };
 
-  // Settings changed elsewhere — another window, the menu bar, the terminal.
+  // Settings changed elsewhere — another window, the menu bar, the terminal —
+  // or a session moved on: it committed, opened a pull request, left a reply.
   window.__sidequestSetConfig = (json) => {
     try {
       Object.assign(CONFIG, JSON.parse(json));
     } catch {
       return;
     }
+    announceReplies();
     // A broadcast follows every new session, so an open list catches up.
     if (sessionsEl) loadSessions();
     schedule();
+  };
+
+  /*
+   * With postResults on auto the daemon picks one window to post a reply
+   * from, and this is how it asks. True means this window took it on; the
+   * outcome goes back up as result-posted either way.
+   */
+  window.__sidequestPostResult = (json) => {
+    let job;
+    try {
+      job = JSON.parse(json);
+    } catch {
+      return false;
+    }
+    if (!job || !job.permalink || !slackTeam(job.permalink)) return false;
+    postReply(job.permalink, job.text).then(() => {
+      toast({ title: `Replied in the thread for ${job.label || 'a session'}`, sub: job.branch });
+      return ask({ op: 'result-posted', branch: job.branch, resultMs: job.resultMs });
+    }).catch((err) => {
+      toast({ title: 'Could not post the reply', sub: err.message, kind: 'error' });
+      return ask({ op: 'result-posted', branch: job.branch, resultMs: job.resultMs, error: err.message });
+    }).catch(() => {});
+    return true;
   };
 
   function ask(payload) {
@@ -891,6 +950,80 @@
       }
     }
     return Array.from(found.values()).slice(0, MAX_TICKETS);
+  }
+
+  /**
+   * The files attached to a message: screenshots, logs, anything Slack
+   * serves from its file host. An image shows as a thumbnail wrapped in a
+   * link to the original, so each file is keyed by its Slack file id and the
+   * original wins over the thumbnail. Avatars and emoji come from other
+   * hosts and never match.
+   */
+  function messageFiles(item) {
+    let hosts;
+    try {
+      hosts = new RegExp(CONFIG.fileHosts, 'i');
+    } catch {
+      return [];
+    }
+    const found = new Map();
+    item.querySelectorAll('a[href], img[src]').forEach((node) => {
+      const raw = node.tagName === 'IMG' ? (node.currentSrc || node.src) : node.href;
+      let url;
+      try {
+        url = new URL(raw, location.href);
+      } catch {
+        return;
+      }
+      if (!hosts.test(url.hostname)) return;
+      const id = (url.pathname.match(/\b(F[A-Z0-9]{6,})\b/) || [])[1] || url.pathname;
+      const rank = /files-tmb|_(?:64|80|160|360|480|720|800|960|1024)\./.test(url.pathname) ? 1 : 0;
+      const known = found.get(id);
+      if (known && known.rank <= rank) return;
+      const segment = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || '');
+      const name = node.getAttribute('data-file-name') || node.getAttribute('aria-label') || segment;
+      found.set(id, { url: url.href, rank, name: /\.[a-z0-9]{1,5}$/i.test(name) ? name : segment || name });
+    });
+    return Array.from(found.values()).slice(0, MAX_FILES);
+  }
+
+  /**
+   * Fetch the files with this window's own Slack session, since the daemon
+   * has none, and hand them down as base64. A file that will not come, or
+   * comes back as a sign-in page, is left out rather than failing the session.
+   */
+  async function fetchFiles(files) {
+    const out = [];
+    let total = 0;
+    for (const file of files) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FILE_TIMEOUT_MS);
+      try {
+        const res = await fetch(file.url, { credentials: 'include', signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        if (/text\/html/i.test(blob.type)) throw new Error('got a page, not the file');
+        if (blob.size === 0 || blob.size > MAX_FILE_BYTES || total + blob.size > MAX_FILES_TOTAL) {
+          throw new Error(`${blob.size} bytes is over the limit`);
+        }
+        total += blob.size;
+        out.push({ name: file.name, type: blob.type, data: await base64Of(blob) });
+      } catch (err) {
+        log('could not fetch', file.url, err.message);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return out;
+  }
+
+  function base64Of(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''));
+      reader.onerror = () => reject(reader.error || new Error('could not read the file'));
+      reader.readAsDataURL(blob);
+    });
   }
 
   /** A stable-enough identity for "is this row still the same message". */
@@ -1187,6 +1320,18 @@
       const repos = reposFor(channel);
       if (repos.length > 1) menu.append(repoSwitcher(channel, repos));
 
+      // A reply an agent left is the first thing worth doing with its message.
+      for (const entry of sessionsFor(sig).filter((e) => e.status && e.status.reply).reverse()) {
+        const review = menuButton('sq-menu-reply', () => {
+          closeMenu();
+          openReplyPanel(entry.branch);
+          schedule();
+        });
+        review.title = `Read ${entry.label || 'the session'}'s reply, edit it, and post it in the thread`;
+        spans(review, [['sq-glyph', '💬'], ['', `Review ${entry.label || 'session'}'s reply`], ['sq-sub', shortBranch(entry.branch)]]);
+        menu.append(review);
+      }
+
       const past = sessionsFor(sig).slice(-2).reverse();
       for (const entry of past) {
         const again = menuButton('sq-menu-reopen', () => {
@@ -1209,7 +1354,7 @@
       const tickets = messageTickets(row);
       const entries = [];
       for (const prompt of CONFIG.prompts) {
-        if (!TICKET_PROMPTS[prompt.key]) entries.push({ prompt, ticket: null });
+        if (!Object.hasOwn(TICKET_PROMPTS, prompt.key)) entries.push({ prompt, ticket: null });
         else for (const ticket of tickets) if (ticket.key === prompt.key) entries.push({ prompt, ticket });
       }
       const letterFor = promptLetters(entries.map((e) => e.prompt));
@@ -1510,6 +1655,7 @@
     // cut would only make a -2 branch.
     if (results.get(sig)?.kind === 'busy') return;
     const meta = messageMeta(row);
+    const files = messageFiles(row);
     const channel = channelFor(row);
     if (!channel) {
       setResult(sig, 'Could not tell which channel this message is in.', 'error');
@@ -1532,14 +1678,23 @@
     };
     const label = (ticket ? `${prompt.label} ${ticket.name}` : prompt.label) + (repo ? ` in ${repo}` : '');
 
-    setResult(sig, `Starting ${label}…`, 'busy');
+    setResult(sig, files.length > 0
+      ? `Starting ${label} with ${files.length} file${files.length === 1 ? '' : 's'}…`
+      : `Starting ${label}…`, 'busy');
 
-    ask(payload).then((res) => {
+    fetchFiles(files).then((attachments) => {
+      payload.attachments = attachments;
+      return ask(payload);
+    }).then((res) => {
       if (res.error) {
         setResult(sig, res.hint ? `${res.error} ${res.hint}` : res.error, 'error');
         return;
       }
-      const base = `${label} → ${res.branch}`;
+      const skipped = files.length - (res.attachments || 0);
+      const extra = files.length === 0 ? ''
+        : skipped > 0 ? ` (${skipped} of ${files.length} files could not be fetched)`
+          : ` with ${files.length} file${files.length === 1 ? '' : 's'}`;
+      const base = `${label} → ${res.branch}${extra}`;
       setResult(sig, res.warning ? `${base} — ${res.warning}` : base, res.warning ? 'warn' : 'info', res.branch);
       if (res.stats) CONFIG.stats = res.stats;
       if (repo) CONFIG.lastRepos = Object.assign({}, CONFIG.lastRepos, { [channelKey(channel)]: repo });
@@ -1577,7 +1732,7 @@
    * its API host and your session token. Neither leaves this window; the
    * daemon never sees them.
    */
-  function slackTeam() {
+  function slackTeam(permalink = '') {
     let teams;
     try {
       teams = JSON.parse(localStorage.getItem('localConfig_v2') || '{}').teams || {};
@@ -1585,10 +1740,23 @@
       teams = {};
     }
     const list = Object.entries(teams).map(([id, team]) => Object.assign({ id }, team));
+    // A permalink names its workspace by host, which is how a reply finds its
+    // way home even when this window is showing another workspace.
+    const host = hostOf(permalink);
+    const byHost = host ? list.find((t) => t.token && hostOf(t.url) === host) : null;
+    if (byHost) return byHost;
     const fromUrl = location.pathname.match(/\/client\/([A-Z0-9]+)/);
     const team = (fromUrl && list.find((t) => t.id === fromUrl[1] || t.enterprise_id === fromUrl[1])) ||
       (list.length === 1 ? list[0] : null);
     return team && team.token && team.url ? team : null;
+  }
+
+  function hostOf(url) {
+    try {
+      return new URL(url).host.toLowerCase();
+    } catch {
+      return '';
+    }
   }
 
   /**
@@ -1599,7 +1767,7 @@
   async function postReply(permalink, text) {
     const target = replyTarget(permalink);
     if (!target) throw new Error('Slack gave that message no link to reply under.');
-    const team = slackTeam();
+    const team = slackTeam(permalink);
     if (!team) throw new Error('Could not find which Slack workspace this window is signed in to.');
     const form = new FormData();
     form.append('token', team.token);
@@ -1665,7 +1833,7 @@
     toast({ title, sub: bits.join(' · '), burst: true, big: Boolean(s.milestone) || s.total === 1 });
   }
 
-  function toast({ title, sub = '', kind = 'info', burst = false, big = false }) {
+  function toast({ title, sub = '', kind = 'info', burst = false, big = false, action = null }) {
     if (!ensureLayer()) return;
     clearTimeout(toastTimer);
     toastEl?.remove();
@@ -1705,6 +1873,18 @@
       body.append(line);
     }
     el.append(icon, body);
+    if (action) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'sq-toast-action';
+      button.textContent = action.label;
+      button.addEventListener('click', (event) => {
+        stop(event);
+        dismiss();
+        action.run();
+      });
+      el.append(button);
+    }
 
     const dismiss = () => {
       if (toastEl !== el) return;
@@ -1724,7 +1904,7 @@
 
     toastEl = el;
     ui.append(el);
-    toastTimer = setTimeout(dismiss, kind === 'error' ? TOAST_MS * 2 : TOAST_MS);
+    toastTimer = setTimeout(dismiss, kind === 'error' || action ? TOAST_MS * 2 : TOAST_MS);
     schedule();
   }
 
@@ -1799,7 +1979,9 @@
       stop(event);
       const list = sessionsFor(sig);
       const last = list[list.length - 1];
-      if (last) reopen(last.branch, sig);
+      if (!last) return;
+      if (last.status && last.status.reply) openReplyPanel(last.branch);
+      else reopen(last.branch, sig);
     });
     return el;
   }
@@ -1807,7 +1989,166 @@
   function markText(list) {
     const last = list[list.length - 1];
     const label = last.label || 'Session';
-    return list.length > 1 ? `${label} +${list.length - 1}` : label;
+    const head = list.length > 1 ? `${label} +${list.length - 1}` : label;
+    const status = statusText(last.status);
+    return status ? `${head} · ${status}` : head;
+  }
+
+  /** How far the session has got, in the fewest words that say it. */
+  function statusText(status) {
+    if (!status) return '';
+    const bits = [];
+    switch (status.state) {
+      case 'working': bits.push('working'); break;
+      case 'answered': bits.push('answered'); break;
+      case 'committed': bits.push(`${status.commits} commit${status.commits === 1 ? '' : 's'}`); break;
+      case 'pr-open': bits.push(status.pr ? `PR #${status.pr.number}` : 'PR open'); break;
+      case 'pr-closed': bits.push('PR closed'); break;
+      case 'merged': bits.push('merged'); break;
+      case 'gone': bits.push('cleaned up'); break;
+      default: break;
+    }
+    if (status.reply) bits.push('reply ready');
+    return bits.join(' · ');
+  }
+
+  function statusTitle(entry) {
+    const status = entry.status;
+    if (!status || !status.state) return '';
+    const lines = [];
+    if (status.commits) lines.push(`${status.commits} commit${status.commits === 1 ? '' : 's'} on the branch`);
+    if (status.dirty) lines.push('uncommitted changes in the worktree');
+    if (status.pr) lines.push(`${status.state === 'merged' ? 'merged' : status.state === 'pr-closed' ? 'closed' : 'open'}: ${status.pr.url}`);
+    if (status.reply) lines.push('the agent left a reply for the thread');
+    return lines.join('\n');
+  }
+
+  /* --------------------------------------------------------------- replies */
+
+  /** Branches whose reply has been announced, so each is announced once. */
+  const announced = new Set();
+
+  function pendingReplies() {
+    const out = [];
+    for (const list of Object.values(CONFIG.sessions || {})) {
+      for (const entry of list) if (entry.status && entry.status.reply) out.push(entry);
+    }
+    return out;
+  }
+
+  /**
+   * Say so when an agent leaves a reply, wherever in Slack you are, with a
+   * way straight to it. On auto the daemon posts it instead, so there is
+   * nothing to ask. Replies waiting from before the window opened are on
+   * their messages; they are not news.
+   */
+  function announceReplies() {
+    for (const entry of pendingReplies()) {
+      if (announced.has(entry.branch)) continue;
+      announced.add(entry.branch);
+      if (CONFIG.postResults !== 'ask') continue;
+      toast({
+        title: `${entry.label || 'A session'} has a reply for the thread`,
+        sub: entry.branch,
+        action: { label: 'Review', run: () => openReplyPanel(entry.branch) },
+      });
+    }
+    for (const branch of Array.from(announced)) {
+      if (!pendingReplies().some((e) => e.branch === branch)) announced.delete(branch);
+    }
+  }
+  for (const entry of pendingReplies()) announced.add(entry.branch);
+
+  /**
+   * The agent's reply, to read and edit before it goes out as you. Nothing
+   * posts without a click here (unless postResults is auto).
+   */
+  function openReplyPanel(branch) {
+    closeMenu();
+    closePanel();
+    if (!ensureLayer()) return;
+
+    const panel = document.createElement('div');
+    panel.className = 'sq-panel sq-reply';
+    panel.dataset.reply = '1';
+    panel.dataset.busy = '1';
+    const title = document.createElement('div');
+    title.className = 'sq-panel-title';
+    title.textContent = 'Reply in the thread';
+    const note = document.createElement('div');
+    note.className = 'sq-note';
+    note.textContent = `Loading ${branch}…`;
+    panel.append(title, note);
+    panelEl = panel;
+    ui.append(panel);
+    schedule();
+
+    ask({ op: 'get-result', branch }).then((res) => {
+      if (panelEl !== panel) return;
+      delete panel.dataset.busy;
+      if (res.error) {
+        note.textContent = res.error;
+        return;
+      }
+      title.textContent = `${res.label || 'Session'}'s reply${res.channel ? ` in #${res.channel}` : ''}`;
+      note.textContent = 'Posted in the thread as you. Edit it first if you like.';
+
+      const box = document.createElement('textarea');
+      box.className = 'sq-ask-input sq-reply-input';
+      box.rows = 10;
+      box.spellcheck = true;
+      box.value = res.text;
+
+      const foot = document.createElement('div');
+      foot.className = 'sq-ask-foot';
+      const hint = document.createElement('span');
+      hint.className = 'sq-ask-hint';
+      hint.textContent = '⌘↵ post · Esc close';
+      const dismiss = menuButton('sq-reply-skip', () => {
+        ask({ op: 'result-posted', branch, resultMs: res.resultMs, dismissed: true }).catch(() => {});
+        closePanel();
+        schedule();
+      });
+      dismiss.textContent = 'Don\u2019t post';
+      dismiss.title = 'Drop this reply. A new one from the agent is offered again.';
+      const post = menuButton('sq-ask-send', () => send());
+      post.textContent = 'Post in thread';
+      foot.append(hint, dismiss, post);
+      panel.replaceChildren(title, note, box, foot);
+
+      function send() {
+        const text = box.value.trim();
+        if (!text) return;
+        panel.dataset.busy = '1';
+        postReply(res.permalink, text).then(() => {
+          if (panelEl === panel) closePanel();
+          toast({ title: 'Replied in the thread', sub: `${res.label || 'Session'} · ${branch}` });
+          return ask({ op: 'result-posted', branch, resultMs: res.resultMs });
+        }).catch((err) => {
+          if (panelEl !== panel) return;
+          delete panel.dataset.busy;
+          note.textContent = err.message;
+          note.dataset.kind = 'error';
+        }).finally(() => schedule());
+      }
+
+      boxKeys = (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closePanel();
+          schedule();
+        } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.isComposing) {
+          event.preventDefault();
+          send();
+        }
+      };
+      box.focus();
+      schedule();
+    }).catch((err) => {
+      if (panelEl !== panel) return;
+      delete panel.dataset.busy;
+      note.textContent = err.message;
+    });
   }
 
   /* -------------------------------------------------------- channel button */
@@ -2188,7 +2529,8 @@
   /** Under the pill when there is one on screen, and under the header when not. */
   function placePanel() {
     if (!panelEl) return;
-    const pill = channelBtn.getBoundingClientRect();
+    // A reply belongs to no channel pill: it can arrive from anywhere.
+    const pill = panelEl.dataset.reply ? { width: 0 } : channelBtn.getBoundingClientRect();
     if (pill.width > 0) {
       placeAt(panelEl, pill.left, pill.bottom + 6);
       return;
@@ -2512,7 +2854,7 @@
     });
   }
 
-  /** Into the session's terminal: the panel has done its job, so it gets out of the way. */
+  /** Into the session's terminal or app: the panel has done its job, so it gets out of the way. */
   function reopenFromPanel(s) {
     closeSessions();
     schedule();
@@ -2740,9 +3082,16 @@
       if (el.textContent !== text) {
         el.textContent = text;
         const last = list[list.length - 1];
+        const detail = statusTitle(last);
         el.title = `Sidequested → ${last.branch}` +
           (list.length > 1 ? ` (and ${list.length - 1} more)` : '') +
-          `\nClick to ${reopenHint('it')}.`;
+          (detail ? `\n${detail}` : '') +
+          (last.status && last.status.reply ? '\nClick to review the reply.' : `\nClick to ${reopenHint('it')}.`);
+        const state = (last.status && last.status.state) || '';
+        if (state) el.dataset.state = state;
+        else delete el.dataset.state;
+        if (last.status && last.status.reply) el.dataset.reply = '1';
+        else delete el.dataset.reply;
       }
       const rect = row.getBoundingClientRect();
       if (clip && onScreen(rect, clip)) {
