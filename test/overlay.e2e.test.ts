@@ -51,6 +51,11 @@ let baseline = "";
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 /** Bodies of what the overlay posted to the fixture's stand-in for Slack's API. */
 const posts: string[] = [];
+/** Take the next post, then lose its answer on the way back, as a flaky network can. */
+let dropNextPost = false;
+/** One field of a multipart form body. */
+const formField = (body: string, name: string) =>
+  body.match(new RegExp(`name="${name}"\\r\\n\\r\\n([^]*?)\\r\\n--`))?.[1];
 
 /**
  * These exercise the real CDP path — a real browser, the real injected
@@ -73,8 +78,27 @@ describeIfChrome("overlay over CDP", () => {
         req.on("data", (chunk) => (body += chunk));
         req.on("end", () => {
           posts.push(body);
+          if (dropNextPost) {
+            // Cut off mid-answer. Dropping the socket before any answer would
+            // have Chromium quietly resend the post on a fresh connection.
+            dropNextPost = false;
+            res.writeHead(200, { "content-type": "application/json", "content-length": "64" });
+            res.write("{");
+            setTimeout(() => req.socket.destroy(), 50);
+            return;
+          }
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ ok: true }));
+        });
+        return;
+      }
+      if (req.method === "POST" && req.url === "/api/conversations.replies") {
+        req.resume();
+        req.on("end", () => {
+          const ts = (Date.now() / 1000).toFixed(6);
+          const messages = posts.map((body) => ({ ts, text: formField(body, "text")?.replace(/\r\n/g, "\n") }));
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: true, messages }));
         });
         return;
       }
@@ -1340,6 +1364,9 @@ describeIfChrome("overlay over CDP", () => {
       await evaluate(session, `${UI}.querySelector('.sq-reply-row').click()`);
       const redraft = await waitFor(session, `${UI}.querySelector('.sq-reply-input')?.value || ''`, Boolean);
       expect(redraft).toBe(`*Cause*\nThe *gift card* is applied twice, in \`applyCredits\`.${signed}`);
+      // The post reaches Slack but its answer is lost on the way back: the
+      // thread shows it went out, so it counts as posted, not failed.
+      dropNextPost = true;
       await evaluate(session, `(() => {
         const box = ${UI}.querySelector('.sq-reply-input');
         box.value = box.value.replace(/\\n\\n_.*_$/, '') + '\\nFix coming.';
@@ -1349,8 +1376,7 @@ describeIfChrome("overlay over CDP", () => {
       const deadline = Date.now() + 5000;
       while (posts.length === 0 && Date.now() < deadline) await sleep(100);
       expect(posts).toHaveLength(1);
-      const field = (name: string) =>
-        posts[0]!.match(new RegExp(`name="${name}"\\r\\n\\r\\n([^]*?)\\r\\n--`))?.[1];
+      const field = (name: string) => formField(posts[0]!, name);
       expect(field("thread_ts")).toBe("1757430000.000100");
       // Form encoding sends line breaks as CRLF; Slack reads them the same.
       expect(field("text")?.replace(/\r\n/g, "\n")).toBe("*Cause*\nThe *gift card* is applied twice, in `applyCredits`.\nFix coming.");
