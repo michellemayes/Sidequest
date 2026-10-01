@@ -39,6 +39,8 @@ const BINDING = "__sidequestAsk";
 const RESULT_FN = "__sidequestResult";
 const POST_RESULT_FN = "__sidequestPostResult";
 const POLL_MS = 4000;
+/** How long a window gets to say whether it will post a reply; see autoPostResults. */
+const AUTO_POST_TIMEOUT_MS = 3_000;
 /** Plenty for a question; a paste of a whole log belongs in the terminal. */
 const MAX_QUESTION = 4000;
 
@@ -314,13 +316,21 @@ export class Attacher {
         label: entry.promptLabel,
         text: resultReply(result.text, { prUrl: status.pr?.url }),
       });
+      // One window at a time, unlike the broadcast: the first that takes it
+      // on posts it, and asking them all at once could post it twice. The
+      // short timeout keeps a hung window from holding up the rest for long;
+      // the page answers at once, before it posts anything.
       for (const session of this.sessions.values()) {
         if (!session) continue;
         try {
-          const res = (await session.send("Runtime.evaluate", {
-            expression: `window.${POST_RESULT_FN} ? window.${POST_RESULT_FN}(${JSON.stringify(payload)}) : false`,
-            returnByValue: true,
-          })) as { result?: { value?: unknown } };
+          const res = (await session.send(
+            "Runtime.evaluate",
+            {
+              expression: `window.${POST_RESULT_FN} ? window.${POST_RESULT_FN}(${JSON.stringify(payload)}) : false`,
+              returnByValue: true,
+            },
+            AUTO_POST_TIMEOUT_MS,
+          )) as { result?: { value?: unknown } };
           if (res.result?.value === true) {
             this.autoPosted.add(key);
             break;
@@ -336,16 +346,15 @@ export class Attacher {
   async broadcastConfig(): Promise<void> {
     const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses);
     const payload = JSON.stringify(JSON.stringify(config));
-    for (const session of this.sessions.values()) {
-      if (!session) continue;
-      try {
-        await session.send("Runtime.evaluate", {
+    // All at once, so one window that does not answer holds up none of the
+    // others. One that fails is going away; the poll loop re-attaches it.
+    await Promise.allSettled(
+      [...this.sessions.values()].map((session) =>
+        session?.send("Runtime.evaluate", {
           expression: `window.__sidequestSetConfig && window.__sidequestSetConfig(${payload})`,
-        });
-      } catch {
-        // Window is going away; the poll loop re-attaches with the new prelude.
-      }
-    }
+        }),
+      ),
+    );
   }
 
   private async handleAsk(

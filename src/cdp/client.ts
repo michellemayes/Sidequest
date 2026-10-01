@@ -34,7 +34,15 @@ type Handler = (params: Record<string, unknown>) => void;
 interface Waiter {
   resolve: (value: Record<string, unknown>) => void;
   reject: (reason: Error) => void;
+  timer: NodeJS.Timeout;
 }
+
+/**
+ * How long a command may go unanswered. A renderer that is busy, paused in a
+ * debugger or wedged never answers at all, and without a limit whatever was
+ * waiting on it (a reply to the overlay, a broadcast) waits forever too.
+ */
+export const DEFAULT_SEND_TIMEOUT_MS = 10_000;
 
 /** Emitted locally when the socket closes, so callers can drop the session. */
 export const CLOSE_EVENT = "__close";
@@ -76,6 +84,7 @@ export class CdpSession {
       socket.on("close", () => {
         this.closed = true;
         for (const waiter of this.pending.values()) {
+          clearTimeout(waiter.timer);
           waiter.reject(new Error("cdp connection closed"));
         }
         this.pending.clear();
@@ -96,6 +105,7 @@ export class CdpSession {
       const waiter = this.pending.get(message.id);
       if (!waiter) return;
       this.pending.delete(message.id);
+      clearTimeout(waiter.timer);
 
       const error = message.error as { message?: string; code?: number } | undefined;
       if (error) waiter.reject(new Error(`${error.message} (${error.code})`));
@@ -127,7 +137,11 @@ export class CdpSession {
     }
   }
 
-  send(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  send(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs: number = DEFAULT_SEND_TIMEOUT_MS,
+  ): Promise<Record<string, unknown>> {
     const socket = this.ws;
     if (this.closed || !socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error("cdp connection is not open"));
@@ -135,10 +149,18 @@ export class CdpSession {
 
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        // A late answer finds no waiter and is dropped.
+        if (!this.pending.delete(id)) return;
+        reject(new Error(`cdp ${method} got no answer in ${Math.round(timeoutMs / 1000)}s`));
+      }, timeoutMs);
+      // A command in flight is no reason to keep the process up.
+      timer.unref();
+      this.pending.set(id, { resolve, reject, timer });
       socket.send(JSON.stringify({ id, method, params }), (err) => {
         if (!err) return;
-        this.pending.delete(id);
+        if (!this.pending.delete(id)) return;
+        clearTimeout(timer);
         reject(err);
       });
     });
