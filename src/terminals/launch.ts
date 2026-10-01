@@ -51,6 +51,12 @@ export interface TerminalLaunchOptions {
   preparedTabConfig?: PreparedTabConfig;
   /** How long to wait for the agent to claim the pending marker. */
   claimTimeoutMs?: number;
+  /**
+   * Called once the terminal has been opened (or the background agent
+   * spawned), before the wait for the agent to claim the session and, for
+   * Warp, before any fallback to another strategy.
+   */
+  onOpened?: (opened: { strategy: string; fellBack: boolean }) => void;
 }
 
 export interface TerminalLaunchResult {
@@ -89,12 +95,14 @@ export async function launchTerminal(options: TerminalLaunchOptions): Promise<Te
       pendingFile: session.pendingFile,
       preparedTabConfig: options.preparedTabConfig,
       claimTimeoutMs: options.claimTimeoutMs,
+      onOpened: options.onOpened,
     });
     return { terminal, strategy: launch.strategy, fellBack: launch.fellBack, agentStarted: launch.agentStarted };
   }
 
   const watch =
     session.script && session.pendingFile && (await exists(session.pendingFile)) ? session.pendingFile : null;
+  const opened = (strategy: string): void => options.onOpened?.({ strategy, fellBack: false });
   const claimed = async (): Promise<boolean | null> =>
     watch ? waitForClaim(watch, options.claimTimeoutMs ?? CLAIM_TIMEOUT_MS) : null;
   const spec: OpenSpec = { cwd: session.cwd, script: session.script, title: session.title };
@@ -104,10 +112,12 @@ export async function launchTerminal(options: TerminalLaunchOptions): Promise<Te
     case "terminal": {
       requireMac(terminal);
       await openWith(terminal, terminal === "iterm2" ? iterm2Argv(spec) : terminalAppArgv(spec));
+      opened(terminal);
       return { terminal, strategy: terminal, fellBack: false, agentStarted: await claimed() };
     }
     case "ghostty": {
       await openWith(terminal, ghosttyArgv(spec, platform() === "darwin"));
+      opened(terminal);
       return { terminal, strategy: terminal, fellBack: false, agentStarted: await claimed() };
     }
     case "tmux": {
@@ -116,10 +126,12 @@ export async function launchTerminal(options: TerminalLaunchOptions): Promise<Te
       const tmuxSpec = { ...spec, session: target };
       if (await succeeds(hasSession.command, hasSession.args)) {
         await openWith(terminal, tmuxNewWindowArgv(tmuxSpec));
+        opened("tmux window");
         return { terminal, strategy: "tmux window", fellBack: false, agentStarted: await claimed() };
       }
       const name = target || TMUX_FALLBACK_SESSION;
       await openWith(terminal, tmuxNewSessionArgv(tmuxSpec));
+      opened("tmux session");
       return {
         terminal,
         strategy: "tmux session",
@@ -129,7 +141,7 @@ export async function launchTerminal(options: TerminalLaunchOptions): Promise<Te
       };
     }
     case "headless":
-      return launchHeadless(session, claimed);
+      return launchHeadless(session, claimed, opened);
   }
 }
 
@@ -140,6 +152,7 @@ export async function launchTerminal(options: TerminalLaunchOptions): Promise<Te
 async function launchHeadless(
   session: TerminalSession,
   claimed: () => Promise<boolean | null>,
+  opened: (strategy: string) => void,
 ): Promise<TerminalLaunchResult> {
   if (session.script && session.pendingFile && (await exists(session.pendingFile))) {
     await spawnHeadless(session.script, session.cwd).catch((err: unknown) => {
@@ -148,6 +161,7 @@ async function launchHeadless(
       );
     });
     log.info(`started ${session.script} in the background`);
+    opened("headless");
     return { terminal: "headless", strategy: "headless", fellBack: false, agentStarted: await claimed() };
   }
 
@@ -162,6 +176,7 @@ async function launchHeadless(
     throw new UserFacingError(`sidequest does not know how to open files on ${platform()}.`, `Look in ${target}.`);
   }
   await openWith("headless", { command: opener.command, args: [...opener.args, target] });
+  opened("opened");
   return { terminal: "headless", strategy: "opened", fellBack: false, agentStarted: null, note: `Opened ${target}.` };
 }
 

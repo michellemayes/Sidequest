@@ -500,6 +500,24 @@ describeIfChrome("overlay over CDP", () => {
         await evaluate(session, `document.querySelector('#row-1 [data-qa="message_content"]').innerText.trim()`),
       ).toBe("Checkout total is wrong for gift cards");
 
+      // The answer comes once the terminal opens; an agent that then never
+      // starts is said on the same line, after the fact.
+      attacher.followAgentCheck(
+        text.match(/fix\/[\w-]+/)![0],
+        "eng-alerts",
+        Promise.resolve("The agent did not start (test)."),
+      );
+      let amended = "";
+      for (let i = 0; i < 30 && !amended.includes("The agent did not start (test)."); i += 1) {
+        await sleep(100);
+        amended = String(await evaluate(session, `${INLINE}('.sq-result:not(.sq-off)')[0]?.textContent || ''`));
+      }
+      expect(amended).toContain("fix/checkout-total-is-wrong-for-gift-cards");
+      expect(amended).toContain("The agent did not start (test).");
+      expect(
+        await evaluate(session, `${INLINE}('.sq-result:not(.sq-off)')[0]?.dataset.kind || ''`),
+      ).toBe("warn");
+
       const { stdout } = await exec("git", ["branch", "--list"], { cwd: repoPath });
       expect(stdout).toContain("fix/checkout-total-is-wrong-for-gift-cards");
 

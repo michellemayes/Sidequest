@@ -16,6 +16,11 @@ export interface PageSession {
   at: string;
   /** Where the session has got to, when the daemon is following it. */
   status?: PageStatus;
+  /**
+   * Found after the session was reported started: the terminal opened but
+   * the agent did not start in it. The overlay adds it to the message's line.
+   */
+  launchError?: string;
 }
 
 /** A session's progress, as much of it as the mark on its message shows. */
@@ -73,6 +78,7 @@ export function pageConfig(
   config: Config,
   history: HistoryEntry[] = [],
   statuses: Map<string, SessionStatus> = new Map(),
+  launchErrors: Map<string, string> = new Map(),
 ): PageConfig {
   const repoLabels: Record<string, string[]> = {};
   for (const [key, links] of Object.entries(config.channels)) {
@@ -93,7 +99,7 @@ export function pageConfig(
     agentHost: sessionHost(agent, config.settings.terminal),
     agentInApp: Boolean(agent.app),
     headless: !agent.app && config.settings.terminal === "headless",
-    sessions: sessionsByMessage(history, statuses, config.settings.trackStatus),
+    sessions: sessionsByMessage(history, statuses, config.settings.trackStatus, launchErrors),
     stats: (({ total, today, streak }) => ({ total, today, streak }))(computeStats(history)),
     postResults: config.settings.postResults,
     verbose: config.settings.verbose,
@@ -104,17 +110,20 @@ function sessionsByMessage(
   history: HistoryEntry[],
   statuses: Map<string, SessionStatus>,
   progress: boolean,
+  launchErrors: Map<string, string>,
 ): Record<string, PageSession[]> {
   const out: Record<string, PageSession[]> = {};
   for (const entry of history.slice(-PAGE_HISTORY)) {
     if (!entry.ts) continue;
     const status = statuses.get(entry.branch);
+    const launchError = launchErrors.get(entry.branch);
     (out[entry.ts] ??= []).push({
       key: entry.promptKey,
       label: entry.promptLabel,
       branch: entry.branch,
       at: entry.createdAt,
       ...(status ? { status: progress ? pageStatus(status) : { reply: status.resultPending } } : {}),
+      ...(launchError ? { launchError } : {}),
     });
   }
   return out;

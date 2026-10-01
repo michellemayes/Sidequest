@@ -746,6 +746,9 @@ async function runAttacherLoop(options: {
         case "session-error":
           console.error(`could not start a session in #${event.channel}: ${event.message}`);
           break;
+        case "agent-not-started":
+          console.error(`${event.branch} in #${event.channel}: ${event.message}`);
+          break;
         case "link":
           console.log(`linked #${event.channel} → ${event.message}`);
           break;

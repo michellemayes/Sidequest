@@ -697,6 +697,7 @@
       return;
     }
     announceReplies();
+    announceLaunchErrors();
     // A broadcast follows every new session, so an open list catches up.
     if (sessionsEl) loadSessions();
     schedule();
@@ -1963,6 +1964,27 @@
     results.set(sig, { text, kind, branch, at: Date.now() });
     while (results.size > MAX_RESULTS) results.delete(results.keys().next().value);
     schedule();
+  }
+
+  /*
+   * The daemon answers a click once the terminal has opened, before the agent
+   * has started in it. When it then does not start, that comes in with the
+   * config, and goes on the line the click left under the message, as a
+   * launch error in the answer would have. Only that line: another window,
+   * or this one after a reload, has nothing to amend.
+   */
+  const launchErrorsShown = new Set();
+  function announceLaunchErrors() {
+    for (const [sig, list] of Object.entries(CONFIG.sessions || {})) {
+      if (!Array.isArray(list)) continue;
+      for (const entry of list) {
+        if (!entry || !entry.launchError || launchErrorsShown.has(entry.branch)) continue;
+        const line = results.get(sig);
+        if (!line || line.branch !== entry.branch) continue;
+        launchErrorsShown.add(entry.branch);
+        setResult(sig, `${line.text} — ${entry.launchError}`, 'warn', entry.branch);
+      }
+    }
   }
 
   function pruneResults() {

@@ -435,10 +435,39 @@ describe("createSession, headless", () => {
       config,
     );
     expect(result.launchError).toBeUndefined();
+    expect(await result.agentCheck).toBeNull();
     const script = join(result.worktreePath, ".sidequest", "autorun.sh");
     expect(calls.at(-1)!.args.at(-1)).toBe(script);
     const body = await readFile(script, "utf8");
     expect(body).toContain(`'aider' '--message-file' "$session_dir/prompt.md"`);
     expect(body).toContain(`'aider' '--restore-chat-history'`);
   });
+
+  it("answers once the terminal opens, and says later if the agent never started", async () => {
+    const { configSchema } = await import("../src/config/schema.js");
+    const { createSession } = await import("../src/session/create.js");
+    const { CLAIM_TIMEOUT_MS } = await import("../src/warp/launcher.js");
+    const repoPath = join(root, "repo3");
+    await execFileAsync("mkdir", ["-p", repoPath]);
+    await execFileAsync("git", ["init", "--initial-branch=main"], { cwd: repoPath });
+    await writeFile(join(repoPath, "README.md"), "# test\n");
+    await execFileAsync("git", ["add", "."], { cwd: repoPath });
+    await execFileAsync("git", ["-c", "user.name=t", "-c", "user.email=t@e", "commit", "-m", "i"], { cwd: repoPath });
+
+    const config = configSchema.parse({
+      settings: { terminal: "tmux", worktreesRoot: join(root, "wt3"), fetchBeforeCreate: false },
+      channels: { eng: [{ repoPath, channel: "eng" }] },
+    });
+    // tmux opens, and nothing in it ever claims the session.
+    const started = Date.now();
+    const result = await createSession(
+      "fix",
+      { channelName: "eng", authorName: "a", text: "Broken", ts: "1700000000.000100", permalink: "", threadMessages: [] },
+      config,
+    );
+    expect(Date.now() - started).toBeLessThan(CLAIM_TIMEOUT_MS);
+    expect(result.launchError).toBeUndefined();
+    expect(result.agentCheck).toBeDefined();
+    expect(await result.agentCheck).toBe(agentDidNotStart("tmux"));
+  }, 20_000);
 });

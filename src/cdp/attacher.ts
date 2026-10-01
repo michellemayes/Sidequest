@@ -39,6 +39,8 @@ const BINDING = "__sidequestAsk";
 const RESULT_FN = "__sidequestResult";
 const POST_RESULT_FN = "__sidequestPostResult";
 const POLL_MS = 4000;
+/** As long as the overlay keeps a message's line (RESULT_TTL_MS in inject.js). */
+const LAUNCH_ERROR_TTL_MS = 10 * 60 * 1000;
 /** How long a window gets to say whether it will post a reply; see autoPostResults. */
 const AUTO_POST_TIMEOUT_MS = 3_000;
 /** Plenty for a question; a paste of a whole log belongs in the terminal. */
@@ -106,6 +108,12 @@ export class Attacher {
   private statuses = new Map<string, SessionStatus>();
   /** Results already handed to a window to post, as branch + mtime, so each is posted once. */
   private readonly autoPosted = new Set<string>();
+  /**
+   * Agents that did not start in a terminal that did open, by branch: found
+   * after the overlay was told the session started, so it hears through the
+   * config instead. Kept for as long as the overlay keeps a message's line.
+   */
+  private readonly launchErrors = new Map<string, { message: string; at: number }>();
   /** Sessions being started right now, so a shutdown can let them finish. */
   private startsInFlight = 0;
   /** Set once a shutdown has begun: new sessions are turned away. */
@@ -133,7 +141,7 @@ export class Attacher {
    */
   private async source(): Promise<string> {
     const script = readFileSync(INJECT_PATH, "utf8");
-    const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses);
+    const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses, this.currentLaunchErrors());
     return `window.__SIDEQUEST_CONFIG = ${JSON.stringify(config)};\n${script}`;
   }
 
@@ -351,6 +359,30 @@ export class Attacher {
     }
   }
 
+  private currentLaunchErrors(): Map<string, string> {
+    const out = new Map<string, string>();
+    const cutoff = Date.now() - LAUNCH_ERROR_TTL_MS;
+    for (const [branch, { message, at }] of this.launchErrors) {
+      if (at < cutoff) this.launchErrors.delete(branch);
+      else out.set(branch, message);
+    }
+    return out;
+  }
+
+  /**
+   * The overlay has already been told the session started; if the agent then
+   * does not, say so through the config, which the overlay shows on the
+   * message's line the way it shows a launch error in the reply.
+   */
+  followAgentCheck(branch: string, channel: string, check: Promise<string | null>): void {
+    void check.then(async (message) => {
+      if (!message) return;
+      this.emit({ type: "agent-not-started", channel, branch, message });
+      this.launchErrors.set(branch, { message, at: Date.now() });
+      await this.broadcastConfig();
+    });
+  }
+
   /** Push fresh config to every attached window after a link changes. */
   async broadcastConfig(): Promise<void> {
     await this.pushConfig([...this.sessions.values()]);
@@ -359,7 +391,7 @@ export class Attacher {
   private async pushConfig(sessions: Array<CdpSession | null>): Promise<void> {
     let payload: string;
     try {
-      const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses);
+      const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses, this.currentLaunchErrors());
       payload = JSON.stringify(JSON.stringify(config));
     } catch (err) {
       this.emit({ type: "config-error", message: describeError(err).message });
@@ -501,6 +533,7 @@ export class Attacher {
         warning: result.launchError,
         attachments: result.attachments,
       });
+      if (result.agentCheck) this.followAgentCheck(result.branch, context.channelName, result.agentCheck);
       await this.broadcastConfig();
       void this.refreshStatuses();
     } catch (err) {

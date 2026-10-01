@@ -61,6 +61,13 @@ export interface SessionResult {
   attachments: number;
   /** Set when the worktree is ready but the terminal or the agent's app could not be opened, or the agent did not start. */
   launchError?: string;
+  /**
+   * Set when the session was handed back as soon as the terminal opened,
+   * before the agent had claimed it: settles once that is known, with what
+   * to tell the user if the agent did not start (null when it did, or when
+   * there was nothing to watch). Never rejects.
+   */
+  agentCheck?: Promise<string | null>;
 }
 
 /**
@@ -240,7 +247,15 @@ export async function createSession(
   // the work.
   try {
     const spec = specFor(worktree);
-    const launch = await launchTerminal({
+    // Hand the session back the moment the terminal is open, rather than
+    // after the agent has claimed it, which takes seconds when it works and,
+    // through Warp's fallbacks, the better part of twenty when it does not.
+    // Whether it started follows in agentCheck.
+    let markOpened!: (opened: { strategy: string; fellBack: boolean }) => void;
+    const opened = new Promise<{ strategy: string; fellBack: boolean }>((resolve) => {
+      markOpened = resolve;
+    });
+    const launching = launchTerminal({
       settings: config.settings,
       session: {
         name: spec.name,
@@ -251,8 +266,32 @@ export async function createSession(
         pendingFile: files.pendingFile,
       },
       preparedTabConfig,
+      onOpened: markOpened,
     });
+    const first = await Promise.race([
+      launching.then((launch) => ({ launch, opened: null })),
+      opened.then((info) => ({ launch: null, opened: info })),
+    ]);
 
+    if (first.opened) {
+      log.info(`session ready in ${Date.now() - startedAt}ms: ${worktree.path} (${first.opened.strategy})`);
+      const agentCheck = launching.then(
+        (launch) => {
+          if (launch.agentStarted !== false) return null;
+          log.warn(`${host} opened on ${worktree.path} but the agent did not start`);
+          return agentDidNotStart(terminal);
+        },
+        (err: unknown) => describeError(err).message,
+      );
+      return {
+        ...base,
+        launchStrategy: first.opened.strategy,
+        fellBackToNewTab: first.opened.fellBack,
+        agentCheck,
+      };
+    }
+
+    const launch = first.launch!;
     log.info(`session ready in ${Date.now() - startedAt}ms: ${worktree.path} (${launch.strategy})`);
     return {
       ...base,
