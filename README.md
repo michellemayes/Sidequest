@@ -108,8 +108,15 @@ mark reads **· reply ready**. Click either (or **Review Fix's reply** at the to
 of the message's menu) to read it in Slack's formatting, edit it, and **Post in thread**
 (**⌘↵**), as you. **Don't post** drops it. Nothing goes out without that click
 unless you set `postResults` to `auto`. If the branch has a pull request, the
-reply links it. If the agent rewrites the file later, the new answer is offered
-again.
+reply links it. Every reply ends with a line saying which agent wrote it
+(*🤖 Written by Claude Code, an AI agent, via Sidequest*), so the thread knows
+it didn't come from you by hand. If the agent rewrites the file later (say you
+ask it to change the reply), a new toast says it was updated.
+
+Replies you haven't posted or dropped yet don't get lost when the toast goes or
+the message scrolls away: a **💬** count on the channel pill, beside the channel
+name, opens the sessions panel with every waiting reply at the top. The panel
+(**⌃⇧S**) lists them too.
 
 **Screenshots and files.** Files attached to the message (a screenshot of the
 bug, a log) come along. The overlay fetches them with Slack's own session, saves
