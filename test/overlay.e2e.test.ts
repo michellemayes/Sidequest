@@ -1183,6 +1183,83 @@ describeIfChrome("overlay over CDP", () => {
     }
   }, 45_000);
 
+  it("puts the chip under a message's attachments, over its replies, not beside it", async () => {
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
+      // Slack's own shape: the avatar gutter and the message side by side,
+      // the message holding its words, an unfurled card and the replies bar.
+      await evaluate(session, `(() => {
+        const content = document.querySelector('#row-1 [data-qa="message_content"]');
+        const gutter = document.createElement('div');
+        gutter.id = 'gutter';
+        gutter.style.display = 'flex';
+        const avatar = document.createElement('div');
+        avatar.style.cssText = 'flex: 0 0 36px; height: 36px';
+        content.before(gutter);
+        gutter.append(avatar, content);
+        content.style.flex = '1 1 auto';
+        const card = document.createElement('div');
+        card.id = 'card';
+        card.style.cssText = 'width: 200px; height: 40px';
+        const bar = document.createElement('div');
+        bar.className = 'c-message__reply_bar';
+        bar.textContent = '2 replies';
+        content.append(card, bar);
+      })()`);
+
+      await hover(session, "row-1");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      await press(session, "2", "Digit2", 50);
+      await settledResult(session);
+
+      const spot = await evaluate(
+        session,
+        `(() => {
+           const host = document.querySelector('#row-1 sidequest-inline');
+           const line = host.shadowRoot.querySelector('.sq-result').getBoundingClientRect();
+           const text = document.querySelector('#row-1 .p-rich_text_section').getBoundingClientRect();
+           const card = document.getElementById('card').getBoundingClientRect();
+           const bar = document.querySelector('#row-1 .c-message__reply_bar').getBoundingClientRect();
+           return JSON.stringify({
+             overBar: host.nextElementSibling?.className,
+             underCard: line.top >= card.bottom - 1,
+             aboveBar: line.bottom <= bar.top + 1,
+             alignedWithText: Math.abs(line.left - text.left) <= 1,
+           });
+         })()`,
+      );
+      expect(JSON.parse(String(spot))).toEqual({
+        overBar: "c-message__reply_bar",
+        underCard: true,
+        aboveBar: true,
+        alignedWithText: true,
+      });
+
+      // Without a replies bar, the chip still ends the message's own column.
+      await evaluate(session, `document.querySelector('#row-1 .c-message__reply_bar').remove()`);
+      const end = await waitFor(
+        session,
+        `document.querySelector('#row-1 [data-qa="message_content"]').lastElementChild?.localName || ''`,
+        (v) => v === "sidequest-inline",
+      );
+      expect(end).toBe("sidequest-inline");
+    } finally {
+      await evaluate(session, `(() => {
+        const gutter = document.getElementById('gutter');
+        if (!gutter) return;
+        const content = gutter.querySelector('[data-qa="message_content"]');
+        content.style.flex = '';
+        content.querySelectorAll('#card, .c-message__reply_bar').forEach((el) => el.remove());
+        gutter.replaceWith(content);
+      })()`).catch(() => undefined);
+      attacher.stop();
+      session.close();
+    }
+  }, 45_000);
+
   it("follows a session on its message, and offers the agent's reply to post", async () => {
     const { attacher, session } = await attachAndEval({ watchIntervalMs: 300 });
     try {
