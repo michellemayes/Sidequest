@@ -483,6 +483,8 @@
     }
     .sq-session-x:hover { opacity: 1; background: var(--sq-wash); }
     .sq-chip[data-tone="reply"] { color: #8b5cf6; border-color: color-mix(in srgb, #8b5cf6 45%, transparent); opacity: 1; }
+    .sq-chip[data-action] { cursor: pointer; }
+    .sq-chip[data-action]:hover { background: color-mix(in srgb, #8b5cf6 14%, transparent); }
     /* Replies an agent left that have not been posted or dropped: first in
        the panel, since they are the thing waiting on you. */
     .sq-replies { display: flex; flex-direction: column; gap: 1px; margin: 0 -4px 6px; padding-bottom: 6px; border-bottom: 1px solid var(--sq-line); }
@@ -2983,7 +2985,10 @@
     return `${Math.floor(secs / (86400 * 7))}w`;
   }
 
-  /** What is cheaply known about a session, as [text, tone, tooltip]. */
+  /**
+   * What is cheaply known about a session, as [text, tone, tooltip, action?].
+   * A chip with an action does that instead of reopening the session.
+   */
   function sessionChips(s) {
     if (s.state === 'gone') {
       return [['worktree deleted', 'bad', 'The directory is gone; git still has it registered.']];
@@ -2999,7 +3004,8 @@
       chips.push([`${s.dirty} uncommitted`, 'warn', 'Changed or new files not yet committed.']);
     }
     if (pendingReplies().some((e) => e.branch === s.branch)) {
-      chips.push(['reply ready', 'reply', 'The agent left a reply for the thread. It is listed at the top.']);
+      chips.push(['reply ready', 'reply', 'Read the reply the agent left for the thread, edit it, and post it',
+        () => openReplyPanel(s.branch)]);
     }
     return chips;
   }
@@ -3039,12 +3045,20 @@
 
     const state = document.createElement('span');
     state.className = 'sq-session-state';
-    for (const [text, tone, tip] of sessionChips(s)) {
+    for (const [text, tone, tip, run] of sessionChips(s)) {
       const chip = document.createElement('span');
       chip.className = 'sq-chip';
       if (tone) chip.dataset.tone = tone;
       chip.textContent = text;
       chip.title = tip;
+      if (run) {
+        // Inside the row's button, so a span: a button may not hold a button.
+        chip.dataset.action = '1';
+        chip.addEventListener('click', (event) => {
+          stop(event);
+          run();
+        });
+      }
       state.append(chip);
     }
 
