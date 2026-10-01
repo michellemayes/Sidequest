@@ -1871,4 +1871,60 @@ describeIfChrome("overlay over CDP", () => {
       attacher.stop();
     }
   }, 60_000);
+
+  /*
+   * The overlay's script is registered once, at attach, carrying the config
+   * of that moment. A window reloaded later has to come back with the config
+   * as it is now, not as it was then.
+   */
+  it("hands a reloaded window the config as it is now", async () => {
+    const attacher = new Attacher({ cdpPort: PORT, targetUrlPattern: "reload-window", watchIntervalMs: false });
+    const browser = new CdpSession((await devtoolsVersion(PORT)).webSocketDebuggerUrl);
+    await browser.connect();
+    let targetId = "";
+    let session: CdpSession | null = null;
+    try {
+      const created = await browser.send("Target.createTarget", {
+        url: `http://127.0.0.1:${HTTP_PORT}/reload-window`,
+      });
+      targetId = String(created.targetId);
+      const deadline = Date.now() + 25_000;
+      await attacher.start();
+      while (attacher.attachedCount === 0 && Date.now() < deadline) {
+        await sleep(250);
+        await attacher.sweepNow();
+      }
+      expect(attacher.attachedCount).toBe(1);
+
+      const page = (await listTargets(PORT)).find((t) => t.id === targetId);
+      session = new CdpSession(page!.webSocketDebuggerUrl!);
+      await session.connect();
+      await session.send("Runtime.enable");
+      const label =
+        "(() => { const l = document.getElementById('sidequest-layer'); " +
+        "const el = l && l.shadowRoot.querySelector('.sq-channel .sq-channel-label'); " +
+        "return el ? el.textContent : ''; })()";
+      const until = async (want: string): Promise<string> => {
+        let seen = "";
+        while (Date.now() < deadline) {
+          seen = String(await evaluate(session!, label).catch(() => ""));
+          if (seen === want) break;
+          await sleep(200);
+        }
+        return seen;
+      };
+      expect(await until("repo")).toBe("repo");
+
+      // Linked behind the overlay's back, with no broadcast: only the reload
+      // can bring it in.
+      await linkSecondRepo();
+      await session.send("Page.reload");
+      expect(await until("repo +1")).toBe("repo +1");
+    } finally {
+      session?.close();
+      if (targetId) await browser.send("Target.closeTarget", { targetId }).catch(() => undefined);
+      browser.close();
+      attacher.stop();
+    }
+  }, 60_000);
 });

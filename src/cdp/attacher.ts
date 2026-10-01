@@ -236,6 +236,15 @@ export class Attacher {
     await session.send("Runtime.enable");
     await session.send("Runtime.addBinding", { name: BINDING });
 
+    // The script below is registered once, with the config as it was at
+    // attach time, so a window reloaded since (Cmd-R, a workspace switch)
+    // would boot its overlay on that. The overlay is installed before the
+    // page's own scripts, so by DOMContentLoaded (a main-frame event) it is
+    // there to be handed the config as it is now.
+    session.on("Page.domContentEventFired", () => {
+      void this.pushConfig([session]);
+    });
+
     session.on("Runtime.bindingCalled", (params) => {
       if (params.name !== BINDING) return;
       void this.handleAsk(session, params).catch((err) => {
@@ -344,12 +353,22 @@ export class Attacher {
 
   /** Push fresh config to every attached window after a link changes. */
   async broadcastConfig(): Promise<void> {
-    const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses);
-    const payload = JSON.stringify(JSON.stringify(config));
+    await this.pushConfig([...this.sessions.values()]);
+  }
+
+  private async pushConfig(sessions: Array<CdpSession | null>): Promise<void> {
+    let payload: string;
+    try {
+      const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses);
+      payload = JSON.stringify(JSON.stringify(config));
+    } catch (err) {
+      this.emit({ type: "config-error", message: describeError(err).message });
+      return;
+    }
     // All at once, so one window that does not answer holds up none of the
     // others. One that fails is going away; the poll loop re-attaches it.
     await Promise.allSettled(
-      [...this.sessions.values()].map((session) =>
+      sessions.map((session) =>
         session?.send("Runtime.evaluate", {
           expression: `window.__sidequestSetConfig && window.__sidequestSetConfig(${payload})`,
         }),

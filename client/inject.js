@@ -37,6 +37,11 @@
  */
 (() => {
   if (window.__SIDEQUEST__) return;
+  // The daemon installs this in every frame of the window, iframes included
+  // (embeds, Slack's own sandboxes). The overlay belongs to the app's top
+  // frame only; anywhere else it would draw a second layer, or fail to find
+  // any messages and keep looking.
+  if (window.top !== window) return;
   window.__SIDEQUEST__ = true;
 
   const CONFIG = Object.assign({
