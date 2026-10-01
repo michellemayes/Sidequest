@@ -1847,9 +1847,8 @@
   }
 
   /**
-   * Say in the thread that you're on it, as you. The only request the overlay
-   * makes itself, sent only when settings.autoReply is on, and only to the
-   * workspace's own API.
+   * Post in the thread as you, to the workspace's own API and nowhere else.
+   * If the answer is lost, the thread is read back to see whether it landed.
    */
   async function postReply(permalink, text) {
     const target = replyTarget(permalink);
@@ -1861,14 +1860,74 @@
     form.append('channel', target.channel);
     form.append('thread_ts', target.threadTs);
     form.append('text', text);
-    const res = await fetch(new URL('api/chat.postMessage', team.url).href, {
-      method: 'POST',
-      body: form,
-      credentials: 'include',
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!body.ok) throw new Error(`Slack said ${body.error || `HTTP ${res.status}`}.`);
+    // Slack's ts is seconds; a minute's slack covers a clock that runs fast.
+    const since = Date.now() / 1000 - 60;
+    let res;
+    let body;
+    try {
+      res = await fetch(new URL('api/chat.postMessage', team.url).href, {
+        method: 'POST',
+        body: form,
+        credentials: 'include',
+      });
+      body = await res.json();
+    } catch (err) {
+      // The request can reach Slack and post while its answer never makes it
+      // back ("Failed to fetch", or a body cut off). Look in the thread before
+      // calling it failed, so a reply that went out is not reported as lost
+      // and posted twice.
+      if (await replyLanded(team, target, text, since)) {
+        log('replied in thread (confirmed after a lost answer)', target);
+        return;
+      }
+      if (res && !res.ok) throw new Error(`Slack said HTTP ${res.status}.`);
+      throw new Error(`Slack did not answer (${err.message}). Check the thread before posting again: the reply may have gone out.`);
+    }
+    if (!body || !body.ok) throw new Error(`Slack said ${(body && body.error) || `HTTP ${res.status}`}.`);
     log('replied in thread', target);
+  }
+
+  /** Whether the thread holds this text, posted since `since`. Never throws. */
+  async function replyLanded(team, target, text, since) {
+    const want = comparable(text);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await new Promise((resolve) => setTimeout(resolve, 1500));
+      try {
+        const form = new FormData();
+        form.append('token', team.token);
+        form.append('channel', target.channel);
+        form.append('ts', target.threadTs);
+        form.append('oldest', since.toFixed(6));
+        form.append('inclusive', 'true');
+        form.append('limit', '50');
+        const res = await fetch(new URL('api/conversations.replies', team.url).href, {
+          method: 'POST',
+          body: form,
+          credentials: 'include',
+        });
+        const body = await res.json();
+        const messages = (body && body.ok && body.messages) || [];
+        if (messages.some((m) => Number(m.ts) >= since && comparable(m.text) === want)) return true;
+      } catch {
+        // Still unreachable; try again, then give up.
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Text as Slack hands it back: it escapes &, < and >, wraps links in <…>,
+   * and may trim. Compare on what survives all of that.
+   */
+  function comparable(text) {
+    return String(text || '')
+      .replace(/<([^<>|]*)\|([^<>]*)>/g, '$2')
+      .replace(/[<>]/g, '')
+      .replace(/&lt;/g, '')
+      .replace(/&gt;/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   /** Back into a session started earlier. */
