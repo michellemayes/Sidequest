@@ -166,6 +166,8 @@ export async function createSession(
     prompt: body,
     agentCommand: agent.command,
     agentArgs: agent.args,
+    promptArgs: agent.promptArgs,
+    ...(agent.resumeArgs ? { resumeArgs: agent.resumeArgs } : {}),
     agentLabel: agent.label,
     title,
     pending: !agent.app,

@@ -1,5 +1,6 @@
 import { mkdir, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
+import { PROMPT_FILE_TOKEN, PROMPT_TOKEN } from "../agents/agents.js";
 
 /** Directory inside each worktree holding the generated session files. */
 export const SESSION_DIR = ".sidequest";
@@ -31,6 +32,13 @@ export interface WriteAutorunOptions {
   prompt: string;
   agentCommand: string;
   agentArgs: string[];
+  /**
+   * How the prompt is passed, after the args; `{prompt}` and `{promptFile}`
+   * are filled in. Defaults to the prompt as one trailing argument.
+   */
+  promptArgs?: string[];
+  /** Args for a second run once the first exits, for one-shot-only CLIs. */
+  resumeArgs?: string[];
   /** Human label for comments only, e.g. "Codex". */
   agentLabel?: string;
   /** Starting terminal title; the agent may replace it. */
@@ -64,8 +72,28 @@ export async function writeAutorun(options: WriteAutorunOptions): Promise<Autoru
   return paths;
 }
 
+/**
+ * One argv entry for the script. Literal text is single-quoted; the prompt
+ * placeholders become double-quoted expansions, so the prompt is read from
+ * disk at run time and its shell metacharacters stay literal.
+ */
+function shellArg(arg: string): string {
+  return arg
+    .split(/(\{prompt\}|\{promptFile\})/)
+    .filter((part) => part !== "")
+    .map((part) => {
+      if (part === PROMPT_TOKEN) return `"$(cat "$session_dir/prompt.md")"`;
+      if (part === PROMPT_FILE_TOKEN) return `"$session_dir/prompt.md"`;
+      return shellQuote(part);
+    })
+    .join("") || "''";
+}
+
 function renderScript(options: WriteAutorunOptions): string {
-  const command = [options.agentCommand, ...options.agentArgs].map(shellQuote).join(" ");
+  const base = [options.agentCommand, ...options.agentArgs].map(shellQuote);
+  const command = [...base, ...(options.promptArgs ?? [PROMPT_TOKEN]).map(shellArg)].join(" ");
+  // A one-shot CLI gets a second, interactive run on the same conversation.
+  const resume = options.resumeArgs ? `\n${[...base, ...options.resumeArgs.map(shellQuote)].join(" ")}` : "";
   const agentLine = options.agentLabel ? `# Agent: ${options.agentLabel}\n` : "";
   const title = shellQuote((options.title ?? "sidequest").replace(/[\u0000-\u001f\u007f]/g, ""));
 
@@ -92,7 +120,7 @@ if [ ! -f "$session_dir/prompt.md" ]; then
 fi
 
 printf '\\033]0;%s\\007' ${title}
-${command} "$(cat "$session_dir/prompt.md")"
+${command}${resume}
 `;
 }
 

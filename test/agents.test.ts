@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AGENT_DEFINITIONS, agentDefinition, resolveAgent } from "../src/agents/agents.js";
+import {
+  AGENT_DEFINITIONS,
+  agentArgv,
+  agentDefinition,
+  describeAgent,
+  fillPromptArg,
+  resolveAgent,
+} from "../src/agents/agents.js";
 import { loadConfig } from "../src/config/store.js";
 
 let home: string;
@@ -51,10 +58,89 @@ describe("agent registry", () => {
     expect(agentDefinition("definitely-not-an-agent").id).toBe("claude");
   });
 
-  it("ships claude and codex", () => {
+  it("ships every supported agent, with unique ids", () => {
     const ids = AGENT_DEFINITIONS.map((d) => d.id);
-    expect(ids).toContain("claude");
-    expect(ids).toContain("codex");
+    expect(ids).toEqual([
+      "claude",
+      "codex",
+      "gemini",
+      "aider",
+      "cursor-agent",
+      "opencode",
+      "copilot",
+      "qwen",
+      "goose",
+      "claude-desktop",
+      "chatgpt",
+    ]);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const def of AGENT_DEFINITIONS.filter((d) => !d.app)) {
+      expect(def.host).toBe("Warp");
+      expect(def.installHint).toContain("settings.agent.command");
+    }
+  });
+});
+
+describe("agent invocations", () => {
+  const argv = (id: string, args: string[] = []) =>
+    agentArgv(resolveAgent({ id, command: "", args }), "Fix it.", "/wt/.sidequest/prompt.md");
+
+  // Each one starts an interactive session whose first turn is the prompt.
+  it.each([
+    ["claude", ["claude", "Fix it."]],
+    ["codex", ["codex", "Fix it."]],
+    ["gemini", ["gemini", "--prompt-interactive", "Fix it."]],
+    ["aider", ["aider", "--message-file", "/wt/.sidequest/prompt.md"]],
+    ["cursor-agent", ["cursor-agent", "Fix it."]],
+    ["opencode", ["opencode", "--prompt", "Fix it."]],
+    ["copilot", ["copilot", "--interactive", "Fix it."]],
+    ["qwen", ["qwen", "--prompt-interactive", "Fix it."]],
+    ["goose", ["goose", "run", "--interactive", "--instructions", "/wt/.sidequest/prompt.md"]],
+  ])("launches %s", (id, expected) => {
+    expect(argv(id)).toEqual(expected);
+  });
+
+  it("puts user args before the prompt flag", () => {
+    expect(argv("gemini", ["--model", "gemini-2.5-pro"])).toEqual([
+      "gemini",
+      "--model",
+      "gemini-2.5-pro",
+      "--prompt-interactive",
+      "Fix it.",
+    ]);
+  });
+
+  it("resumes aider's chat after its one-shot first message", () => {
+    const aider = resolveAgent({ id: "aider", command: "", args: ["--model", "sonnet"] });
+    expect(aider.resumeArgs).toEqual(["--restore-chat-history"]);
+    expect(describeAgent(aider)).toBe(
+      "aider --model sonnet --message-file .sidequest/prompt.md, then aider --model sonnet --restore-chat-history",
+    );
+  });
+
+  it("only aider needs a second run", () => {
+    const resumed = AGENT_DEFINITIONS.filter((d) => resolveAgent({ id: d.id, command: "", args: [] }).resumeArgs);
+    expect(resumed.map((d) => d.id)).toEqual(["aider"]);
+  });
+
+  it("describes a plain agent by its first run", () => {
+    expect(describeAgent(resolveAgent({ id: "opencode", command: "", args: [] }))).toBe(
+      "opencode --prompt <prompt>",
+    );
+  });
+
+  it("describes an app agent by the link it opens", () => {
+    expect(describeAgent(resolveAgent({ id: "claude-desktop", command: "", args: [] }))).toBe(
+      "opens claude://code/new in the Claude app",
+    );
+    expect(describeAgent(resolveAgent({ id: "chatgpt", command: "", args: [] }))).toBe(
+      "opens codex://threads/new in the ChatGPT app",
+    );
+  });
+
+  it("fills placeholders inside an arg", () => {
+    expect(fillPromptArg("--file={promptFile}", "p", "/f")).toBe("--file=/f");
+    expect(fillPromptArg("{prompt}", "has {promptFile} in it", "/f")).toBe("has {promptFile} in it");
   });
 });
 

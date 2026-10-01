@@ -91,7 +91,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("agents [id]")
-    .description("list the coding agents Sidequest can launch, or switch to one (claude, codex, claude-desktop, chatgpt)")
+    .description("list the coding agents Sidequest can launch, or switch to one (claude, codex, gemini, aider, claude-desktop, ...)")
     .action((id: string | undefined) => wrap(() => agents(id)));
 
   program
@@ -151,7 +151,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("install-hook")
-    .description("add the shell hook that starts Claude when a worktree tab opens")
+    .description("add the shell hook that starts the agent when a worktree tab opens")
     .option("--rc <path>", "shell rc file to modify (default: detected)")
     .option("--print", "print the snippet instead of writing it", false)
     .action((options: { rc?: string; print: boolean }) => wrap(() => installHook(options)));
@@ -376,11 +376,12 @@ async function agents(id?: string): Promise<void> {
   for (const def of AGENT_DEFINITIONS) {
     const marker = def.id === activeId ? "  (active)" : "";
     console.log(`  ${def.id}${marker}`);
-    console.log(`    ${def.label} — ${def.app ? `opens in ${def.host}` : `${[def.command, ...def.defaultArgs].join(" ")}, in Warp`}`);
+    const description = describeAgent(resolveAgent({ id: def.id, command: "", args: [] }));
+    console.log(`    ${def.label} — ${def.app ? description : `${description}, in Warp`}`);
   }
   console.log("\nSwitch with `sidequest agents <id>`, or in " + `${configFile()}:`);
-  console.log(`  { "settings": { "agent": { "id": "codex" } } }`);
-  console.log("`command` and `args` override a Warp agent's executable and flags.");
+  console.log(`  { "settings": { "agent": { "id": "gemini" } } }`);
+  console.log("`command` and `args` override a Warp agent's executable and flags; the prompt still goes last.");
   console.log("An app agent opens a new session in the worktree with the prompt ready; press Enter there to start it.");
 }
 

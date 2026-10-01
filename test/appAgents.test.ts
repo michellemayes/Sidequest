@@ -91,7 +91,8 @@ describe("desktop app agents", () => {
     expect(agentDefinition("claude-desktop").app).toBeDefined();
     expect(agentDefinition("chatgpt").app).toBeDefined();
     // The terminal agents stay terminal agents.
-    expect(AGENT_DEFINITIONS.filter((d) => !d.app).map((d) => d.id)).toEqual(["claude", "codex"]);
+    expect(AGENT_DEFINITIONS.filter((d) => d.app).map((d) => d.id)).toEqual(["claude-desktop", "chatgpt"]);
+    for (const id of ["claude", "codex", "gemini", "aider"]) expect(agentDefinition(id).app).toBeUndefined();
   });
 
   it("builds Claude's Code-tab link with the prompt and the folder, encoded", () => {
