@@ -10,9 +10,10 @@
  * the tests isolated, and it is capped: this is a log of recent work, not an
  * archive.
  */
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename } from "node:fs/promises";
 import { dirname } from "node:path";
 import { historyFile } from "../config/paths.js";
+import { log } from "../util/log.js";
 
 export const HISTORY_LIMIT = 1000;
 
@@ -66,15 +67,46 @@ export async function loadHistory(): Promise<HistoryEntry[]> {
     return [];
   }
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    const list = Array.isArray(parsed)
-      ? parsed
-      : Array.isArray((parsed as { sessions?: unknown })?.sessions)
-        ? (parsed as { sessions: unknown[] }).sessions
-        : [];
-    return list.filter(isEntry);
+    return parseHistory(raw);
   } catch {
     // A corrupt history is not worth refusing to start a session over.
+    return [];
+  }
+}
+
+/** Throws on anything that is not a history, so a writer sets it aside rather than over it. */
+function parseHistory(raw: string): HistoryEntry[] {
+  const parsed = JSON.parse(raw) as unknown;
+  const list = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray((parsed as { sessions?: unknown })?.sessions)
+      ? (parsed as { sessions: unknown[] }).sessions
+      : null;
+  if (!list) throw new Error("not a history file");
+  return list.filter(isEntry);
+}
+
+/**
+ * The history as a writer must see it. Readers can shrug off a file they
+ * cannot read, but a writer that did would replace every session with just
+ * the one it is adding. So a missing file starts empty, one that cannot be
+ * read stops the write, and one that does not parse is set aside where it can
+ * still be recovered before starting over.
+ */
+async function loadHistoryForWrite(file: string): Promise<HistoryEntry[]> {
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  try {
+    return parseHistory(raw);
+  } catch {
+    const backup = `${file}.corrupt-${Date.now()}`;
+    await rename(file, backup);
+    log.warn(`history: ${file} did not parse; moved it to ${backup} and started a new one`);
     return [];
   }
 }
@@ -116,13 +148,19 @@ export function updateSession(branch: string, patch: Partial<HistoryEntry>): Pro
 
 function rewrite(change: (history: HistoryEntry[]) => HistoryEntry[]): Promise<HistoryEntry[]> {
   const next = writing.then(async () => {
-    const kept = change(await loadHistory());
     const file = historyFile();
+    const kept = change(await loadHistoryForWrite(file));
     await mkdir(dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.tmp`;
-    await writeFile(tmp, `${JSON.stringify({ version: 1, sessions: kept }, null, 2)}\n`, {
-      mode: 0o600,
-    });
+    // Synced before the rename, so a crash or power cut leaves the old file
+    // or the new one, never a renamed but still empty one.
+    const handle = await open(tmp, "w", 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify({ version: 1, sessions: kept }, null, 2)}\n`);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await rename(tmp, file);
     return kept;
   });

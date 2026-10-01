@@ -239,45 +239,59 @@ export class Attacher {
   }
 
   private async attach(target: CdpTarget): Promise<CdpSession> {
+    // Built before connecting: it reads the config, and a config that does
+    // not parse should cost this sweep nothing rather than a socket to undo.
+    const source = await this.source();
     const session = new CdpSession(target.webSocketDebuggerUrl!);
     await session.connect();
 
     session.on(CLOSE_EVENT, () => {
+      // Only a window that finished attaching holds its slot. One that failed
+      // partway is closed below and reported by the sweep as an attach error,
+      // and by then its slot may belong to the next attempt.
+      if (this.sessions.get(target.id) !== session) return;
       this.sessions.delete(target.id);
       // A shutdown closes every socket itself; that is not a window going away.
       if (!this.stopped) this.emit({ type: "detached", target: target.url });
     });
 
-    await session.send("Page.enable");
-    await session.send("Runtime.enable");
-    await session.send("Runtime.addBinding", { name: BINDING });
+    try {
+      await session.send("Page.enable");
+      await session.send("Runtime.enable");
+      await session.send("Runtime.addBinding", { name: BINDING });
 
-    // The script below is registered once, with the config as it was at
-    // attach time, so a window reloaded since (Cmd-R, a workspace switch)
-    // would boot its overlay on that. The overlay is installed before the
-    // page's own scripts, so by DOMContentLoaded (a main-frame event) it is
-    // there to be handed the config as it is now.
-    session.on("Page.domContentEventFired", () => {
-      void this.pushConfig([session]);
-    });
-
-    session.on("Runtime.bindingCalled", (params) => {
-      if (params.name !== BINDING) return;
-      void this.handleAsk(session, params).catch((err) => {
-        this.emit({ type: "ask-error", message: describeError(err).message });
+      // The script below is registered once, with the config as it was at
+      // attach time, so a window reloaded since (Cmd-R, a workspace switch)
+      // would boot its overlay on that. The overlay is installed before the
+      // page's own scripts, so by DOMContentLoaded (a main-frame event) it is
+      // there to be handed the config as it is now.
+      session.on("Page.domContentEventFired", () => {
+        void this.pushConfig([session]);
       });
-    });
 
-    const source = await this.source();
-    // Covers navigations and workspace switches...
-    await session.send("Page.addScriptToEvaluateOnNewDocument", { source });
-    // ...and the window that is already open right now. A window that ran the
-    // overlay before (the daemon restarted under a Slack that stayed open)
-    // keeps its overlay, so hand it the config as it is now.
-    await session.send("Runtime.evaluate", {
-      expression: `${source}\n;window.__sidequestSetConfig && window.__sidequestSetConfig(JSON.stringify(window.__SIDEQUEST_CONFIG));`,
-      awaitPromise: false,
-    });
+      session.on("Runtime.bindingCalled", (params) => {
+        if (params.name !== BINDING) return;
+        void this.handleAsk(session, params).catch((err) => {
+          this.emit({ type: "ask-error", message: describeError(err).message });
+        });
+      });
+
+      // Covers navigations and workspace switches...
+      await session.send("Page.addScriptToEvaluateOnNewDocument", { source });
+      // ...and the window that is already open right now. A window that ran the
+      // overlay before (the daemon restarted under a Slack that stayed open)
+      // keeps its overlay, so hand it the config as it is now.
+      await session.send("Runtime.evaluate", {
+        expression: `${source}\n;window.__sidequestSetConfig && window.__sidequestSetConfig(JSON.stringify(window.__SIDEQUEST_CONFIG));`,
+        awaitPromise: false,
+      });
+    } catch (err) {
+      // The sweep forgets this window and tries again on the next poll. Left
+      // open, this socket would go on answering clicks alongside the next
+      // attempt's, and each click would start one session per leaked socket.
+      session.close();
+      throw err;
+    }
 
     this.emit({ type: "attached", target: target.url });
     return session;
@@ -302,7 +316,12 @@ export class Attacher {
       history: loadHistory,
       onChange: (statuses) => {
         this.statuses = statuses;
-        void this.broadcastConfig();
+        // A config edited into something that does not parse makes this
+        // throw; say so, as the other background work does, rather than let
+        // the rejection take the daemon down.
+        void this.broadcastConfig().catch((err) => {
+          this.emit({ type: "config-error", message: describeError(err).message });
+        });
         void this.autoPostResults().catch((err) => {
           this.emit({ type: "result-error", message: describeError(err).message });
         });
@@ -314,6 +333,13 @@ export class Attacher {
   /** Look in on the sessions now rather than on the next tick. */
   async refreshStatuses(): Promise<void> {
     await this.watcher?.refresh();
+  }
+
+  /** The same, without waiting: for after a reply, where nobody is left to hear a failure. */
+  private refreshStatusesSoon(): void {
+    void this.refreshStatuses().catch((err) => {
+      this.emit({ type: "status-error", message: describeError(err).message });
+    });
   }
 
   /**
@@ -549,7 +575,7 @@ export class Attacher {
       });
       if (result.agentCheck) this.followAgentCheck(result.branch, context.channelName, result.agentCheck);
       await this.broadcastConfig();
-      void this.refreshStatuses();
+      this.refreshStatusesSoon();
     } catch (err) {
       const { message, hint } = describeError(err);
       this.emit({ type: "session-error", channel: context.channelName, message });
@@ -705,25 +731,31 @@ export class Attacher {
     request: AskRequest,
   ): Promise<void> {
     const branch = (request.branch ?? "").trim();
-    const entry = (await loadHistory()).reverse().find((h) => h.branch === branch);
-    const result = entry ? await readResult(entry.worktreePath) : null;
-    if (!entry || !result) {
-      await this.reply(session, contextId, { id: request.id, error: `${branch || "That session"} has no reply to post.` });
-      return;
+    try {
+      const entry = (await loadHistory()).reverse().find((h) => h.branch === branch);
+      const result = entry ? await readResult(entry.worktreePath) : null;
+      if (!entry || !result) {
+        await this.reply(session, contextId, { id: request.id, error: `${branch || "That session"} has no reply to post.` });
+        return;
+      }
+      const status = this.statuses.get(branch);
+      const config = await loadConfig();
+      await this.reply(session, contextId, {
+        id: request.id,
+        ok: true,
+        branch,
+        label: entry.promptLabel,
+        channel: entry.channel,
+        permalink: entry.permalink ?? "",
+        resultMs: result.mtimeMs,
+        agent: replyAgent(entry, config),
+        text: resultReply(result.text, { prUrl: status?.pr?.url, agent: replyAgent(entry, config) }),
+      });
+    } catch (err) {
+      // Unanswered, the overlay would sit on its spinner until it gives up.
+      const { message, hint } = describeError(err);
+      await this.reply(session, contextId, { id: request.id, error: message, hint });
     }
-    const status = this.statuses.get(branch);
-    const config = await loadConfig();
-    await this.reply(session, contextId, {
-      id: request.id,
-      ok: true,
-      branch,
-      label: entry.promptLabel,
-      channel: entry.channel,
-      permalink: entry.permalink ?? "",
-      resultMs: result.mtimeMs,
-      agent: replyAgent(entry, config),
-      text: resultReply(result.text, { prUrl: status?.pr?.url, agent: replyAgent(entry, config) }),
-    });
   }
 
   /**
@@ -788,7 +820,7 @@ export class Attacher {
       this.emit({ type: "remove-session", branch: result.branch });
       await this.reply(session, contextId, { id: request.id, ok: true, ...result });
       // Its mark now says it was cleaned up.
-      void this.refreshStatuses();
+      this.refreshStatusesSoon();
     } catch (err) {
       const { message, hint } = describeError(err);
       const dirty = err instanceof UncommittedWorkError ? err.dirty : undefined;
@@ -820,16 +852,23 @@ export class Attacher {
     contextId: number | undefined,
     request: AskRequest,
   ): Promise<void> {
-    const config = await loadConfig();
-    const links = linksForChannel(config, request.channel ?? "");
+    try {
+      const config = await loadConfig();
+      const links = linksForChannel(config, request.channel ?? "");
 
-    await this.reply(session, contextId, {
-      id: request.id,
-      linked: links.length > 0,
-      repo: links[0] ? linkLabel(links[0]) : "",
-      repoPath: links[0]?.repoPath ?? "",
-      repos: links.map(linkLabel),
-    });
+      await this.reply(session, contextId, {
+        id: request.id,
+        linked: links.length > 0,
+        repo: links[0] ? linkLabel(links[0]) : "",
+        repoPath: links[0]?.repoPath ?? "",
+        repos: links.map(linkLabel),
+      });
+    } catch (err) {
+      // A config that does not parse lands here; the overlay should hear why
+      // now rather than wait out its timeout.
+      const { message, hint } = describeError(err);
+      await this.reply(session, contextId, { id: request.id, error: message, hint, repos: [] });
+    }
   }
 
   private async reply(

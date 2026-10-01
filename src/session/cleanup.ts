@@ -12,12 +12,14 @@
  * - the branch goes too only with pruneBranchesOnClean, and then only through
  *   `git branch -d`, which keeps a branch holding commits the base lacks.
  *
- * The daemon never passes `all` or `force`. What it adds is `minIdleMs`: a
- * merged branch is not the same as a finished session. Investigate, Review and
- * Ask commit nothing, so their branch is "merged" (it sits on the base) from
- * the moment it is cut, while the agent may still be working in it. Leaving a
- * worktree alone until nothing has touched it for a while is what keeps the
- * sweep from pulling a directory out from under an open Warp tab.
+ * The daemon never passes `all` or `force`. What it and `clean` both add is
+ * `minIdleMs`: a merged branch is not the same as a finished session.
+ * Investigate, Review and Ask commit nothing, so their branch is "merged" (it
+ * sits on the base) from the moment it is cut, while the agent may still be
+ * working in it. Leaving a worktree alone until nothing has touched it for a
+ * while is what keeps the sweep from pulling a directory out from under an
+ * open Warp tab. The daemon waits days; `clean` waits an hour, unless told
+ * `--recent`.
  */
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -89,6 +91,9 @@ export async function sweepWorktrees(config: Config, options: SweepOptions = {})
         continue;
       }
 
+      // Checked per worktree and last, right before removing it, so it says
+      // how things are now rather than when a sweep that has spent a while
+      // on other worktrees began.
       if (options.minIdleMs !== undefined && options.minIdleMs > 0) {
         const idleMs = now() - (await lastActivity(w.path));
         if (idleMs < options.minIdleMs) {
@@ -148,6 +153,22 @@ export function baseBranchFor(config: Config, repoPath: string): string {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long `clean` leaves a worktree alone after anything touched it. Long
+ * enough to cover a session still being created or read through, short
+ * enough that `clean` right after finishing the day's work still clears it.
+ */
+export const CLEAN_MIN_IDLE_MS = 60 * 60 * 1000;
+
+/** The sweep `sidequest clean` runs, from its flags. */
+export function cleanSweepOptions(flags: { force?: boolean; all?: boolean; recent?: boolean }): SweepOptions {
+  return {
+    force: flags.force,
+    all: flags.all,
+    minIdleMs: flags.recent ? undefined : CLEAN_MIN_IDLE_MS,
+  };
+}
 
 /**
  * How many finished worktrees make a pile worth mentioning. A couple is just

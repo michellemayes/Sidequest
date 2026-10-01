@@ -113,7 +113,14 @@ export class StatusWatcher {
   start(): void {
     this.stopped = false;
     const loop = async (): Promise<void> => {
-      await this.refresh();
+      // A pass that throws (an onChange that does, say) is logged and the
+      // next one still scheduled; otherwise the marks would quietly stop
+      // updating until the daemon restarts.
+      try {
+        await this.refresh();
+      } catch (err) {
+        log.warn(`status: refresh failed: ${String(err)}`);
+      }
       if (this.stopped) return;
       this.timer = setTimeout(() => void loop(), this.options.intervalMs ?? 15_000);
       // Following sessions is a courtesy; it is never what keeps the daemon up.
@@ -241,7 +248,10 @@ export class StatusWatcher {
 
     const [commits, dirty, resultMs] = await Promise.all([
       this.commitsAhead(entry),
-      run("git", ["status", "--porcelain"], { cwd, timeoutMs: 10_000 }).then(
+      // Without --no-optional-locks, status refreshes the index and takes
+      // index.lock to do it, so a look every few seconds could fail the
+      // agent's own `git add` or `git commit` in the same worktree.
+      run("git", ["--no-optional-locks", "status", "--porcelain"], { cwd, timeoutMs: 10_000 }).then(
         (r) => r.stdout.trim().length > 0,
         () => false,
       ),

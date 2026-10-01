@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -101,6 +101,42 @@ describe("history store", () => {
   it("treats a corrupt file as an empty history rather than failing", async () => {
     await writeFile(join(home, "history.json"), "{ not json");
     expect(await loadHistory()).toEqual([]);
+  });
+
+  it("sets a history that does not parse aside before writing a new one", async () => {
+    const file = join(home, "history.json");
+    // What a write cut off partway leaves behind.
+    const garbled = '{\n  "version": 1,\n  "sessions": [\n    { "branch": "fix/old", "createdAt": "2026-';
+    await writeFile(file, garbled);
+
+    await recordSession(entry(0));
+
+    const backups = (await readdir(home)).filter((name) => name.startsWith("history.json.corrupt-"));
+    expect(backups).toHaveLength(1);
+    expect(await readFile(join(home, backups[0]!), "utf8")).toBe(garbled);
+    expect((await loadHistory()).map((h) => h.branch)).toEqual(["fix/thing-0"]);
+  });
+
+  /*
+   * The case that lost a whole history: any read error looked like an empty
+   * file, and the next session was written over everything before it.
+   */
+  it("refuses to write over a history it cannot read", async () => {
+    // A link to itself: reading it fails (ELOOP) the way a permission error
+    // would, even when the tests run as root, while a rename would happily
+    // replace it, so an overwrite would show.
+    const file = join(home, "history.json");
+    await symlink("history.json", file);
+
+    await expect(recordSession(entry(0))).rejects.toThrow();
+    expect((await lstat(file)).isSymbolicLink()).toBe(true);
+    expect((await readdir(home)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("starts a history from nothing when there is none yet", async () => {
+    await recordSession(entry(0));
+    expect((await loadHistory()).map((h) => h.branch)).toEqual(["fix/thing-0"]);
+    expect((await readdir(home)).filter((name) => name.includes("corrupt") || name.endsWith(".tmp"))).toEqual([]);
   });
 
   it("hands the page each message's sessions, keyed by ts", () => {

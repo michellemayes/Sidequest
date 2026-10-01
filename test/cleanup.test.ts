@@ -9,6 +9,8 @@ import { inspectRepo } from "../src/git/repo.js";
 import { createWorktree, type Worktree } from "../src/git/worktree.js";
 import {
   AutoCleaner,
+  CLEAN_MIN_IDLE_MS,
+  cleanSweepOptions,
   finishedWorktrees,
   sweepWorktrees,
   type SweepOutcome,
@@ -165,6 +167,38 @@ describe("sweepWorktrees", () => {
     const outcomes = await sweepWorktrees(configFor({}, [gone, repoPath]));
     expect(kinds(outcomes)).toEqual({ [gone]: "repo-error", "fix/survivor": "removed" });
     expect(await exists(w.path)).toBe(false);
+  });
+});
+
+describe("clean", () => {
+  /*
+   * An Investigate session's branch is merged the moment it is cut, and its
+   * .sidequest/ is ignored, so without a floor `clean` took a worktree the
+   * agent had only just been started in.
+   */
+  it("keeps a worktree touched in the last hour", async () => {
+    const w = await session("investigate/just-started");
+    await mkdir(join(w.path, ".sidequest"), { recursive: true });
+    await writeFile(join(w.path, ".sidequest", "prompt.md"), "look into it\n");
+
+    const outcomes = await sweepWorktrees(configFor(), cleanSweepOptions({}));
+    expect(kinds(outcomes)).toEqual({ "investigate/just-started": "recent" });
+    expect(await exists(w.path)).toBe(true);
+  });
+
+  it("removes it an hour on, or now with --recent", async () => {
+    const a = await session("investigate/read");
+    const later = () => Date.now() + CLEAN_MIN_IDLE_MS + 60_000;
+    expect(kinds(await sweepWorktrees(configFor(), { ...cleanSweepOptions({}), now: later }))).toEqual({
+      "investigate/read": "removed",
+    });
+    expect(await exists(a.path)).toBe(false);
+
+    const b = await session("investigate/done-already");
+    expect(kinds(await sweepWorktrees(configFor(), cleanSweepOptions({ recent: true })))).toEqual({
+      "investigate/done-already": "removed",
+    });
+    expect(await exists(b.path)).toBe(false);
   });
 });
 
