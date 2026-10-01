@@ -140,7 +140,7 @@ export async function lastActivity(worktreePath: string): Promise<number> {
 }
 
 /** The base branch configured for whichever channel links this repo. */
-function baseBranchFor(config: Config, repoPath: string): string {
+export function baseBranchFor(config: Config, repoPath: string): string {
   for (const link of allLinks(config)) {
     if (link.repoPath === repoPath && link.baseBranch.trim()) return link.baseBranch.trim();
   }
