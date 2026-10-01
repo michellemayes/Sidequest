@@ -194,7 +194,7 @@ It picks up your Slack theme and moves out of the way of Slack's own buttons.
 | Command | What it does |
 | --- | --- |
 | `sidequest setup` | First run in one command: config, shell hook, checks, start |
-| `sidequest start` / `stop` / `status` | Run the background daemon (logs in `~/.sidequest/sidequest.log`) |
+| `sidequest start` / `stop` / `status` | Run the background daemon (logs in `~/.sidequest/sidequest.log`, moved to `sidequest.log.1` at start once it passes 5 MB) |
 | `sidequest update` | Pull the latest and rebuild, reinstalling dependencies only if they changed; restarts a running daemon (`--no-restart` to skip) |
 | `sidequest doctor` | Check git, your terminal, the agent, Slack.app, the debug port, and whether the build is current |
 | `sidequest sessions` | List every worktree Sidequest created (in Slack, **⌃⇧S** shows your recent ones) |
@@ -387,7 +387,7 @@ how to install it if that fails.
 | `targetUrlPattern` | `app\.slack\.com\|/client/` | Which windows count as Slack |
 | `autoReply` | `false` | Reply in the message's thread when a session starts. See Thread replies above |
 | `postResults` | `ask` | What to do with the reply the agent leaves in `.sidequest/result.md`: `ask` offers it on the message to review and post, `auto` posts it in the thread as soon as it's written, `off` doesn't ask the agent for one. See Replies from the agent above |
-| `trackStatus` | `true` | Follow each session's commits and pull request (with `gh`) and show them on its mark. With this and `postResults` both off, the daemon doesn't look in on sessions at all; turning either back on takes a `sidequest stop` and `start` |
+| `trackStatus` | `true` | Follow each session's commits and pull request (with `gh`) and show them on its mark. Pull requests come from one `gh pr list` per repo; a branch with none is asked about every 90 seconds for its first day, then every 10 minutes, and a worktree untouched for a day is looked at in full every 10 minutes. With this and `postResults` both off, the daemon doesn't look in on sessions at all; turning either back on takes a `sidequest stop` and `start` |
 | `verbose` | `false` | Log overlay activity to Slack's devtools console |
 
 **Cleaning up.** Every session leaves a worktree behind. `sidequest clean`
@@ -417,7 +417,16 @@ Start with `sidequest doctor`.
   relaunches it with the port within a couple of seconds. If that doesn't
   happen, check `sidequest status` (the daemon has to be running) and the log.
 - **No buttons**: hover a message first. If `sidequest status` shows zero
-  attached windows, the overlay wasn't injected.
+  attached windows, the overlay wasn't injected. (`status` reads the count from
+  the end of the log; when it says nothing about windows, look in the log.)
+- **"Another Sidequest daemon (pid …) is already attached to Slack"** in the
+  log: only one daemon runs at a time, so a second `start` (or a
+  `start --foreground` beside the background one) exits. `sidequest stop`
+  stops the running one. A daemon that crashed leaves `~/.sidequest/sidequest.lock`
+  behind; the next `start` takes it over on its own.
+- **"sidequest did not answer"** on a message: the daemon is not running, or
+  is stuck. Starting a session waits up to two minutes; anything else gives up
+  after a few seconds. Check `sidequest status` and the log.
 - **"Something other than Slack is listening on 127.0.0.1:9222"**: quit that
   app, or set `cdpPort` to a free port and run `start --force`.
 - **The repo I want isn't suggested**: add its parent folder to
@@ -428,7 +437,9 @@ Start with `sidequest doctor`.
   Warp. If neither starts the agent, Sidequest opens a plain tab on the
   worktree, where the shell hook takes over: run `sidequest install-hook` and
   open a new Warp tab. `~/.sidequest/sidequest.log` shows which strategy was
-  tried. Then retry, or run `sidequest reopen` (latest) / `sidequest reopen <branch>`.
+  tried. The message says "Starting…" only until the terminal opens; if the agent
+  then doesn't start, that is added to the message's line a few seconds later.
+  Then retry, or run `sidequest reopen` (latest) / `sidequest reopen <branch>`.
 - **Warp (or your terminal) doesn't open**: the worktree still exists. `cd`
   into it and run `.sidequest/autorun.sh`.
 - **iTerm2 or Terminal doesn't open, and the log says "Not authorized"**: macOS
