@@ -12,26 +12,28 @@
  *      or, in a channel with no repo yet, the repos that look like its own.
  *   2. A button beside the channel name showing which repo the channel is on —
  *      or repos: a channel can have several, and the menu then asks which.
- * And three that follow from them: a line on a message while its session
- * starts, a quiet mark on every message that already has one (click it to be
- * back in that session), and a toast when a session lands. Then the sessions
+ * And three that follow from them: a chip under a message's text while its
+ * session starts, which becomes a quiet mark once it has (click it to be back
+ * in that session), and a toast when a session lands. Then the sessions
  * panel (⌃⇧S, or from the channel button's panel): your recent sessions that
  * still have a worktree, to reopen or to remove once they are done.
  *
- * Both are drawn in a layer of sidequest's own: one zero-sized, pointer-events:
- * none host at the end of <body>, with a shadow root holding every element and
- * the only stylesheet. Slack's own DOM is never written to — no children, no
- * attributes, no styles, and no rule in here can match a Slack element. That is
- * deliberate. Slack's lists are virtualised and their rows are measured and
- * recycled, so a child appended into a row, or a `position` overridden on one,
- * changes how Slack lays out the app around it. `[data-qa="virtual-list-item"]`
- * is also not just messages: the sidebar, the DM list and search results are
- * virtual lists too, so anything drawn from that selector alone lands all over
- * the app. Rows are matched on a message's own content, and only read.
+ * Everything but that chip is drawn in a layer of sidequest's own: one
+ * zero-sized, pointer-events: none host at the end of <body>, with a shadow
+ * root holding every element and its stylesheet. Slack's lists are virtualised
+ * and their rows are measured and recycled, so the rest of Slack's DOM is never
+ * written to — no attributes, no styles, and no rule in here can match a Slack
+ * element. The chip is the one exception, and it is a single element of its own
+ * after a message's content, holding its own shadow root (see inline): it grows
+ * the message the way a reaction does, which is the point of it, and touches
+ * nothing else. `[data-qa="virtual-list-item"]` is also not just messages:
+ * the sidebar, the DM list and search results are virtual lists too, so
+ * anything drawn from that selector alone lands all over the app. Rows are
+ * matched on a message's own content.
  *
- * Everything anchored to a message is positioned from that row's rectangle on
- * each frame and keyed by the message it belongs to, so a recycled row drops
- * what was drawn for its previous occupant instead of relabelling it.
+ * Everything anchored to a message is keyed by the message it belongs to, so a
+ * recycled row drops what was drawn for its previous occupant instead of
+ * relabelling it; the pill is positioned from the row's rectangle each frame.
  */
 (() => {
   if (window.__SIDEQUEST__) return;
@@ -144,6 +146,17 @@
    * host, which is how the overlay follows the workspace theme without reading
    * anything about it.
    */
+  const TOKENS = `
+    :host {
+      --sq-line: color-mix(in srgb, currentColor 16%, transparent);
+      --sq-line-hover: color-mix(in srgb, currentColor 34%, transparent);
+      --sq-wash: color-mix(in srgb, currentColor 8%, transparent);
+      --sq-shade: color-mix(in srgb, currentColor 20%, transparent);
+      --sq-ok: #2eb67d;
+      --sq-bad: #e01e5a;
+    }
+  `;
+
   const CSS = `
     .sq-off { display: none !important; }
 
@@ -155,14 +168,7 @@
      * per theme, so the overlay follows a workspace from Aubergine to dark
      * without being told which one it is on.
      */
-    :host {
-      --sq-line: color-mix(in srgb, currentColor 16%, transparent);
-      --sq-line-hover: color-mix(in srgb, currentColor 34%, transparent);
-      --sq-wash: color-mix(in srgb, currentColor 8%, transparent);
-      --sq-shade: color-mix(in srgb, currentColor 20%, transparent);
-      --sq-ok: #2eb67d;
-      --sq-bad: #e01e5a;
-    }
+    ${TOKENS}
 
     .sq-pill {
       position: fixed; left: 0; top: 0;
@@ -283,61 +289,6 @@
       padding: 6px 8px 4px; font-size: 12px; line-height: 16px; opacity: .7;
       white-space: normal; overflow-wrap: break-word;
     }
-
-    /* The result reads as an annotation on the message it came from: drawn
-       inside that row, along its bottom edge, tucked against the right where a
-       message's last line leaves space — and on a line of its own under the
-       text where it does not (see cornerSpot). One line, so it covers nothing
-       unasked; hovering it lets the whole thing wrap, which is what an error
-       needs. */
-    .sq-result {
-      position: fixed; left: 0; top: 0;
-      box-sizing: border-box;
-      display: flex; align-items: flex-start; gap: 6px;
-      max-width: 60vw; padding: 0 4px 0 8px;
-      font-family: inherit; font-size: 11px; line-height: 14px;
-      color: inherit; opacity: .9;
-      background: var(--sq-bg, #fff);
-      border: 1px solid var(--sq-line); border-radius: 5px;
-      cursor: pointer; pointer-events: auto;
-    }
-    .sq-result-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .sq-result:hover { opacity: 1; box-shadow: 0 6px 18px var(--sq-shade); }
-    .sq-result:hover .sq-result-text { white-space: normal; overflow: visible; }
-    .sq-result-x {
-      flex: 0 0 auto; padding: 0 3px; margin: 0;
-      font: inherit; color: inherit; opacity: .45;
-      background: transparent; border: 0; border-radius: 3px; cursor: pointer;
-    }
-    .sq-result-x:hover { opacity: 1; background: var(--sq-wash); }
-    /* Working on it: the words shimmer rather than sit there looking done. */
-    .sq-result[data-kind="busy"] .sq-result-text {
-      background: linear-gradient(90deg, currentColor 35%, #a78bfa 50%, currentColor 65%);
-      background-size: 250% 100%;
-      -webkit-background-clip: text; background-clip: text;
-      -webkit-text-fill-color: transparent;
-      animation: sq-shimmer 1.3s linear infinite;
-    }
-
-    /* A message that already has a session. Quiet until pointed at, and one
-       click from being back in it. */
-    .sq-mark {
-      position: fixed; left: 0; top: 0;
-      box-sizing: border-box;
-      display: inline-flex; align-items: center; gap: 4px;
-      max-width: 40vw; height: 16px; padding: 0 7px;
-      font-family: inherit; font-size: 11px; line-height: 14px;
-      color: inherit; opacity: .6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      background: var(--sq-bg, #fff);
-      border: 1px solid var(--sq-line); border-radius: 9px;
-      cursor: pointer; pointer-events: auto;
-    }
-    .sq-mark:hover { opacity: 1; border-color: var(--sq-line-hover); }
-    .sq-mark::before { content: '✦'; color: #8b5cf6; }
-    /* Progress shows in the words; the few states worth a glance get colour too. */
-    .sq-mark[data-state="merged"]::before { color: var(--sq-ok); }
-    .sq-mark[data-state="pr-closed"], .sq-mark[data-state="gone"] { opacity: .45; }
-    .sq-mark[data-reply="1"] { opacity: 1; border-color: #8b5cf6; }
 
     .sq-toast {
       position: fixed; left: 0; top: 0;
@@ -513,6 +464,66 @@
     .sq-panel-actions button[data-danger="1"]:hover { background: color-mix(in srgb, var(--sq-bad) 85%, #000); }
   `;
 
+  /*
+   * For the chip that sits inside a message, under its text (see inline).
+   * It is in the message's own flow, so it inherits the message's font and
+   * colour and needs no background: it scrolls with the words and moves for
+   * nothing.
+   */
+  const INLINE_CSS = `
+    ${TOKENS}
+    :host { display: block; margin: 4px 0 2px; }
+    .sq-off { display: none !important; }
+
+    /* While a session starts, or when it could not: one chip, wrapped to as
+       many lines as an error needs, with an × to clear it. */
+    .sq-result {
+      box-sizing: border-box;
+      display: inline-flex; align-items: flex-start; gap: 6px;
+      max-width: 100%; padding: 1px 4px 1px 8px;
+      font-family: inherit; font-size: 12px; line-height: 16px;
+      color: inherit;
+      border: 1px solid var(--sq-line); border-radius: 6px;
+      cursor: pointer;
+    }
+    .sq-result:hover { border-color: var(--sq-line-hover); background: var(--sq-wash); }
+    .sq-result[data-kind="error"] { border-color: color-mix(in srgb, var(--sq-bad) 55%, transparent); }
+    .sq-result-text { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+    .sq-result-x {
+      flex: 0 0 auto; padding: 0 3px; margin: 0;
+      font: inherit; color: inherit; opacity: .45;
+      background: transparent; border: 0; border-radius: 3px; cursor: pointer;
+    }
+    .sq-result-x:hover { opacity: 1; background: var(--sq-wash); }
+    /* Working on it: the words shimmer rather than sit there looking done. */
+    .sq-result[data-kind="busy"] .sq-result-text {
+      background: linear-gradient(90deg, currentColor 35%, #a78bfa 50%, currentColor 65%);
+      background-size: 250% 100%;
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: sq-shimmer 1.3s linear infinite;
+    }
+    @keyframes sq-shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+
+    /* A message that already has a session: a quiet chip, like a reaction,
+       one click from being back in it. */
+    .sq-mark {
+      box-sizing: border-box;
+      display: inline-flex; align-items: center; gap: 4px;
+      max-width: 100%; height: 20px; padding: 0 8px;
+      font-family: inherit; font-size: 12px; line-height: 18px;
+      color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      border: 1px solid var(--sq-line); border-radius: 10px;
+      cursor: pointer;
+    }
+    .sq-mark:hover { border-color: var(--sq-line-hover); background: var(--sq-wash); }
+    .sq-mark::before { content: '✦'; color: #8b5cf6; }
+    /* Progress shows in the words; the few states worth a glance get colour too. */
+    .sq-mark[data-state="merged"]::before { color: var(--sq-ok); }
+    .sq-mark[data-state="pr-closed"], .sq-mark[data-state="gone"] { opacity: .6; }
+    .sq-mark[data-reply="1"] { border-color: #8b5cf6; }
+  `;
+
   /* ----------------------------------------------------------------- layer */
 
   let host = null;
@@ -529,8 +540,6 @@
   let boxKeys = null;
   let toastEl = null;
   let toastTimer = 0;
-  const resultEls = new Map();
-  const markEls = new Map();
 
   /** Everything drawn lives in here, so losing the host means losing all of it. */
   function resetLayer() {
@@ -546,8 +555,6 @@
     boxKeys = null;
     toastEl = null;
     themeSig = '';
-    resultEls.clear();
-    markEls.clear();
   }
 
   function ensureLayer() {
@@ -1099,6 +1106,13 @@
       const box = img.getBoundingClientRect();
       if (box.width > 1 && box.height > 1) boxes.push(box);
     });
+    // The chip under the words is the overlay's own, but it is in the
+    // message now and the pill keeps off it like anything else there.
+    const chip = row.querySelector(INLINE_TAG)?.shadowRoot?.querySelector('.sq-result:not(.sq-off), .sq-mark:not(.sq-off)');
+    if (chip) {
+      const box = chip.getBoundingClientRect();
+      if (box.width > 1 && box.height > 1) boxes.push(box);
+    }
     return boxes;
   }
 
@@ -2021,6 +2035,99 @@
     if (status.pr) lines.push(`${status.state === 'merged' ? 'merged' : status.state === 'pr-closed' ? 'closed' : 'open'}: ${status.pr.url}`);
     if (status.reply) lines.push('the agent left a reply for the thread');
     return lines.join('\n');
+  }
+
+  /* ---------------------------------------------------------------- inline */
+
+  /*
+   * A message's result line and session mark are part of the message: one
+   * element of sidequest's own, right after the message's content, the way
+   * Slack puts reactions under the words. It scrolls with the message and is
+   * never repositioned, so there is nothing to follow the pointer around.
+   *
+   * This is the one place the overlay writes into Slack's DOM, and it is kept
+   * to that single node: an unknown tag, so no rule of Slack's matches it,
+   * with a shadow root holding the chip and its stylesheet, so nothing of
+   * ours matches Slack. Slack's list measures its rows as they change, which
+   * is how a reaction appearing grows its message; this grows it the same
+   * way. Keyed by message like everything else, so a recycled row loses the
+   * chip with the message it belonged to, and one Slack throws away on a
+   * re-render is put back on the next pass.
+   */
+  const INLINE_TAG = 'sidequest-inline';
+  /** Keyed by message: { host, result, mark }. */
+  const inlines = new Map();
+
+  function buildInline(sig) {
+    const host = document.createElement(INLINE_TAG);
+    const root = host.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = INLINE_CSS;
+    const result = buildResult(sig);
+    const mark = buildMark(sig);
+    root.append(style, result, mark);
+    // A press on the chip is not a press on the message: Slack would take it
+    // as the start of a selection, or a click to open the thread.
+    for (const type of ['mousedown', 'mouseup', 'click', 'dblclick']) {
+      host.addEventListener(type, (event) => event.stopPropagation());
+    }
+    return { host, result, mark };
+  }
+
+  function placeInline(bySig) {
+    for (const [sig, inline] of inlines) {
+      const row = bySig.get(sig);
+      if (!row || !(results.has(sig) || sessionsFor(sig).length > 0)) {
+        inline.host.remove();
+        inlines.delete(sig);
+      }
+    }
+    for (const [sig, row] of bySig) {
+      const entry = results.get(sig);
+      const list = sessionsFor(sig);
+      if (!entry && list.length === 0) continue;
+      const content = row.querySelector(SEL.content);
+      if (!content || !content.parentNode) continue;
+
+      let inline = inlines.get(sig);
+      if (!inline) {
+        inline = buildInline(sig);
+        inlines.set(sig, inline);
+      }
+      // Right after the words, in whichever row holds the message now.
+      if (content.nextSibling !== inline.host) content.after(inline.host);
+
+      const { result, mark } = inline;
+      if (entry) {
+        show(result);
+        hide(mark);
+        const text = result.firstChild;
+        if (text.textContent !== entry.text) {
+          text.textContent = entry.text;
+          result.title = entry.branch ? `Click to ${reopenHint(entry.branch)}.` : '';
+        }
+        if (result.dataset.kind !== entry.kind) result.dataset.kind = entry.kind;
+        continue;
+      }
+
+      hide(result);
+      show(mark);
+      const text = markText(list);
+      if (mark.textContent !== text) {
+        mark.textContent = text;
+        const last = list[list.length - 1];
+        const detail = statusTitle(last);
+        mark.title = `Sidequested → ${last.branch}` +
+          (list.length > 1 ? ` (and ${list.length - 1} more)` : '') +
+          (detail ? `\n${detail}` : '') +
+          (last.status && last.status.reply ? '\nClick to review the reply.' : `\nClick to ${reopenHint('it')}.`);
+        const state = (last.status && last.status.state) || '';
+        if (state) mark.dataset.state = state;
+        else delete mark.dataset.state;
+        if (last.status && last.status.reply) mark.dataset.reply = '1';
+        else delete mark.dataset.reply;
+      }
+    }
   }
 
   /* --------------------------------------------------------------- replies */
@@ -2963,6 +3070,8 @@
       if (sig && !bySig.has(sig)) bySig.set(sig, row);
     }
     const clip = rows.length > 0 ? clipRect(rows[0]) : null;
+    // First, so the pill below sees the chips it has to keep clear of.
+    placeInline(bySig);
 
     // A recycled row is a different message now; the menu it opened is void.
     if (menuRow && (!menuRow.isConnected || rowSignature(menuRow) !== menuSig)) closeMenu();
@@ -3017,95 +3126,6 @@
       placeAt(menuEl, anchor.right - menuEl.offsetWidth, top);
     }
 
-    for (const [sig, el] of resultEls) {
-      if (!results.has(sig) || !bySig.has(sig)) {
-        el.remove();
-        resultEls.delete(sig);
-      }
-    }
-    for (const [sig, entry] of results) {
-      const row = bySig.get(sig);
-      if (!row) continue;
-      let el = resultEls.get(sig);
-      if (!el) {
-        el = buildResult(sig);
-        resultEls.set(sig, el);
-        ui.append(el);
-      }
-      const text = el.firstChild;
-      if (text.textContent !== entry.text) {
-        text.textContent = entry.text;
-        // The line is one line wide; the tooltip is where all of it lives.
-        el.title = entry.branch
-          ? `${entry.text}\n\nClick to ${reopenHint(entry.branch)}.`
-          : entry.text;
-      }
-      if (el.dataset.kind !== entry.kind) el.dataset.kind = entry.kind;
-
-      const rect = row.getBoundingClientRect();
-      if (clip && onScreen(rect, clip)) {
-        show(el);
-        // The row button shares this corner while the pointer is on the
-        // message, so the line makes room for it rather than sitting under it.
-        const reserve = row === activeRow && !launchBtn.classList.contains('sq-off')
-          ? launchBtn.offsetWidth + GAP
-          : 0;
-        const content = row.querySelector(SEL.content);
-        const indent = content ? content.getBoundingClientRect().left : rect.left + 16;
-        const right = rect.right - GAP - reserve;
-        el.style.maxWidth = `${Math.max(160, Math.round((right - indent) * 0.75))}px`;
-        const at = cornerSpot(row, rect, clip, el, right, 3, ink, taken, 'shrink');
-        placeAt(el, at.left, at.top);
-      } else {
-        hide(el);
-      }
-    }
-
-    // Messages that already have a session, and no live line of their own.
-    for (const [sig, el] of markEls) {
-      if (results.has(sig) || !bySig.has(sig) || sessionsFor(sig).length === 0) {
-        el.remove();
-        markEls.delete(sig);
-      }
-    }
-    for (const [sig, row] of bySig) {
-      if (results.has(sig)) continue;
-      const list = sessionsFor(sig);
-      if (list.length === 0) continue;
-      let el = markEls.get(sig);
-      if (!el) {
-        el = buildMark(sig);
-        markEls.set(sig, el);
-        ui.append(el);
-      }
-      const text = markText(list);
-      if (el.textContent !== text) {
-        el.textContent = text;
-        const last = list[list.length - 1];
-        const detail = statusTitle(last);
-        el.title = `Sidequested → ${last.branch}` +
-          (list.length > 1 ? ` (and ${list.length - 1} more)` : '') +
-          (detail ? `\n${detail}` : '') +
-          (last.status && last.status.reply ? '\nClick to review the reply.' : `\nClick to ${reopenHint('it')}.`);
-        const state = (last.status && last.status.state) || '';
-        if (state) el.dataset.state = state;
-        else delete el.dataset.state;
-        if (last.status && last.status.reply) el.dataset.reply = '1';
-        else delete el.dataset.reply;
-      }
-      const rect = row.getBoundingClientRect();
-      if (clip && onScreen(rect, clip)) {
-        show(el);
-        const reserve = row === activeRow && !launchBtn.classList.contains('sq-off')
-          ? launchBtn.offsetWidth + GAP
-          : 0;
-        const at = cornerSpot(row, rect, clip, el, rect.right - GAP - reserve, 4, ink, taken, 'shrink');
-        placeAt(el, at.left, at.top);
-      } else {
-        hide(el);
-      }
-    }
-
     placeToast(clip);
     refreshChannelButton();
     placeSessions();
@@ -3114,7 +3134,9 @@
   /* -------------------------------------------------------------- triggers */
 
   const fromOverlay = (target) => Boolean(
-    host && target && target.nodeType === 1 && (target === host || host.contains(target)),
+    target && target.nodeType === 1 && (
+      (host && (target === host || host.contains(target))) || target.localName === INLINE_TAG
+    ),
   );
 
   document.addEventListener('mouseover', (event) => {
