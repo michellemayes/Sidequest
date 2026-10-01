@@ -680,6 +680,22 @@ async function runAttacherLoop(options: {
   const daemonized = Boolean(process.env.SIDEQUEST_DAEMON);
   const agentLabel = resolveAgent(config.settings.agent).label;
 
+  // The daemon is long-lived and mostly does background work nobody awaits,
+  // so one promise that slips through without a catch should cost a line in
+  // the log, not the overlay in every Slack window.
+  process.on("unhandledRejection", (reason) => {
+    log.error("unhandled rejection (the daemon keeps running)", reason);
+  });
+  // A synchronous throw that reached the top is different: whatever it
+  // interrupted is half done, and a daemon in that state can go on answering
+  // clicks wrongly. Log it and stop; `status` then says the daemon is not
+  // running, and `start` brings back a clean one.
+  process.on("uncaughtException", (err) => {
+    log.error("uncaught exception; stopping the daemon", err);
+    if (daemonized) void clearDaemonRecord().finally(() => process.exit(1));
+    else process.exit(1);
+  });
+
   if (daemonized) await writeDaemonRecord((await builtCommit(installRoot())) ?? "");
   // Until the banner is out, `start` reports the attach state itself; a running
   // commentary before it would say the same thing twice, out of order.
@@ -720,6 +736,8 @@ async function runAttacherLoop(options: {
         case "attach-error":
         case "poll-error":
         case "ask-error":
+        case "config-error":
+        case "status-error":
           log.warn(`${event.type}: ${event.message}`);
           break;
         default:
