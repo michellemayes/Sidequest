@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
 import { configFile, configRoot } from "./paths.js";
@@ -13,6 +13,7 @@ import {
 } from "./schema.js";
 import { UserFacingError } from "../util/errors.js";
 import { log } from "../util/log.js";
+import { acquireLock, pidExists, releaseLock } from "../util/lockfile.js";
 
 /**
  * Migrate pre-agent configs: settings.claudeCommand/claudeArgs become
@@ -93,22 +94,72 @@ export async function loadConfig(): Promise<Config> {
   return result.data;
 }
 
-/** Write atomically so a crash mid-write cannot leave a truncated config. */
+/**
+ * Write atomically so a crash mid-write cannot leave a truncated config: the
+ * temp file is flushed to disk before the rename, or a power cut could leave
+ * the rename in place with nothing behind it.
+ */
 export async function saveConfig(config: Config): Promise<void> {
   const file = configFile();
   await mkdir(dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-  await rename(tmp, file);
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  try {
+    const handle = await open(tmp, "w", 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(config, null, 2)}\n`);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(tmp, file);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw err;
+  }
   log.debug(`wrote ${file}`);
 }
 
-/** Read, mutate and persist the config in one call. */
+/** How long updateConfig waits for another process's update before giving up. */
+const CONFIG_LOCK_TIMEOUT_MS = 5_000;
+/**
+ * A lock older than this is debris whoever holds it: an update is a read, a
+ * small edit and a write, so even a live holder (or a reused pid) that has
+ * kept it this long is not coming back for it.
+ */
+const CONFIG_LOCK_STALE_MS = 30_000;
+
+/**
+ * Read, mutate and persist the config in one call.
+ *
+ * The daemon, the overlay's requests and the CLI all update the same file, so
+ * without a lock two of them can read the same version and the second write
+ * drops the first one's change (a channel linked from Slack while
+ * `sidequest replies off` runs in a terminal). The lock is a file beside the
+ * config, held across the read and the write.
+ */
 export async function updateConfig<T>(mutate: (config: Config) => T | Promise<T>): Promise<T> {
-  const config = await loadConfig();
-  const result = await mutate(config);
-  await saveConfig(config);
-  return result;
+  const file = configFile();
+  await mkdir(dirname(file), { recursive: true });
+  const lock = `${file}.lock`;
+  const holder = await acquireLock(lock, {
+    timeoutMs: CONFIG_LOCK_TIMEOUT_MS,
+    isStale: (h, ageMs) =>
+      ageMs > CONFIG_LOCK_STALE_MS || (h === null ? ageMs > 2_000 : !pidExists(h.pid)),
+  });
+  if (holder !== null) {
+    throw new UserFacingError(
+      `Another Sidequest process (pid ${holder.pid}) is still writing ${file}.`,
+      `Try again in a moment. If it keeps happening, delete ${lock}.`,
+    );
+  }
+  try {
+    const config = await loadConfig();
+    const result = await mutate(config);
+    await saveConfig(config);
+    return result;
+  } finally {
+    await releaseLock(lock).catch(() => undefined);
+  }
 }
 
 export async function ensureConfigRoot(): Promise<string> {

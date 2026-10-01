@@ -24,6 +24,12 @@ export interface LaunchOptions {
    * the settle time has partly or wholly passed by the time Warp is opened.
    */
   preparedTabConfig?: PreparedTabConfig;
+  /**
+   * Called once, as soon as a strategy has handed Warp its URI, before the
+   * wait for the agent and any fallback. The caller can report the session
+   * open there and hear about the agent later, from the returned promise.
+   */
+  onOpened?: (opened: { strategy: ConcreteStrategy; fellBack: boolean }) => void;
 }
 
 export interface PreparedTabConfig {
@@ -108,6 +114,7 @@ export async function launchWarp(options: LaunchOptions): Promise<LaunchResult> 
         if (settleMs > since) await sleep(settleMs - since);
       }
       await openUri(uri, "Warp", "Is Warp installed and registered for the warp:// URI scheme?");
+      if (!opened) options.onOpened?.({ strategy, fellBack: strategy !== first });
       opened = { strategy, uri };
       if (!watch) {
         return { strategy, uri, fellBack: strategy !== first, agentStarted: null };

@@ -323,4 +323,30 @@ describe("StatusWatcher", () => {
     await w.refresh();
     expect([...w.snapshot().keys()]).toEqual(["fix/thing"]);
   });
+
+  it("looks in full only every ten minutes once nothing has touched it for a day", async () => {
+    // Everything on disk is from now; the watcher's clock is two days on.
+    now = Date.now() + 2 * 24 * 3600 * 1000;
+    const w = watcher(() => [entry]);
+    await w.refresh();
+    expect(w.snapshot().get("fix/thing")).toMatchObject({ dirty: false });
+
+    // An edit to a file that was already there touches nothing the quick
+    // check sees...
+    await writeFile(join(worktree, "README.md"), "# changed\n");
+    now += 60_000;
+    await w.refresh();
+    expect(w.snapshot().get("fix/thing")).toMatchObject({ dirty: false });
+
+    // ...so it waits for the next full look.
+    now += 10 * 60_000;
+    await w.refresh();
+    expect(w.snapshot().get("fix/thing")).toMatchObject({ dirty: true });
+
+    // A commit is seen at once.
+    await git(["commit", "-am", "fix"], worktree);
+    now += 60_000;
+    await w.refresh();
+    expect(w.snapshot().get("fix/thing")).toMatchObject({ state: "committed", commits: 1, dirty: false });
+  });
 });

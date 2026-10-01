@@ -47,6 +47,10 @@ const BINDING = "__sidequestAsk";
 const RESULT_FN = "__sidequestResult";
 const POST_RESULT_FN = "__sidequestPostResult";
 const POLL_MS = 4000;
+/** As long as the overlay keeps a message's line (RESULT_TTL_MS in inject.js). */
+const LAUNCH_ERROR_TTL_MS = 10 * 60 * 1000;
+/** How long a window gets to say whether it will post a reply; see autoPostResults. */
+const AUTO_POST_TIMEOUT_MS = 3_000;
 /** Plenty for a question; a paste of a whole log belongs in the terminal. */
 const MAX_QUESTION = 4000;
 
@@ -112,6 +116,16 @@ export class Attacher {
   private statuses = new Map<string, SessionStatus>();
   /** Results already handed to a window to post, as branch + mtime, so each is posted once. */
   private readonly autoPosted = new Set<string>();
+  /**
+   * Agents that did not start in a terminal that did open, by branch: found
+   * after the overlay was told the session started, so it hears through the
+   * config instead. Kept for as long as the overlay keeps a message's line.
+   */
+  private readonly launchErrors = new Map<string, { message: string; at: number }>();
+  /** Sessions being started right now, so a shutdown can let them finish. */
+  private startsInFlight = 0;
+  /** Set once a shutdown has begun: new sessions are turned away. */
+  private draining = false;
 
   constructor(
     private readonly options: {
@@ -135,7 +149,7 @@ export class Attacher {
    */
   private async source(): Promise<string> {
     const script = readFileSync(INJECT_PATH, "utf8");
-    const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses);
+    const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses, this.currentLaunchErrors());
     return `window.__SIDEQUEST_CONFIG = ${JSON.stringify(config)};\n${script}`;
   }
 
@@ -161,6 +175,19 @@ export class Attacher {
       }
     };
     await tick();
+  }
+
+  /**
+   * Stop taking new sessions and wait, up to `timeoutMs`, for the ones being
+   * started to answer. True when none were left.
+   */
+  async drain(timeoutMs: number): Promise<boolean> {
+    this.draining = true;
+    const deadline = Date.now() + timeoutMs;
+    while (this.startsInFlight > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return this.startsInFlight === 0;
   }
 
   /** Sweep now rather than on the next poll, e.g. right after Slack relaunches. */
@@ -232,6 +259,15 @@ export class Attacher {
       await session.send("Page.enable");
       await session.send("Runtime.enable");
       await session.send("Runtime.addBinding", { name: BINDING });
+
+      // The script below is registered once, with the config as it was at
+      // attach time, so a window reloaded since (Cmd-R, a workspace switch)
+      // would boot its overlay on that. The overlay is installed before the
+      // page's own scripts, so by DOMContentLoaded (a main-frame event) it is
+      // there to be handed the config as it is now.
+      session.on("Page.domContentEventFired", () => {
+        void this.pushConfig([session]);
+      });
 
       session.on("Runtime.bindingCalled", (params) => {
         if (params.name !== BINDING) return;
@@ -331,13 +367,21 @@ export class Attacher {
         label: entry.promptLabel,
         text: resultReply(result.text, { prUrl: status.pr?.url, agent: replyAgent(entry, config) }),
       });
+      // One window at a time, unlike the broadcast: the first that takes it
+      // on posts it, and asking them all at once could post it twice. The
+      // short timeout keeps a hung window from holding up the rest for long;
+      // the page answers at once, before it posts anything.
       for (const session of this.sessions.values()) {
         if (!session) continue;
         try {
-          const res = (await session.send("Runtime.evaluate", {
-            expression: `window.${POST_RESULT_FN} ? window.${POST_RESULT_FN}(${JSON.stringify(payload)}) : false`,
-            returnByValue: true,
-          })) as { result?: { value?: unknown } };
+          const res = (await session.send(
+            "Runtime.evaluate",
+            {
+              expression: `window.${POST_RESULT_FN} ? window.${POST_RESULT_FN}(${JSON.stringify(payload)}) : false`,
+              returnByValue: true,
+            },
+            AUTO_POST_TIMEOUT_MS,
+          )) as { result?: { value?: unknown } };
           if (res.result?.value === true) {
             this.autoPosted.add(key);
             break;
@@ -349,20 +393,53 @@ export class Attacher {
     }
   }
 
+  private currentLaunchErrors(): Map<string, string> {
+    const out = new Map<string, string>();
+    const cutoff = Date.now() - LAUNCH_ERROR_TTL_MS;
+    for (const [branch, { message, at }] of this.launchErrors) {
+      if (at < cutoff) this.launchErrors.delete(branch);
+      else out.set(branch, message);
+    }
+    return out;
+  }
+
+  /**
+   * The overlay has already been told the session started; if the agent then
+   * does not, say so through the config, which the overlay shows on the
+   * message's line the way it shows a launch error in the reply.
+   */
+  followAgentCheck(branch: string, channel: string, check: Promise<string | null>): void {
+    void check.then(async (message) => {
+      if (!message) return;
+      this.emit({ type: "agent-not-started", channel, branch, message });
+      this.launchErrors.set(branch, { message, at: Date.now() });
+      await this.broadcastConfig();
+    });
+  }
+
   /** Push fresh config to every attached window after a link changes. */
   async broadcastConfig(): Promise<void> {
-    const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses);
-    const payload = JSON.stringify(JSON.stringify(config));
-    for (const session of this.sessions.values()) {
-      if (!session) continue;
-      try {
-        await session.send("Runtime.evaluate", {
-          expression: `window.__sidequestSetConfig && window.__sidequestSetConfig(${payload})`,
-        });
-      } catch {
-        // Window is going away; the poll loop re-attaches with the new prelude.
-      }
+    await this.pushConfig([...this.sessions.values()]);
+  }
+
+  private async pushConfig(sessions: Array<CdpSession | null>): Promise<void> {
+    let payload: string;
+    try {
+      const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses, this.currentLaunchErrors());
+      payload = JSON.stringify(JSON.stringify(config));
+    } catch (err) {
+      this.emit({ type: "config-error", message: describeError(err).message });
+      return;
     }
+    // All at once, so one window that does not answer holds up none of the
+    // others. One that fails is going away; the poll loop re-attaches it.
+    await Promise.allSettled(
+      sessions.map((session) =>
+        session?.send("Runtime.evaluate", {
+          expression: `window.__sidequestSetConfig && window.__sidequestSetConfig(${payload})`,
+        }),
+      ),
+    );
   }
 
   private async handleAsk(
@@ -380,7 +457,20 @@ export class Attacher {
 
     switch (request.op) {
       case "start-session":
-        await this.handleStartSession(session, contextId, request);
+        if (this.draining) {
+          await this.reply(session, contextId, {
+            id: request.id,
+            error: "Sidequest is stopping.",
+            hint: "Run `sidequest start` and try again.",
+          });
+          return;
+        }
+        this.startsInFlight += 1;
+        try {
+          await this.handleStartSession(session, contextId, request);
+        } finally {
+          this.startsInFlight -= 1;
+        }
         return;
       case "link-repo":
         await this.handleLinkRepo(session, contextId, request);
@@ -483,6 +573,7 @@ export class Attacher {
         warning: result.launchError,
         attachments: result.attachments,
       });
+      if (result.agentCheck) this.followAgentCheck(result.branch, context.channelName, result.agentCheck);
       await this.broadcastConfig();
       this.refreshStatusesSoon();
     } catch (err) {

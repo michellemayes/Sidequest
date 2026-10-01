@@ -76,6 +76,21 @@ describe("launchWarp", () => {
     expect(result).toMatchObject({ strategy: "new_tab", agentStarted: false });
   });
 
+  it("says it opened once, as soon as the first strategy opens Warp, before the fallbacks", async () => {
+    const seen: Array<{ strategy: string; fellBack: boolean; opens: number }> = [];
+    const result = await launchWarp({
+      spec: spec(),
+      strategy: "launch_config",
+      preview: false,
+      pendingFile,
+      tabConfigSettleMs: 0,
+      claimTimeoutMs: 100,
+      onOpened: (info) => seen.push({ ...info, opens: opened.length }),
+    });
+    expect(seen).toEqual([{ strategy: "launch_config", fellBack: false, opens: 1 }]);
+    expect(result).toMatchObject({ strategy: "new_tab", agentStarted: false });
+  });
+
   it("does not wait when there is no pending session", async () => {
     await rm(pendingFile);
     const result = await launchWarp({ spec: spec(), strategy: "launch_config", preview: false, pendingFile, tabConfigSettleMs: 0 });

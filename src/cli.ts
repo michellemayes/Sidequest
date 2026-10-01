@@ -27,7 +27,11 @@ import { AGENT_DEFINITIONS, agentDefinition, describeAgent, describeHeadless, re
 import {
   clearDaemonRecord,
   daemonAlive,
+  lockDaemon,
   readDaemonRecord,
+  readTail,
+  rotateLog,
+  unlockDaemon,
   writeDaemonRecord,
 } from "./daemon.js";
 import { warpLaunchConfigDir, warpTabConfigDir, platform, uriOpener } from "./util/platform.js";
@@ -60,6 +64,7 @@ import {
   rollBack,
 } from "./update.js";
 import { log } from "./util/log.js";
+import { pidExists } from "./util/lockfile.js";
 
 export async function runCli(argv: string[]): Promise<void> {
   const program = new Command();
@@ -223,7 +228,7 @@ async function start(options: { force: boolean; foreground: boolean }): Promise<
 
 async function assertNoRunningDaemon(): Promise<void> {
   const existing = await readDaemonRecord();
-  if (existing && daemonAlive(existing.pid)) {
+  if (existing && (await daemonAlive(existing))) {
     throw new UserFacingError(
       `Sidequest is already running in the background (pid ${existing.pid}).`,
       "Run `sidequest stop` first, or `sidequest status` to check on it.",
@@ -240,6 +245,9 @@ async function assertNoRunningDaemon(): Promise<void> {
 async function startDaemonized(): Promise<void> {
   await ensureConfigRoot();
   const logFile = daemonLogFile();
+  // Rotated here rather than by the daemon: its output goes straight to the
+  // file through the descriptor opened below, which a rename would orphan.
+  await rotateLog(logFile);
   const out = openSync(logFile, "a");
   // execArgv carries loaders such as tsx (`npm run dev`) over to the child.
   const child = spawn(process.execPath, [...process.execArgv, process.argv[1]!, "start", "--foreground"], {
@@ -252,7 +260,7 @@ async function startDaemonized(): Promise<void> {
   const deadline = Date.now() + 8000;
   for (;;) {
     const rec = await readDaemonRecord();
-    if (rec && daemonAlive(rec.pid)) {
+    if (rec && (await daemonAlive(rec))) {
       const agent = resolveAgent((await loadConfig()).settings.agent);
       const config = await loadConfig();
       console.log(`Sidequest is running in the background (pid ${rec.pid}).`);
@@ -295,24 +303,37 @@ async function stop(): Promise<void> {
     console.log("Sidequest is not running.");
     return;
   }
-  if (!daemonAlive(rec.pid)) {
+  if (!(await daemonAlive(rec))) {
     await clearDaemonRecord();
     console.log("Sidequest was not running (cleaned up a stale pid file).");
     return;
   }
-  process.kill(rec.pid, "SIGTERM");
+  signal(rec.pid, "SIGTERM");
+  // The daemon gives a session that is starting up a few seconds to finish
+  // before it exits (DAEMON_DRAIN_MS), so this waits longer than that before
+  // forcing it.
   const deadline = Date.now() + 8000;
-  while (daemonAlive(rec.pid) && Date.now() < deadline) await sleep(250);
-  if (daemonAlive(rec.pid)) process.kill(rec.pid, "SIGKILL");
+  while (pidExists(rec.pid) && Date.now() < deadline) await sleep(250);
+  // Checked again before the SIGKILL: in those seconds the pid could have
+  // been freed and reused.
+  if (await daemonAlive(rec)) signal(rec.pid, "SIGKILL");
   await clearDaemonRecord();
   console.log("Stopped Sidequest.");
+}
+
+function signal(pid: number, name: NodeJS.Signals): void {
+  try {
+    process.kill(pid, name);
+  } catch {
+    // Gone already, or not ours to signal.
+  }
 }
 
 async function status(): Promise<void> {
   const config = await loadConfig();
   const agent = resolveAgent(config.settings.agent);
   const rec = await readDaemonRecord();
-  if (rec === null || !daemonAlive(rec.pid)) {
+  if (rec === null || !(await daemonAlive(rec))) {
     if (rec) await clearDaemonRecord();
     console.log("Sidequest is not running.");
   } else {
@@ -347,20 +368,19 @@ async function status(): Promise<void> {
   }
 }
 
-/** Best-effort read of the attach count from the daemon's log tail. */
+/**
+ * Best-effort read of the attach count from the daemon's log. Only the tail
+ * is read: the log can run to megabytes, and the latest count is near its
+ * end. A count logged so long ago that it has scrolled out of the tail is
+ * left unsaid rather than read the whole file for.
+ */
 async function lastAttachedCount(logFile: string): Promise<number | null> {
-  try {
-    const text = await readFile(logFile, "utf8");
-    const lines = text.split("\n");
-    for (let i = lines.length - 1; i >= 0; i -= 1) {
-      const line = lines[i] ?? "";
-      const m = line.match(/attached to a Slack window \((\d+) total\)/);
-      if (m) return Number.parseInt(m[1]!, 10);
-    }
-    return null;
-  } catch {
-    return null;
+  const lines = (await readTail(logFile, 256 * 1024)).split("\n");
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const m = (lines[i] ?? "").match(/attached to a Slack window \((\d+) total\)/);
+    if (m) return Number.parseInt(m[1]!, 10);
   }
+  return null;
 }
 
 async function agents(id?: string): Promise<void> {
@@ -582,7 +602,7 @@ async function update(options: { restart: boolean }): Promise<void> {
     // Nothing to pull or build, but the daemon may still be on older code
     // (an earlier `--no-restart`, or a rebuild it never picked up).
     const rec = await readDaemonRecord();
-    if (!rec || !daemonAlive(rec.pid) || !(await daemonOutOfDate(root, rec.build))) {
+    if (!rec || !(await daemonAlive(rec)) || !(await daemonOutOfDate(root, rec.build))) {
       console.log("Sidequest is already up to date.");
       return;
     }
@@ -626,7 +646,7 @@ async function update(options: { restart: boolean }): Promise<void> {
   }
 
   const rec = await readDaemonRecord();
-  if (!rec || !daemonAlive(rec.pid)) {
+  if (!rec || !(await daemonAlive(rec))) {
     console.log("\nUpdated. Run `sidequest start` when you want the overlay.");
     return;
   }
@@ -672,6 +692,12 @@ async function setup(options: { force: boolean }): Promise<void> {
   await start({ force: options.force, foreground: false });
 }
 
+/**
+ * How long a stopping daemon waits for sessions that are starting. Under the
+ * 8 seconds `stop` gives it before a SIGKILL.
+ */
+const DAEMON_DRAIN_MS = 6_000;
+
 async function runAttacherLoop(options: {
   launch: LaunchResult;
   config: Config;
@@ -696,6 +722,16 @@ async function runAttacherLoop(options: {
     if (daemonized) void clearDaemonRecord().finally(() => process.exit(1));
     else process.exit(1);
   });
+
+  // Held for as long as this process attaches: a second daemon, or a
+  // --foreground run beside one, would put a second overlay on every window.
+  const holder = await lockDaemon();
+  if (holder !== null) {
+    throw new UserFacingError(
+      `Another Sidequest daemon (pid ${holder.pid}) is already attached to Slack, so this one is exiting.`,
+      "Run `sidequest status` to check on it, or `sidequest stop` to stop it.",
+    );
+  }
 
   if (daemonized) await writeDaemonRecord((await builtCommit(installRoot())) ?? "");
   // Until the banner is out, `start` reports the attach state itself; a running
@@ -727,6 +763,9 @@ async function runAttacherLoop(options: {
           break;
         case "session-error":
           console.error(`could not start a session in #${event.channel}: ${event.message}`);
+          break;
+        case "agent-not-started":
+          console.error(`${event.branch} in #${event.channel}: ${event.message}`);
           break;
         case "link":
           console.log(`linked #${event.channel} → ${event.message}`);
@@ -808,13 +847,25 @@ async function runAttacherLoop(options: {
   );
   booted = true;
 
+  let stopping = false;
   const shutdown = (): void => {
+    // A second Ctrl-C (or signal) while a session finishes means now.
+    if (stopping) process.exit(0);
+    stopping = true;
     console.log("\nstopping…");
     keeper.stop();
     cleaner.stop();
-    attacher.stop();
-    if (daemonized) void clearDaemonRecord().finally(() => process.exit(0));
-    else process.exit(0);
+    void (async () => {
+      // A click being handled when the stop came would otherwise lose its
+      // answer, or be cut off between the worktree and the terminal.
+      if (!(await attacher.drain(DAEMON_DRAIN_MS))) {
+        console.log("a session was still starting; stopping anyway");
+      }
+      attacher.stop();
+      await unlockDaemon();
+      if (daemonized) await clearDaemonRecord();
+      process.exit(0);
+    })();
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);

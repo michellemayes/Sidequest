@@ -37,6 +37,11 @@
  */
 (() => {
   if (window.__SIDEQUEST__) return;
+  // The daemon installs this in every frame of the window, iframes included
+  // (embeds, Slack's own sandboxes). The overlay belongs to the app's top
+  // frame only; anywhere else it would draw a second layer, or fail to find
+  // any messages and keep looking.
+  if (window.top !== window) return;
   window.__SIDEQUEST__ = true;
 
   const CONFIG = Object.assign({
@@ -63,7 +68,23 @@
 
   const ASK = '__sidequestAsk';
   const LAYER_ID = 'sidequest-layer';
-  const REQUEST_TIMEOUT_MS = 120000;
+  /*
+   * How long a request waits for the daemon. Starting a session can mean a
+   * fetch over a slow link, so it waits far longer than a UI request normally
+   * would; so can the few that run git or open a terminal. Everything else is
+   * a config or file read that answers in milliseconds, and a daemon that has
+   * not answered one in ten seconds is not going to, so say so rather than
+   * leave a spinner up for two minutes.
+   */
+  const REQUEST_TIMEOUT_MS = 10000;
+  const OP_TIMEOUT_MS = {
+    'start-session': 120000,
+    reopen: 60000,
+    'remove-session': 60000,
+    'suggest-repos': 60000,
+    'link-repo': 30000,
+    'list-sessions': 30000,
+  };
   // A result outlives a scroll away and back, not a working session.
   const RESULT_TTL_MS = 10 * 60 * 1000;
   const MAX_RESULTS = 20;
@@ -697,6 +718,7 @@
       return;
     }
     announceReplies();
+    announceLaunchErrors();
     // A broadcast follows every new session, so an open list catches up.
     if (sessionsEl) loadSessions();
     schedule();
@@ -731,12 +753,10 @@
     }
     const id = `r${++seq}`;
     return new Promise((resolve, reject) => {
-      // Creating a worktree can mean a fetch over a slow link, so this waits
-      // far longer than a UI request normally would.
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error('sidequest did not answer'));
-      }, REQUEST_TIMEOUT_MS);
+      }, OP_TIMEOUT_MS[payload.op] || REQUEST_TIMEOUT_MS);
       pending.set(id, { resolve, reject, timer });
       try {
         window[ASK](JSON.stringify(Object.assign({ id }, payload)));
@@ -1996,6 +2016,27 @@
     results.set(sig, { text, kind, branch, at: Date.now() });
     while (results.size > MAX_RESULTS) results.delete(results.keys().next().value);
     schedule();
+  }
+
+  /*
+   * The daemon answers a click once the terminal has opened, before the agent
+   * has started in it. When it then does not start, that comes in with the
+   * config, and goes on the line the click left under the message, as a
+   * launch error in the answer would have. Only that line: another window,
+   * or this one after a reload, has nothing to amend.
+   */
+  const launchErrorsShown = new Set();
+  function announceLaunchErrors() {
+    for (const [sig, list] of Object.entries(CONFIG.sessions || {})) {
+      if (!Array.isArray(list)) continue;
+      for (const entry of list) {
+        if (!entry || !entry.launchError || launchErrorsShown.has(entry.branch)) continue;
+        const line = results.get(sig);
+        if (!line || line.branch !== entry.branch) continue;
+        launchErrorsShown.add(entry.branch);
+        setResult(sig, `${line.text} — ${entry.launchError}`, 'warn', entry.branch);
+      }
+    }
   }
 
   function pruneResults() {
