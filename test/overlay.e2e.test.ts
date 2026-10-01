@@ -1361,6 +1361,17 @@ describeIfChrome("overlay over CDP", () => {
       await evaluate(session, `${UI}.querySelector('.sq-channel .sq-reply-count').click()`);
       expect(await waitFor(session, `${UI}.querySelector('.sq-replies .sq-session-branch')?.textContent || ''`, Boolean))
         .toContain("investigate/checkout-total");
+
+      // The session's own "reply ready" chip opens the reply, not the session.
+      await until(session, `!!${UI}.querySelector('.sq-session .sq-chip[data-tone="reply"]')`);
+      await evaluate(session, `${UI}.querySelector('.sq-session .sq-chip[data-tone="reply"]').click()`);
+      expect(await waitFor(session, `${UI}.querySelector('.sq-reply-input')?.value || ''`, Boolean))
+        .toContain("applyCredits");
+      await press(session, "Escape", "Escape", 27);
+      await until(session, `!${UI}.querySelector('.sq-reply-input')`);
+
+      await evaluate(session, `${UI}.querySelector('.sq-channel .sq-reply-count').click()`);
+      await until(session, `!!${UI}.querySelector('.sq-reply-row')`);
       await evaluate(session, `${UI}.querySelector('.sq-reply-row').click()`);
       const redraft = await waitFor(session, `${UI}.querySelector('.sq-reply-input')?.value || ''`, Boolean);
       expect(redraft).toBe(`*Cause*\nThe *gift card* is applied twice, in \`applyCredits\`.${signed}`);
