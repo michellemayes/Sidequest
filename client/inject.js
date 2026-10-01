@@ -1862,6 +1862,10 @@
     form.append('channel', target.channel);
     form.append('thread_ts', target.threadTs);
     form.append('text', text);
+    // Slack keeps this id on the message, so a read-back can find it without
+    // trusting the text to come back as sent.
+    const clientMsgId = newClientMsgId();
+    form.append('client_msg_id', clientMsgId);
     // Slack's ts is seconds; a minute's slack covers a clock that runs fast.
     const since = Date.now() / 1000 - 60;
     let res;
@@ -1878,7 +1882,7 @@
       // back ("Failed to fetch", or a body cut off). Look in the thread before
       // calling it failed, so a reply that went out is not reported as lost
       // and posted twice.
-      if (await replyLanded(team, target, text, since)) {
+      if (await replyLanded(team, target, text, since, clientMsgId)) {
         log('replied in thread (confirmed after a lost answer)', target);
         return;
       }
@@ -1889,11 +1893,23 @@
     log('replied in thread', target);
   }
 
-  /** Whether the thread holds this text, posted since `since`. Never throws. */
-  async function replyLanded(team, target, text, since) {
+  function newClientMsgId() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  }
+
+  /**
+   * Whether the thread holds this reply, posted since `since`: found by its
+   * client_msg_id, or by its text. Never throws.
+   */
+  async function replyLanded(team, target, text, since, clientMsgId) {
     const want = comparable(text);
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (attempt) await new Promise((resolve) => setTimeout(resolve, 1500));
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (attempt) await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
       try {
         const form = new FormData();
         form.append('token', team.token);
@@ -1909,7 +1925,8 @@
         });
         const body = await res.json();
         const messages = (body && body.ok && body.messages) || [];
-        if (messages.some((m) => Number(m.ts) >= since && comparable(m.text) === want)) return true;
+        if (messages.some((m) => (clientMsgId && m.client_msg_id === clientMsgId) ||
+          (want && Number(m.ts) >= since && comparable(m.text) === want))) return true;
       } catch {
         // Still unreachable; try again, then give up.
       }
@@ -1919,17 +1936,16 @@
 
   /**
    * Text as Slack hands it back: it escapes &, < and >, wraps links in <…>,
-   * and may trim. Compare on what survives all of that.
+   * turns emoji into :shortcodes:, and may retouch quotes, bullets and
+   * spacing. Compare on the letters and digits that survive all of that.
    */
   function comparable(text) {
     return String(text || '')
       .replace(/<([^<>|]*)\|([^<>]*)>/g, '$2')
-      .replace(/[<>]/g, '')
-      .replace(/&lt;/g, '')
-      .replace(/&gt;/g, '')
-      .replace(/&amp;/g, '&')
-      .replace(/\s+/g, ' ')
-      .trim();
+      .replace(/&lt;|&gt;|&amp;/g, '')
+      .replace(/:[a-z0-9_+'-]+:/gi, '')
+      .replace(/[^\p{L}\p{N}]+/gu, '')
+      .toLowerCase();
   }
 
   /** Back into a session started earlier. */

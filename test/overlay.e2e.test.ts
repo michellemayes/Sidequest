@@ -96,7 +96,12 @@ describeIfChrome("overlay over CDP", () => {
         req.resume();
         req.on("end", () => {
           const ts = (Date.now() / 1000).toFixed(6);
-          const messages = posts.map((body) => ({ ts, text: formField(body, "text")?.replace(/\r\n/g, "\n") }));
+          // Handed back as Slack does: emoji as shortcodes, quotes curled,
+          // and no client_msg_id, so the text alone has to be recognised.
+          const messages = posts.map((body) => ({
+            ts,
+            text: formField(body, "text")?.replace(/\r\n/g, "\n").replace(/🤖/g, ":robot_face:").replace(/'/g, "\u2019"),
+          }));
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ ok: true, messages }));
         });
@@ -1376,11 +1381,12 @@ describeIfChrome("overlay over CDP", () => {
       const redraft = await waitFor(session, `${UI}.querySelector('.sq-reply-input')?.value || ''`, Boolean);
       expect(redraft).toBe(`*Cause*\nThe *gift card* is applied twice, in \`applyCredits\`.${signed}`);
       // The post reaches Slack but its answer is lost on the way back: the
-      // thread shows it went out, so it counts as posted, not failed.
+      // thread shows it went out, so it counts as posted, not failed, even
+      // though Slack hands the text back with its emoji as a shortcode.
       dropNextPost = true;
       await evaluate(session, `(() => {
         const box = ${UI}.querySelector('.sq-reply-input');
-        box.value = box.value.replace(/\\n\\n_.*_$/, '') + '\\nFix coming.';
+        box.value = box.value.replace(/(\\n\\n_.*_)$/, "\\nFix coming, it's small.$1");
         ${UI}.querySelector('.sq-reply .sq-ask-send').click();
       })()`);
 
@@ -1390,7 +1396,9 @@ describeIfChrome("overlay over CDP", () => {
       const field = (name: string) => formField(posts[0]!, name);
       expect(field("thread_ts")).toBe("1757430000.000100");
       // Form encoding sends line breaks as CRLF; Slack reads them the same.
-      expect(field("text")?.replace(/\r\n/g, "\n")).toBe("*Cause*\nThe *gift card* is applied twice, in `applyCredits`.\nFix coming.");
+      expect(field("text")?.replace(/\r\n/g, "\n"))
+        .toBe(`*Cause*\nThe *gift card* is applied twice, in \`applyCredits\`.\nFix coming, it's small.${signed}`);
+      expect(field("client_msg_id")).toMatch(/^[0-9a-f-]{36}$/);
 
       // Posted once: the mark stops offering it, and history remembers.
       expect(await waitFor(session, markOn("row-1"), (t) => !t.includes("reply ready"))).toBe("Investigate · answered");
