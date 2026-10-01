@@ -32,6 +32,7 @@ const { AGENT_DEFINITIONS, agentDefinition, linkPrompt, MAX_LINK_PROMPT_CHARS, P
 const { createSession } = await import("../src/session/create.js");
 const { findSession, openSession } = await import("../src/session/reopen.js");
 const { configSchema } = await import("../src/config/schema.js");
+const { pageConfig } = await import("../src/config/pageConfig.js");
 
 const exec = promisify(execFile);
 let root: string;
@@ -66,12 +67,13 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-function configFor(agentId: string) {
+function configFor(agentId: string, settings: Record<string, unknown> = {}) {
   return configSchema.parse({
     settings: {
       worktreesRoot: join(root, "worktrees"),
       fetchBeforeCreate: false,
       agent: { id: agentId },
+      ...settings,
     },
     channels: { eng: [{ repoPath, channel: "eng" }] },
   });
@@ -164,5 +166,43 @@ describe("createSession with an app agent", () => {
     const reopened = await openSession(config, found!);
     expect(reopened).toMatchObject({ host: "the ChatGPT app", strategy: "chatgpt", agentStarted: null });
     expect(opened).toEqual([`codex://threads/new?path=${encodeURIComponent(result.worktreePath)}`]);
+  });
+});
+
+describe("app agents and the terminal setting", () => {
+  it("opens the app even when the terminal is headless, with no runner written", async () => {
+    const result = await createSession("fix", message, configFor("claude-desktop", { terminal: "headless" }));
+    expect(result).toMatchObject({ host: "the Claude app", launchStrategy: "claude-desktop" });
+    expect(result.launchError).toBeUndefined();
+    expect(new URL(opened[0]!).protocol).toBe("claude:");
+    await expect(stat(join(result.worktreePath, ".sidequest", "headless.sh"))).rejects.toThrow();
+  });
+
+  it("reopens in the app, not the configured terminal", async () => {
+    const config = configFor("chatgpt", { terminal: "tmux" });
+    const result = await createSession("ask", message, config);
+    opened.length = 0;
+    const reopened = await openSession(config, (await findSession(config, result.branch))!);
+    expect(reopened).toMatchObject({ host: "the ChatGPT app", strategy: "chatgpt" });
+    expect(reopened.terminal).toBeUndefined();
+    expect(opened).toHaveLength(1);
+  });
+
+  it("names the app, the terminal, or the background to the overlay", () => {
+    expect(pageConfig(configFor("claude-desktop", { terminal: "iterm2" }))).toMatchObject({
+      agentHost: "the Claude app",
+      agentInApp: true,
+      headless: false,
+    });
+    expect(pageConfig(configFor("claude", { terminal: "iterm2" }))).toMatchObject({
+      agentHost: "iTerm2",
+      agentInApp: false,
+      headless: false,
+    });
+    expect(pageConfig(configFor("codex", { terminal: "headless" }))).toMatchObject({
+      agentHost: "the background",
+      headless: true,
+    });
+    expect(pageConfig(configFor("claude"))).toMatchObject({ agentHost: "Warp" });
   });
 });

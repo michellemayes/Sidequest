@@ -1,6 +1,7 @@
 import { allPrompts } from "./store.js";
 import { linkLabel } from "./channels.js";
 import { resolveAgent } from "../agents/agents.js";
+import { sessionHost } from "../terminals/registry.js";
 import type { Config } from "./schema.js";
 import { computeStats, type HistoryEntry } from "../session/history.js";
 import type { SessionState, SessionStatus } from "../session/status.js";
@@ -51,10 +52,15 @@ export interface PageConfig {
   lastRepos: Record<string, string>;
   /** Human label of the agent sessions launch, e.g. "Claude Code". */
   agentLabel: string;
-  /** Where sessions open, e.g. "Warp" or "the Claude app". */
+  /**
+   * Where sessions open, e.g. "Warp", "iTerm2", "the background" or "the
+   * Claude app"; the overlay names it in toasts and tooltips.
+   */
   agentHost: string;
   /** True when sessions open in a desktop app, with the prompt waiting to be sent. */
   agentInApp: boolean;
+  /** True when sessions run with no terminal, so there is no window to reopen. */
+  headless: boolean;
   /** Message ts -> sessions started from it, oldest first. */
   sessions: Record<string, PageSession[]>;
   stats: { total: number; today: number; streak: number };
@@ -84,8 +90,9 @@ export function pageConfig(
     repoLabels,
     lastRepos: lastRepos(config, history),
     agentLabel: agent.label,
-    agentHost: agent.host,
+    agentHost: sessionHost(agent, config.settings.terminal),
     agentInApp: Boolean(agent.app),
+    headless: !agent.app && config.settings.terminal === "headless",
     sessions: sessionsByMessage(history, statuses, config.settings.trackStatus),
     stats: (({ total, today, streak }) => ({ total, today, streak }))(computeStats(history)),
     postResults: config.settings.postResults,
