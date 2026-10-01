@@ -383,7 +383,7 @@ how to install it if that fails.
 | `tmuxSession` | `""` | The tmux session new windows go into. Empty means the one you used last |
 | `warpStrategy` | `auto` | Warp only. `auto` tries a tab config, then a launch config, then a plain new tab, until the agent starts. `tab_config`, `launch_config` or `new_tab` puts that one first |
 | `warpPreview` | `false` | Warp only. Use Warp Preview |
-| `fetchBeforeCreate` | `true` | Fetch the base branch first. A fetch slower than 3 seconds doesn't hold up the session: it's cut from the local ref while the fetch finishes in the background |
+| `fetchBeforeCreate` | `true` | Fetch the base branch first. The fetch starts when the menu opens, and one made in the last minute is reused rather than repeated. A fetch slower than 3 seconds doesn't hold up the session: it's cut from the local ref while the fetch finishes in the background. Off, nothing is fetched at all |
 | `repoSearchRoots` | `[]` | Where to look for repos to suggest. Empty means `~/code`, `~/src`, `~/Developer`, `~/projects` and similar, two levels deep |
 | `threadContextLimit` | `10` | How many earlier messages go into the prompt |
 | `pruneBranchesOnClean` | `true` | Delete merged branches on `clean` (and on auto-clean, and when you remove a session from the sessions panel) |

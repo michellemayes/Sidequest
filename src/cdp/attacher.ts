@@ -18,7 +18,8 @@ import {
   removeLink,
 } from "../config/channels.js";
 import { loadConfig, updateConfig, expandPath, promptFor } from "../config/store.js";
-import { inspectRepo } from "../git/repo.js";
+import { forgetRepos, inspectRepo } from "../git/repo.js";
+import { prefetchForChannel } from "../git/prefetch.js";
 import { createSession, type MessageContext } from "../session/create.js";
 import { computeStats, loadHistory, recordSession, updateSession, type HistoryEntry } from "../session/history.js";
 import { resolveAgent } from "../agents/agents.js";
@@ -361,6 +362,9 @@ export class Attacher {
       case "channel-status":
         await this.handleChannelStatus(session, contextId, request);
         return;
+      case "prefetch":
+        await this.handlePrefetch(session, contextId, request);
+        return;
       case "suggest-repos":
         await this.handleSuggestRepos(session, contextId, request);
         return;
@@ -390,7 +394,9 @@ export class Attacher {
     request: AskRequest,
   ): Promise<void> {
     const promptKey = String(request.promptKey ?? "");
-    if (!promptFor(await loadConfig(), promptKey)) {
+    // Read once and handed on, so the session is cut from the config checked here.
+    const config = await loadConfig();
+    if (!promptFor(config, promptKey)) {
       await this.reply(session, contextId, { id: request.id, error: "unknown prompt" });
       return;
     }
@@ -409,7 +415,7 @@ export class Attacher {
     };
 
     try {
-      const result = await createSession(promptKey, context);
+      const result = await createSession(promptKey, context, config);
       this.emit({
         type: "session",
         channel: context.channelName,
@@ -488,6 +494,7 @@ export class Attacher {
           const removed = removeLink(config, key, which);
           return { removed, left: linksForChannel(config, key).map(linkLabel) };
         });
+        forgetRepos();
         if (which && removed.length === 0) {
           await this.reply(session, contextId, {
             id: request.id,
@@ -518,6 +525,7 @@ export class Attacher {
           });
           return { stored, labels: linksForChannel(config, key).map(linkLabel) };
         });
+        forgetRepos();
         this.emit({ type: "link", channel: key, message: repo.root });
         await this.reply(session, contextId, {
           id: request.id,
@@ -694,6 +702,25 @@ export class Attacher {
       const { message, hint } = describeError(err);
       const dirty = err instanceof UncommittedWorkError ? err.dirty : undefined;
       await this.reply(session, contextId, { id: request.id, error: message, hint, dirty });
+    }
+  }
+
+  /**
+   * The menu opened on a message in a linked channel: start fetching the base
+   * its session would be cut from, so a click finds it already fetched. The
+   * overlay does not wait on this, so it is answered before the fetch starts.
+   */
+  private async handlePrefetch(
+    session: CdpSession,
+    contextId: number | undefined,
+    request: AskRequest,
+  ): Promise<void> {
+    await this.reply(session, contextId, { id: request.id, ok: true });
+    try {
+      await prefetchForChannel(await loadConfig(), request.channel ?? "", request.repo ?? "");
+    } catch (err) {
+      // A click will run into the same problem and say so; this one is quiet.
+      log.debug(`could not prefetch for #${request.channel ?? ""}: ${describeError(err).message}`);
     }
   }
 

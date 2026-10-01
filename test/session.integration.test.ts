@@ -131,6 +131,73 @@ describe("createWorktree", () => {
     await expect(stat(join(worktree.path, "NEW.md"))).resolves.toBeTruthy();
   });
 
+  it("does not fetch again for a click within a minute of the last fetch", async () => {
+    const remote = join(root, "remote.git");
+    await git(["clone", "--bare", repoPath, remote], root);
+    await git(["remote", "add", "origin", remote], repoPath);
+    const repo = await inspectRepo(repoPath);
+    const options = { repo, branch: "fix/again", baseBranch: "main", worktreesRoot: join(root, "worktrees"), fetch: true };
+    await createWorktree(options);
+
+    const other = join(root, "other");
+    await git(["clone", remote, other], root);
+    await writeFile(join(other, "LATER.md"), "later\n");
+    await git(["add", "."], other);
+    await git(["commit", "-m", "upstream"], other);
+    await git(["push", "origin", "main"], other);
+
+    // Cut from what the first click fetched: the push since is not fetched.
+    const second = await createWorktree(options);
+    expect(second.baseRef).toBe("origin/main");
+    await expect(stat(join(second.path, "LATER.md"))).rejects.toThrow();
+  });
+
+  it("runs the caller's work while the fetch is still being waited on", async () => {
+    // A remote that takes a moment to answer, like one over the network.
+    const remote = join(root, "remote.git");
+    await git(["clone", "--bare", repoPath, remote], root);
+    const slow = join(root, "slow-remote");
+    await writeFile(slow, `#!/bin/sh\nsleep 0.6\nexec "$1" '${remote}'\n`);
+    await chmod(slow, 0o755);
+    await git(["config", "protocol.ext.allow", "always"], repoPath);
+    await git(["remote", "add", "origin", `ext::${slow} %S`], repoPath);
+
+    const repo = await inspectRepo(repoPath);
+    let ranAt = 0;
+    const started = Date.now();
+    await createWorktree({
+      repo,
+      branch: "fix/overlap",
+      baseBranch: "main",
+      worktreesRoot: join(root, "worktrees"),
+      fetch: true,
+      alongsideCheckout: async () => {
+        ranAt = Date.now();
+      },
+    });
+    expect(ranAt - started).toBeLessThan(400);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(600);
+  });
+
+  it("has finished the caller's work by the time a failure is thrown", async () => {
+    const repo = await inspectRepo(repoPath);
+    let finished = false;
+    await expect(
+      createWorktree({
+        repo,
+        branch: "fix/nobase",
+        baseBranch: "nonexistent",
+        worktreesRoot: join(root, "worktrees"),
+        fetch: false,
+        alongsideCheckout: async () => {
+          await new Promise((r) => setTimeout(r, 50));
+          finished = true;
+        },
+      }),
+    ).rejects.toThrow(/does not exist/);
+    expect(finished).toBe(true);
+  });
+
   it("runs the caller's work alongside the checkout with the final names", async () => {
     const repo = await inspectRepo(repoPath);
     const seen: Array<{ branch: string; path: string }> = [];
