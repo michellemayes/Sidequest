@@ -43,6 +43,8 @@
     repoLabels: {},
     lastRepos: {},
     agentLabel: 'Claude Code',
+    agentHost: 'Warp',
+    agentInApp: false,
     sessions: {},
     stats: { total: 0, today: 0, streak: 0 },
     verbose: false,
@@ -1186,7 +1188,7 @@
           reopen(entry.branch, sig);
           schedule();
         });
-        again.title = `Open ${entry.branch} in Warp again`;
+        again.title = `Open ${entry.branch} in ${CONFIG.agentHost} again`;
         spans(again, [['sq-glyph', '↩'], ['', `Back to ${entry.label || 'session'}`], ['sq-sub', shortBranch(entry.branch)]]);
         menu.append(again);
       }
@@ -1635,8 +1637,10 @@
   function celebrate(prompt, res) {
     const s = res.stats;
     const where = res.warning
-      ? 'Worktree ready — Warp did not open'
-      : `${CONFIG.agentLabel} is starting in Warp`;
+      ? `Worktree ready — ${CONFIG.agentHost} did not open`
+      : CONFIG.agentInApp
+        ? `Prompt ready in ${CONFIG.agentHost} — press Enter there to start`
+        : `${CONFIG.agentLabel} is starting in ${CONFIG.agentHost}`;
     if (!s) {
       toast({ title: `${prompt.label} is underway`, sub: where, burst: true });
       return;
@@ -2683,7 +2687,7 @@
         text.textContent = entry.text;
         // The line is one line wide; the tooltip is where all of it lives.
         el.title = entry.branch
-          ? `${entry.text}\n\nClick to open ${entry.branch} in Warp again.`
+          ? `${entry.text}\n\nClick to open ${entry.branch} in ${CONFIG.agentHost} again.`
           : entry.text;
       }
       if (el.dataset.kind !== entry.kind) el.dataset.kind = entry.kind;
@@ -2730,7 +2734,7 @@
         const last = list[list.length - 1];
         el.title = `Sidequested → ${last.branch}` +
           (list.length > 1 ? ` (and ${list.length - 1} more)` : '') +
-          '\nClick to open it in Warp again.';
+          `\nClick to open it in ${CONFIG.agentHost} again.`;
       }
       const rect = row.getBoundingClientRect();
       if (clip && onScreen(rect, clip)) {
