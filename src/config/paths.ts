@@ -30,6 +30,11 @@ export function daemonPidFile(): string {
   return join(configRoot(), "sidequest.pid");
 }
 
+/** Held by the running daemon, so a second one cannot attach beside it. */
+export function daemonLockFile(): string {
+  return join(configRoot(), "sidequest.lock");
+}
+
 /** Log file the background daemon's output goes to. */
 export function daemonLogFile(): string {
   return join(configRoot(), "sidequest.log");

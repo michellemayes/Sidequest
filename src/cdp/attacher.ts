@@ -104,6 +104,10 @@ export class Attacher {
   private statuses = new Map<string, SessionStatus>();
   /** Results already handed to a window to post, as branch + mtime, so each is posted once. */
   private readonly autoPosted = new Set<string>();
+  /** Sessions being started right now, so a shutdown can let them finish. */
+  private startsInFlight = 0;
+  /** Set once a shutdown has begun: new sessions are turned away. */
+  private draining = false;
 
   constructor(
     private readonly options: {
@@ -153,6 +157,19 @@ export class Attacher {
       }
     };
     await tick();
+  }
+
+  /**
+   * Stop taking new sessions and wait, up to `timeoutMs`, for the ones being
+   * started to answer. True when none were left.
+   */
+  async drain(timeoutMs: number): Promise<boolean> {
+    this.draining = true;
+    const deadline = Date.now() + timeoutMs;
+    while (this.startsInFlight > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return this.startsInFlight === 0;
   }
 
   /** Sweep now rather than on the next poll, e.g. right after Slack relaunches. */
@@ -346,7 +363,20 @@ export class Attacher {
 
     switch (request.op) {
       case "start-session":
-        await this.handleStartSession(session, contextId, request);
+        if (this.draining) {
+          await this.reply(session, contextId, {
+            id: request.id,
+            error: "Sidequest is stopping.",
+            hint: "Run `sidequest start` and try again.",
+          });
+          return;
+        }
+        this.startsInFlight += 1;
+        try {
+          await this.handleStartSession(session, contextId, request);
+        } finally {
+          this.startsInFlight -= 1;
+        }
         return;
       case "link-repo":
         await this.handleLinkRepo(session, contextId, request);
