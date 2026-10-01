@@ -6,7 +6,8 @@ Someone reports a bug in Slack. You hover the message and click **Sidequest → 
 A few seconds later a terminal tab is open on a fresh git worktree, and Claude Code (or
 Codex) is already working on it, with the message and its thread as the prompt.
 That's Warp out of the box; iTerm2, Ghostty, Terminal and tmux work too, or skip the
-terminal and let the agent run in the background.
+terminal and let the agent run in the background, or open the session in the Claude or
+ChatGPT desktop app instead.
 
 ![Sidequest demo: pick Fix on a Slack message, watch Claude Code fix it in a Warp tab on a new worktree, and find the branch linked back in Slack](docs/demo/demo.gif)
 
@@ -24,10 +25,14 @@ for the recording; see [`docs/demo`](docs/demo) to re-record it.</sub>
 
 ## Quick start
 
-You'll need macOS, Node 20+, git, and
-[Claude Code](https://claude.com/claude-code) or [Codex](https://github.com/openai/codex)
-on your `PATH`. Sessions open in [Warp](https://www.warp.dev/) unless you pick
-another terminal (see [Terminals](#terminals)).
+You'll need macOS, Node 20+, git, and one of:
+
+- [Claude Code](https://claude.com/claude-code) or
+  [Codex](https://github.com/openai/codex) on your `PATH`. Sessions open in
+  [Warp](https://www.warp.dev/) unless you pick another terminal (see
+  [Terminals](#terminals)), or
+- the [Claude desktop app](https://claude.com/download) or the
+  [ChatGPT desktop app](https://chatgpt.com/download) (see [Desktop apps](#desktop-apps)).
 
 ```bash
 git clone https://github.com/michellemayes/Sidequest.git
@@ -78,7 +83,7 @@ panel) for your recent sessions that still have a worktree, newest first. Each
 shows its branch, the prompt, repo and channel it came from, how long ago, and
 what git says about it: commits the base doesn't have yet, uncommitted files,
 whether the agent has started, or that the worktree was deleted. Click one (or
-**↑**/**↓** and **Enter**) to reopen it in your terminal (headless, to open its
+**↑**/**↓** and **Enter**) to reopen it in your terminal or agent app (headless, to open its
 answer). **×** (or **Delete**) removes a
 finished one by the same rules as `sidequest clean`: the branch stays if it has
 unmerged commits, and a worktree with uncommitted changes is only removed once
@@ -109,7 +114,32 @@ and a local daemon then:
 1. creates `git worktree add -b <branch> <path> origin/<base>`,
 2. writes the prompt to `<worktree>/.sidequest/prompt.md` (git-excluded),
 3. opens your terminal on the worktree and starts your agent (or, headless,
-   runs it in the background).
+   runs it in the background, or opens your agent's desktop app there, see
+   [Desktop apps](#desktop-apps)).
+
+### Desktop apps
+
+Sessions don't have to open in a terminal. Two agents live in desktop apps instead:
+
+```bash
+sidequest agents claude-desktop   # Claude Code in the Claude app
+sidequest agents chatgpt          # Codex in the ChatGPT app
+sidequest agents claude           # back to Claude Code in your terminal
+```
+
+The worktree, branch and prompt are made exactly as before. Then, instead of a
+terminal, Sidequest opens the app with a deep link
+([`claude://code/new`](https://support.claude.com/en/articles/14729294-open-claude-desktop-with-a-link),
+[`codex://threads/new`](https://learn.chatgpt.com/docs/reference/commands)): a new
+session in the worktree with the prompt already in the composer. Press **Enter**
+there to start it. Claude asks you to trust the folder the first time. A prompt too
+long for a link (over 12,000 characters) is left in `.sidequest/prompt.md`, and the
+composer asks the agent to read it.
+
+Reopening a session (`sidequest reopen`, or **Back to Fix** in Slack) starts a new
+session in the app on the same worktree; the links can't reach back into an earlier
+one. The `terminal` setting (headless included), the shell hook, `warpStrategy` and
+`warpPreview` only matter for the terminal agents.
 
 <img src="docs/demo/menu.png" width="720" alt="The Sidequest menu open on a message, with Investigate, Fix and Review">
 
@@ -131,7 +161,7 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest link <path> -c <channel>` | Link a repo to a channel from the terminal. Linking a second repo adds it; the first stays the default |
 | `sidequest unlink [repo] -c <channel>` | Unlink one repo (by path or label) from a channel, or all of them if you name none |
 | `sidequest replies [on\|off]` | Show the thread replies sessions post, or turn them on or off |
-| `sidequest agents [claude\|codex]` | Show the available agents, or switch the one new sessions use |
+| `sidequest agents [claude\|codex\|claude-desktop\|chatgpt]` | Show the available agents, or switch the one new sessions use |
 | `sidequest terminal [name]` | Show the terminals sessions can open in, or switch: `warp`, `iterm2`, `ghostty`, `terminal`, `tmux` or `headless` |
 | `sidequest list` / `prompts` | Show linked channels and prompt templates |
 
@@ -139,7 +169,8 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 
 Sessions open in Warp unless you say otherwise. Switch with
 `sidequest terminal <name>` (a running daemon picks it up on the next click),
-and run `sidequest doctor` to check the new one works:
+and run `sidequest doctor` to check the new one works. The desktop-app agents
+(`claude-desktop`, `chatgpt`) always open in their app and ignore this setting:
 
 | | What a session opens |
 | --- | --- |
@@ -227,9 +258,9 @@ without a heading). With nothing typed in the Ask box, its reply is
 
 | Setting | Default | |
 | --- | --- | --- |
-| `agent` | `{ "id": "claude" }` | `claude` or `codex` (or run `sidequest agents codex`). Use `command`/`args` to override the executable |
+| `agent` | `{ "id": "claude" }` | `claude` or `codex` in your terminal, or `claude-desktop` or `chatgpt` in their desktop apps (or run `sidequest agents codex`). Use `command`/`args` to override a terminal agent's executable |
 | `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees go |
-| `terminal` | `warp` | `warp`, `iterm2`, `ghostty`, `terminal`, `tmux` or `headless` (or run `sidequest terminal <name>`). See Terminals above |
+| `terminal` | `warp` | `warp`, `iterm2`, `ghostty`, `terminal`, `tmux` or `headless` (or run `sidequest terminal <name>`). See Terminals above. Ignored by the desktop-app agents |
 | `tmuxSession` | `""` | The tmux session new windows go into. Empty means the one you used last |
 | `warpStrategy` | `auto` | Warp only. `auto` tries a tab config, then a launch config, then a plain new tab, until the agent starts. `tab_config`, `launch_config` or `new_tab` puts that one first |
 | `warpPreview` | `false` | Warp only. Use Warp Preview |

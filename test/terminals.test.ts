@@ -321,8 +321,9 @@ describe("headless runs", () => {
 });
 
 describe("registries", () => {
-  it("gives the built-in agents a headless mode that writes .sidequest/result.md", () => {
-    for (const def of AGENT_DEFINITIONS) {
+  it("gives the built-in terminal agents a headless mode that writes .sidequest/result.md", () => {
+    // Desktop-app agents never run in a terminal, so they have none.
+    for (const def of AGENT_DEFINITIONS.filter((d) => !d.app)) {
       const agent = resolveAgent({ id: def.id, command: "", args: [] });
       expect(agent.headless).toBeDefined();
       if (agent.headless!.result === "file") expect(agent.headless!.args).toContain(".sidequest/result.md");
@@ -373,7 +374,7 @@ describe("createSession, headless", () => {
       { channelName: "eng", authorName: "sam", text: "Why is it slow?", ts: "1700000000.000100", permalink: "", threadMessages: [] },
       config,
     );
-    expect(result).toMatchObject({ terminalLabel: "Headless", launchStrategy: "headless" });
+    expect(result).toMatchObject({ host: "the background", launchStrategy: "headless" });
     expect(result.launchError).toBeUndefined();
     // Nothing was handed to a terminal or the URI opener.
     expect(calls).toEqual([]);

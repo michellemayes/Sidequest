@@ -5,7 +5,10 @@ import { linkedRepoPaths } from "../config/channels.js";
 import { listWorktrees, type WorktreeRecord } from "../git/worktree.js";
 import { colorForPrompt } from "../warp/launcher.js";
 import { headlessPaths } from "../terminals/headless.js";
-import { launchTerminal, type TerminalLaunchResult } from "../terminals/launch.js";
+import { launchTerminal } from "../terminals/launch.js";
+import { sessionHost, type TerminalId } from "../terminals/registry.js";
+import { resolveAgent } from "../agents/agents.js";
+import { openUri } from "../util/openUri.js";
 import { tabTitle, warpConfigName } from "./naming.js";
 import { UserFacingError } from "../util/errors.js";
 
@@ -40,12 +43,27 @@ export async function findSession(
   return null;
 }
 
+export interface ReopenResult {
+  /** Where it opened, e.g. "Warp", "iTerm2" or "the Claude app". */
+  host: string;
+  /** The terminal it opened in; absent for an agent in a desktop app. */
+  terminal?: TerminalId;
+  /** How: the Warp strategy that worked, a terminal's tag, or the agent's id for an app. */
+  strategy: string;
+  /** Anything worth telling the user, e.g. how to attach to a new tmux session. */
+  note?: string;
+  /** Whether the agent claimed a still-pending session; null when there was none. */
+  agentStarted: boolean | null;
+}
+
 /**
- * Open the terminal on a session again. If the session's pending marker is
+ * Open a session again. In a terminal: if the session's pending marker is
  * still unclaimed, the agent starts on arrival; otherwise it is just a tab
- * there (or, headless, the session's answer or log).
+ * there (or, headless, the session's answer or log). For an agent in a
+ * desktop app: a new session in the app, in the worktree (the links cannot
+ * reach back into an earlier one), whatever the terminal setting.
  */
-export async function openSession(config: Config, found: FoundSession): Promise<TerminalLaunchResult> {
+export async function openSession(config: Config, found: FoundSession): Promise<ReopenResult> {
   const { worktree, repoPath } = found;
   try {
     await stat(worktree.path);
@@ -56,8 +74,15 @@ export async function openSession(config: Config, found: FoundSession): Promise<
     );
   }
 
+  const agent = resolveAgent(config.settings.agent);
+  if (agent.app) {
+    await openUri(agent.app.newSessionUri(worktree.path), agent.host, `Is ${agent.host} installed? \`sidequest doctor\` checks.`);
+    return { host: agent.host, strategy: agent.id, agentStarted: null };
+  }
+
+  const terminal = config.settings.terminal;
   const scriptFile =
-    config.settings.terminal === "headless"
+    terminal === "headless"
       ? headlessPaths(worktree.path).scriptFile
       : join(worktree.path, ".sidequest", "autorun.sh");
   let scriptExists = false;
@@ -69,7 +94,7 @@ export async function openSession(config: Config, found: FoundSession): Promise<
   }
 
   const prefix = worktree.branch.split("/")[0] ?? "";
-  return launchTerminal({
+  const launch = await launchTerminal({
     settings: config.settings,
     session: {
       name: warpConfigName(worktree.branch),
@@ -80,4 +105,11 @@ export async function openSession(config: Config, found: FoundSession): Promise<
       pendingFile: join(worktree.path, ".sidequest", "pending"),
     },
   });
+  return {
+    host: sessionHost(agent, terminal),
+    terminal: launch.terminal,
+    strategy: launch.strategy,
+    agentStarted: launch.agentStarted,
+    ...(launch.note ? { note: launch.note } : {}),
+  };
 }

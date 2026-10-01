@@ -19,11 +19,11 @@ import { shellHookSource } from "./warp/autorun.js";
 import { strategyOrder } from "./warp/launcher.js";
 import { findSession, openSession } from "./session/reopen.js";
 import { agentDidNotStart } from "./terminals/launch.js";
-import { findTerminalApp, TERMINAL_DEFINITIONS, terminalDefinition } from "./terminals/registry.js";
+import { findTerminalApp, sessionHost, TERMINAL_DEFINITIONS, terminalDefinition } from "./terminals/registry.js";
 import { tmuxHasSessionArgv, TMUX_FALLBACK_SESSION } from "./terminals/commands.js";
 import { computeStats, latestSession, loadHistory, MILESTONES } from "./session/history.js";
 import { AutoCleaner, finishedWorktrees, PILE_UP_AT, sweepWorktrees } from "./session/cleanup.js";
-import { AGENT_DEFINITIONS, agentDefinition, resolveAgent } from "./agents/agents.js";
+import { AGENT_DEFINITIONS, agentDefinition, describeAgent, resolveAgent } from "./agents/agents.js";
 import {
   clearDaemonRecord,
   daemonAlive,
@@ -43,7 +43,7 @@ import {
   removeLink,
 } from "./config/channels.js";
 import { describeError, UserFacingError } from "./util/errors.js";
-import type { Config } from "./config/schema.js";
+import type { Config, TerminalId } from "./config/schema.js";
 import type { LaunchResult } from "./cdp/launch.js";
 import { run, succeeds } from "./util/exec.js";
 import {
@@ -66,7 +66,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .name("sidequest")
-    .description("Turn any Slack message into an agent session in a fresh git worktree, opened in your terminal.")
+    .description("Turn any Slack message into an agent session in a fresh git worktree, opened in your terminal or a desktop app.")
     .version("0.1.0");
 
   program
@@ -94,7 +94,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("agents [id]")
-    .description("list the coding agents Sidequest can launch, or switch to one (claude, codex)")
+    .description("list the coding agents Sidequest can launch, or switch to one (claude, codex, claude-desktop, chatgpt)")
     .action((id: string | undefined) => wrap(() => agents(id)));
 
   program
@@ -109,7 +109,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("reopen [ref]")
-    .description("open a session's terminal again (branch name or path; default: the latest)")
+    .description("open a session's terminal (or the agent's app) again (branch name or path; default: the latest)")
     .action((ref: string | undefined) => wrap(() => reopen(ref)));
 
   program
@@ -279,7 +279,8 @@ async function startTips(config: Config): Promise<string[]> {
         "repos it suggests — it looks for checkouts that match the channel's name.",
     );
   }
-  if (config.settings.terminal === "warp" && !(await fileExists(shellHookFile()))) {
+  const usesWarp = config.settings.terminal === "warp" && !resolveAgent(config.settings.agent).app;
+  if (usesWarp && !(await fileExists(shellHookFile()))) {
     tips.push("run `sidequest install-hook` so the agent starts even when Warp ignores the launch config.");
   }
   const pile = await pileUpNudge(config);
@@ -320,8 +321,8 @@ async function status(): Promise<void> {
     if (attached !== null) console.log(`Slack windows with the overlay: ${attached}`);
     console.log(`Log: ${daemonLogFile()}`);
   }
-  console.log(`Agent: ${agent.label} (${[agent.command, ...agent.args].join(" ")})`);
-  console.log(`Terminal: ${terminalDefinition(config.settings.terminal).label}`);
+  console.log(`Agent: ${agent.label} (${describeAgent(agent)})`);
+  console.log(`Terminal: ${terminalSummary(config.settings.terminal, agent)}`);
   console.log(`Linked channels: ${Object.keys(config.channels).length}`);
   const s = computeStats(await loadHistory());
   if (s.total > 0) {
@@ -375,7 +376,11 @@ async function agents(id?: string): Promise<void> {
       // A custom command belongs to the previous agent; don't carry it over.
       if (config.settings.agent.id !== def.id) config.settings.agent = { id: def.id, command: "", args: [] };
     });
-    console.log(`New sessions will use ${def.label}. A running daemon picks this up on the next click.`);
+    const { terminal } = (await loadConfig()).settings;
+    console.log(`New sessions will use ${def.label} in ${sessionHost(def, terminal)}. A running daemon picks this up on the next click.`);
+    if (!def.app && terminal === "headless" && !def.headless) {
+      console.log(`${def.label} has no headless mode, so sessions will fail until you pick a terminal: \`sidequest terminal\`.`);
+    }
     return;
   }
 
@@ -384,12 +389,14 @@ async function agents(id?: string): Promise<void> {
   console.log("Agents Sidequest can launch:\n");
   for (const def of AGENT_DEFINITIONS) {
     const marker = def.id === activeId ? "  (active)" : "";
+    const where = sessionHost(def, config.settings.terminal);
     console.log(`  ${def.id}${marker}`);
-    console.log(`    ${def.label} — ${[def.command, ...def.defaultArgs].join(" ")}`);
+    console.log(`    ${def.label} — ${def.app ? `opens in ${where}` : `${[def.command, ...def.defaultArgs].join(" ")}, in ${where}`}`);
   }
   console.log("\nSwitch with `sidequest agents <id>`, or in " + `${configFile()}:`);
   console.log(`  { "settings": { "agent": { "id": "codex" } } }`);
-  console.log("`command` and `args` override the agent's executable and flags.");
+  console.log("`command` and `args` override a terminal agent's executable and flags; `sidequest terminal` picks the terminal.");
+  console.log("An app agent opens a new session in the worktree with the prompt ready; press Enter there to start it.");
 }
 
 async function terminal(name?: string): Promise<void> {
@@ -405,7 +412,7 @@ async function terminal(name?: string): Promise<void> {
     const config = await loadConfig();
     const agent = resolveAgent(config.settings.agent);
     // Refused here rather than on the next click, which would fail in Slack.
-    if (def.id === "headless" && !agent.headless) {
+    if (def.id === "headless" && !agent.app && !agent.headless) {
       throw new UserFacingError(
         `${agent.label} has no headless mode.`,
         "Switch agents with `sidequest agents` first.",
@@ -419,7 +426,11 @@ async function terminal(name?: string): Promise<void> {
         ? "New sessions will run in the background, with no terminal. A running daemon picks this up on the next click."
         : `New sessions will open in ${def.label}. A running daemon picks this up on the next click.`,
     );
-    console.log("`sidequest doctor` checks it's usable.");
+    console.log(
+      agent.app
+        ? `${agent.label} opens in ${agent.host} whatever this says; it applies once you switch to a terminal agent.`
+        : "`sidequest doctor` checks it's usable.",
+    );
     return;
   }
 
@@ -463,8 +474,9 @@ async function replies(state?: string): Promise<void> {
 }
 
 /**
- * Open the terminal on a worktree Sidequest created earlier, by branch name or
- * path — or, with nothing named, the most recent one. Handy when it opened in the
+ * Open the terminal (or the agent's app) on a worktree Sidequest created
+ * earlier, by branch name or path — or, with nothing named, the most recent
+ * one. Handy when it opened in the
  * wrong place or the agent never started: if the session's pending marker is
  * still unclaimed, the shell hook starts the agent on arrival.
  */
@@ -499,10 +511,10 @@ async function reopen(ref: string | undefined): Promise<void> {
         : `Started the agent in the background in ${found.worktree.path}; it logs to .sidequest/agent.log.`,
     );
   } else {
-    console.log(`Opened ${terminalDefinition(launch.terminal).label} on ${found.worktree.path} (${launch.strategy}).`);
+    console.log(`Opened ${launch.host} on ${found.worktree.path} (${launch.strategy}).`);
     if (launch.note) console.log(launch.note);
   }
-  if (launch.agentStarted === false) {
+  if (launch.agentStarted === false && launch.terminal) {
     console.log(
       launch.terminal === "warp"
         ? "The agent did not start. Run `sidequest install-hook`, open a new Warp tab there, or run .sidequest/autorun.sh."
@@ -832,11 +844,11 @@ async function list(): Promise<void> {
   console.log(`config: ${configFile()}\n`);
   console.log("settings");
   console.log(`  worktreesRoot:  ${config.settings.worktreesRoot}`);
-  console.log(`  terminal:       ${terminalDefinition(config.settings.terminal).label}`);
-  if (config.settings.terminal === "warp") {
+  console.log(`  terminal:       ${terminalSummary(config.settings.terminal, agent)}`);
+  if (config.settings.terminal === "warp" && !agent.app) {
     console.log(`  warpStrategy:   ${config.settings.warpStrategy}${config.settings.warpPreview ? " (preview)" : ""}`);
   }
-  console.log(`  agent:          ${agent.label} (${[agent.command, ...agent.args].join(" ")})`);
+  console.log(`  agent:          ${agent.label} (${describeAgent(agent)})`);
   console.log(`  threadContext:  ${config.settings.threadContextLimit} messages`);
   console.log(
     `  autoClean:      ${config.settings.autoClean ? `on, after ${config.settings.autoCleanAfterDays} idle days` : "off"}`,
@@ -1039,6 +1051,18 @@ const PROMPT_TOKENS = [
   "question",
 ] as const;
 
+/**
+ * Whether one of these apps is installed; null where there is no way to ask.
+ * `open -Ra` finds an app by name without launching it.
+ */
+async function appInstalled(names: string[]): Promise<boolean | null> {
+  if (platform() !== "darwin") return null;
+  for (const name of names) {
+    if (await succeeds("open", ["-Ra", name])) return true;
+  }
+  return false;
+}
+
 async function doctor(): Promise<void> {
   const config = await loadConfig();
   let problems = 0;
@@ -1054,14 +1078,33 @@ async function doctor(): Promise<void> {
   check(await succeeds("git", ["--version"]), "git", "required to create worktrees");
 
   const agent = resolveAgent(config.settings.agent);
-  const agentOk = await succeeds(agent.command, ["--version"]);
-  check(
-    agentOk,
-    `${agent.label} (${agent.command})`,
-    agentOk ? "" : agentDefinition(agent.id).installHint,
-  );
+  if (agent.app) {
+    const installed = await appInstalled(agent.app.appNames);
+    if (installed === null) {
+      console.log(`  --   ${agent.label} in ${agent.host}`);
+      console.log(`       can't check for the app on ${platform()}. ${agentDefinition(agent.id).installHint}`);
+    } else {
+      check(installed, `${agent.label} in ${agent.host}`, installed ? "" : agentDefinition(agent.id).installHint);
+    }
+  } else {
+    const agentOk = await succeeds(agent.command, ["--version"]);
+    check(
+      agentOk,
+      `${agent.label} (${agent.command})`,
+      agentOk ? "" : agentDefinition(agent.id).installHint,
+    );
+  }
 
-  if (config.settings.terminal === "warp") {
+  if (agent.app) {
+    // The app's own links need the opener; no terminal is involved.
+    const opener = uriOpener();
+    check(
+      opener !== null,
+      `URI opener for ${platform()}`,
+      opener ? `${opener.command}` : `no known way to open ${agent.host}'s links on this platform`,
+    );
+    console.log(`  --   terminal: ${terminalSummary(config.settings.terminal, agent)}`);
+  } else if (config.settings.terminal === "warp") {
     const opener = uriOpener();
     check(
       opener !== null,
@@ -1165,6 +1208,16 @@ async function doctor(): Promise<void> {
       : `\n${problems} problem${problems === 1 ? "" : "s"} to fix.\n`,
   );
   if (problems > 0) process.exitCode = 1;
+}
+
+/**
+ * The terminal setting as `status`, `list` and `doctor` show it. An agent in
+ * a desktop app never uses it, so say so rather than name a terminal that
+ * won't open.
+ */
+function terminalSummary(id: TerminalId, agent: { label: string; host: string; app?: unknown }): string {
+  const label = terminalDefinition(id).label;
+  return agent.app ? `${label}, unused: ${agent.label} opens in ${agent.host}` : label;
 }
 
 /** Doctor's checks for every terminal but Warp, which has its own above. */

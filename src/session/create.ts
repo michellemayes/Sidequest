@@ -2,7 +2,7 @@ import { loadConfig, promptFor } from "../config/store.js";
 import { linksForChannel, repoForChannelName } from "../config/channels.js";
 import { renderPrompt, renderReply, type PromptContext } from "../config/prompts.js";
 import { firstTicket, isTicketPrompt, keepsBranchCase, ticketFor, type Ticket } from "../config/tickets.js";
-import { resolveAgent } from "../agents/agents.js";
+import { linkPrompt, resolveAgent, type DesktopApp, type ResolvedAgent } from "../agents/agents.js";
 import type { Config, PromptKey } from "../config/schema.js";
 import { inspectRepo } from "../git/repo.js";
 import { createWorktree } from "../git/worktree.js";
@@ -11,9 +11,10 @@ import { colorForPrompt, prepareTabConfig, strategyOrder, type PreparedTabConfig
 import { removeTabConfig, type WarpSessionSpec } from "../warp/configFiles.js";
 import { writeHeadlessRunner } from "../terminals/headless.js";
 import { agentDidNotStart, launchTerminal } from "../terminals/launch.js";
-import { terminalDefinition } from "../terminals/registry.js";
+import { sessionHost } from "../terminals/registry.js";
 import { branchNameFor, tabTitle, warpConfigName } from "./naming.js";
 import { describeError, UserFacingError } from "../util/errors.js";
+import { openUri } from "../util/openUri.js";
 import { stripSlackMarkup } from "../util/slug.js";
 import { log } from "../util/log.js";
 
@@ -42,8 +43,8 @@ export interface SessionResult {
   baseBranch: string;
   promptLabel: string;
   agentLabel: string;
-  /** The terminal the session opened in, e.g. "iTerm2". */
-  terminalLabel: string;
+  /** Where the session opened, e.g. "iTerm2", "the background" or "the Claude app". */
+  host: string;
   launchStrategy: string;
   fellBackToNewTab: boolean;
   promptFile: string;
@@ -52,13 +53,14 @@ export interface SessionResult {
    * settings.autoReply is off or the prompt has no reply.
    */
   reply: string;
-  /** Set when the worktree is ready but the terminal could not be opened, or the agent did not start. */
+  /** Set when the worktree is ready but the terminal or the agent's app could not be opened, or the agent did not start. */
   launchError?: string;
 }
 
 /**
  * The whole flow behind one button click: resolve the channel's repo, cut a
- * worktree, render the prompt into it, and open the terminal there.
+ * worktree, render the prompt into it, and open the terminal there (or the
+ * agent's desktop app, for an agent that lives in one).
  */
 export async function createSession(
   promptKey: PromptKey,
@@ -97,8 +99,9 @@ export async function createSession(
   const agent = resolveAgent(config.settings.agent);
   const terminal = config.settings.terminal;
 
-  // Checked before anything is cut, like the Linear ticket above.
-  if (terminal === "headless" && !agent.headless) {
+  // Checked before anything is cut, like the Linear ticket above. An agent
+  // in a desktop app ignores the terminal setting, headless included.
+  if (!agent.app && terminal === "headless" && !agent.headless) {
     throw new UserFacingError(
       `${agent.label} has no headless mode.`,
       "Pick another agent with `sidequest agents`, or a terminal with `sidequest terminal`.",
@@ -128,7 +131,7 @@ export async function createSession(
   let preparedTabConfig: PreparedTabConfig | undefined;
   const preview = config.settings.warpPreview;
   const tabConfigFirst =
-    terminal === "warp" && strategyOrder(config.settings.warpStrategy)[0] === "tab_config";
+    !agent.app && terminal === "warp" && strategyOrder(config.settings.warpStrategy)[0] === "tab_config";
 
   let tabConfigName: string | undefined;
   const worktree = await createWorktree({
@@ -175,9 +178,10 @@ export async function createSession(
     agentArgs: agent.args,
     agentLabel: agent.label,
     title,
+    pending: !agent.app,
   });
   const headless =
-    terminal === "headless" && agent.headless
+    !agent.app && terminal === "headless" && agent.headless
       ? await writeHeadlessRunner({
           worktreePath: worktree.path,
           agentCommand: agent.command,
@@ -186,7 +190,7 @@ export async function createSession(
           agentLabel: agent.label,
         })
       : null;
-  const terminalLabel = terminalDefinition(terminal).label;
+  const host = sessionHost(agent, terminal);
 
   const base = {
     branch: worktree.branch,
@@ -197,9 +201,12 @@ export async function createSession(
     promptLabel: prompt.label,
     promptFile: files.promptFile,
     agentLabel: agent.label,
-    terminalLabel,
+    host,
     reply,
   };
+
+  // An agent in a desktop app opens there; the terminal setting doesn't apply.
+  if (agent.app) return openInApp(agent, agent.app, worktree.path, body, base, startedAt);
 
   // The worktree and prompt are already on disk and usable. If the terminal
   // will not open, say so and hand back the path rather than throwing away
@@ -228,13 +235,38 @@ export async function createSession(
     };
   } catch (err) {
     const { message } = describeError(err);
-    log.error(`worktree ready at ${worktree.path} but ${terminalLabel} did not open: ${message}`);
+    log.error(`worktree ready at ${worktree.path} but ${host} did not open: ${message}`);
     return {
       ...base,
       launchStrategy: terminal === "warp" ? config.settings.warpStrategy : terminal,
       fellBackToNewTab: false,
       launchError: message,
     };
+  }
+}
+
+/**
+ * Start the session in the agent's desktop app: a new session there, in the
+ * worktree, with the prompt in the composer. Like Warp, a failure to open it
+ * leaves the worktree and prompt in place and says so.
+ */
+async function openInApp(
+  agent: ResolvedAgent,
+  app: DesktopApp,
+  worktreePath: string,
+  prompt: string,
+  base: Omit<SessionResult, "launchStrategy" | "fellBackToNewTab">,
+  startedAt: number,
+): Promise<SessionResult> {
+  const uri = app.newSessionUri(worktreePath, linkPrompt(prompt));
+  try {
+    await openUri(uri, agent.host, `Is ${agent.host} installed? \`sidequest doctor\` checks.`);
+    log.info(`session ready in ${Date.now() - startedAt}ms: ${worktreePath} (${agent.id})`);
+    return { ...base, launchStrategy: agent.id, fellBackToNewTab: false };
+  } catch (err) {
+    const { message } = describeError(err);
+    log.error(`worktree ready at ${worktreePath} but ${agent.host} did not open: ${message}`);
+    return { ...base, launchStrategy: agent.id, fellBackToNewTab: false, launchError: message };
   }
 }
 

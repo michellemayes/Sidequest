@@ -74,6 +74,16 @@ export function terminalDefinition(id: TerminalId): TerminalDefinition {
   return TERMINAL_DEFINITIONS.find((d) => d.id === id) ?? TERMINAL_DEFINITIONS[0]!;
 }
 
+/**
+ * Where sessions open, as the overlay and CLI name it: an agent that lives in
+ * a desktop app opens there whatever the terminal setting; otherwise it's the
+ * terminal, or "the background" when headless.
+ */
+export function sessionHost(agent: { host: string; app?: unknown }, terminal: TerminalId): string {
+  if (agent.app) return agent.host;
+  return terminal === "headless" ? "the background" : terminalDefinition(terminal).label;
+}
+
 /** Where macOS apps live; Terminal.app is a system app. */
 const APP_DIRS = ["/Applications", join(homedir(), "Applications"), "/System/Applications/Utilities"];
 

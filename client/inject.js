@@ -43,7 +43,8 @@
     repoLabels: {},
     lastRepos: {},
     agentLabel: 'Claude Code',
-    terminalLabel: 'Warp',
+    agentHost: 'Warp',
+    agentInApp: false,
     headless: false,
     sessions: {},
     stats: { total: 0, today: 0, streak: 0 },
@@ -53,7 +54,7 @@
   /* What clicking a past session does, for tooltips: headless has no window to reopen. */
   const reopenHint = (what) => CONFIG.headless
     ? `see ${what === 'it' ? 'its' : `${what}'s`} result`
-    : `open ${what} in ${CONFIG.terminalLabel} again`;
+    : `open ${what} in ${CONFIG.agentHost} again`;
 
   const ASK = '__sidequestAsk';
   const LAYER_ID = 'sidequest-layer';
@@ -1642,8 +1643,12 @@
   function celebrate(prompt, res) {
     const s = res.stats;
     const where = res.warning
-      ? (CONFIG.headless ? 'Worktree ready — the agent did not start' : `Worktree ready — ${CONFIG.terminalLabel} did not open`)
-      : (CONFIG.headless ? `${CONFIG.agentLabel} is working in the background` : `${CONFIG.agentLabel} is starting in ${CONFIG.terminalLabel}`);
+      ? (CONFIG.headless ? 'Worktree ready — the agent did not start' : `Worktree ready — ${CONFIG.agentHost} did not open`)
+      : CONFIG.agentInApp
+        ? `Prompt ready in ${CONFIG.agentHost} — press Enter there to start`
+        : CONFIG.headless
+          ? `${CONFIG.agentLabel} is working in the background`
+          : `${CONFIG.agentLabel} is starting in ${CONFIG.agentHost}`;
     if (!s) {
       toast({ title: `${prompt.label} is underway`, sub: where, burst: true });
       return;
@@ -2516,7 +2521,7 @@
         toast({ title: 'Could not reopen that session', sub: res.hint ? `${res.error} ${res.hint}` : res.error, kind: 'error' });
         return;
       }
-      toast({ title: `Back in ${res.branch || s.branch}`, sub: CONFIG.headless ? 'Opening its result.' : `Opening it in ${CONFIG.terminalLabel}.` });
+      toast({ title: `Back in ${res.branch || s.branch}`, sub: CONFIG.headless ? 'Opening its result.' : `Opening it in ${CONFIG.agentHost}.` });
     }).catch((err) => {
       toast({ title: 'Could not reopen that session', sub: err.message, kind: 'error' });
     });
