@@ -83,8 +83,9 @@ export interface ProcessInfo {
 /** `ps` for one pid; null when there is no such process or no ps to ask. */
 export async function processInfo(pid: number): Promise<ProcessInfo | null> {
   try {
-    // LC_ALL=C keeps lstart in the English format Date.parse reads.
-    const { stdout } = await run("ps", ["-o", "lstart=", "-o", "args=", "-p", String(pid)], {
+    // LC_ALL=C keeps lstart in the English format Date.parse reads, and -ww
+    // stops BSD ps cutting the command line off at a column width.
+    const { stdout } = await run("ps", ["-ww", "-o", "lstart=", "-o", "args=", "-p", String(pid)], {
       timeoutMs: 5_000,
       env: { ...process.env, LC_ALL: "C" },
     });
