@@ -3,15 +3,22 @@
  *
  * Most run in a terminal (Warp unless settings.terminal names another, or
  * headless): it opens in the fresh worktree and runs
- * `<command> [...args] "<prompt>"`, with the rendered prompt as one trailing
- * argument. An agent whose CLI takes the prompt differently (a flag, stdin)
- * can still be used by pointing `command` at a small wrapper script.
+ * `<command> [...args] [...promptArgs]`. For most agents `promptArgs` is just
+ * the rendered prompt as one trailing argument; agents that take it behind a
+ * flag (`gemini --prompt-interactive`, `opencode --prompt`) or from a file say
+ * so here. An agent whose CLI can't be driven this way can still be used by
+ * pointing `command` at a small wrapper script.
  *
  * The rest are desktop apps, opened with a deep link instead of a terminal,
  * whatever settings.terminal says: the app
  * starts a new session in the worktree with the prompt in its composer, ready
  * for you to send.
  */
+
+/** Stands in for the rendered prompt text in `promptArgs`. */
+export const PROMPT_TOKEN = "{prompt}";
+/** Stands in for the path to `.sidequest/prompt.md` in `promptArgs`. */
+export const PROMPT_FILE_TOKEN = "{promptFile}";
 
 export interface DesktopApp {
   /** macOS app names that can handle the link, checked by `sidequest doctor`. */
@@ -34,6 +41,18 @@ export interface AgentDefinition {
   command: string;
   /** Default extra args placed before the prompt. */
   defaultArgs: string[];
+  /**
+   * How the prompt is handed over, after the args. `{prompt}` becomes the
+   * prompt text and `{promptFile}` the path to `.sidequest/prompt.md`.
+   * Defaults to `["{prompt}"]`, a trailing positional argument.
+   */
+  promptArgs?: string[];
+  /**
+   * For CLIs that only take a first message one-shot: once that run exits,
+   * start the agent again with these args (after the user's) to carry on the
+   * same conversation interactively.
+   */
+  resumeArgs?: string[];
   /** Shown by `sidequest doctor` when the agent is not usable. */
   installHint: string;
   /**
@@ -46,13 +65,15 @@ export interface AgentDefinition {
 }
 
 /**
- * A non-interactive run: `<command> [...args] [...user args] "<prompt>"` in
- * the worktree, with nobody there to approve anything. The flags keep what
+ * A non-interactive run: `<command> [...args] [...user args] [...promptArgs]`
+ * in the worktree, with nobody there to approve anything. The flags keep what
  * the agent may do to the worktree, since the prompt carries Slack text.
  */
 export interface HeadlessInvocation {
   /** Placed before the user's own args and the prompt. */
   args: string[];
+  /** How the prompt is handed over, as for an agent's own `promptArgs`. Defaults to `["{prompt}"]`. */
+  promptArgs?: string[];
   /**
    * Where the final answer comes out. `stdout`: the agent prints only its
    * answer, and the runner saves it to .sidequest/result.md. `file`: `args`
@@ -114,6 +135,93 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
       "Install the Codex CLI (npm install -g @openai/codex), or point settings.agent.command at its executable.",
   },
   {
+    // Runs the prompt and stays interactive; -p would exit after one turn.
+    id: "gemini",
+    label: "Gemini CLI",
+    host: "Warp",
+    command: "gemini",
+    defaultArgs: [],
+    promptArgs: ["--prompt-interactive", PROMPT_TOKEN],
+    // -p answers once on stdout; without approval, tools that change things are off.
+    headless: { args: [], promptArgs: ["-p", PROMPT_TOKEN], result: "stdout" },
+    installHint:
+      "Install Gemini CLI (npm install -g @google/gemini-cli), or point settings.agent.command at its executable.",
+  },
+  {
+    // Aider has no "first message, then chat" flag: its positional args are
+    // files to edit, and --message-file answers once and exits. So the first
+    // run sends the prompt, and a second one reopens that chat to carry on.
+    id: "aider",
+    label: "Aider",
+    host: "Warp",
+    command: "aider",
+    defaultArgs: [],
+    promptArgs: ["--message-file", PROMPT_FILE_TOKEN],
+    resumeArgs: ["--restore-chat-history"],
+    installHint:
+      "Install Aider (python -m pip install aider-install && aider-install), or point settings.agent.command at its executable.",
+  },
+  {
+    // The installer links both `agent` and `cursor-agent`; the longer name
+    // can't be mistaken for anything else on PATH.
+    id: "cursor-agent",
+    label: "Cursor Agent",
+    host: "Warp",
+    command: "cursor-agent",
+    defaultArgs: [],
+    // Print mode answers once on stdout; without --force it changes nothing.
+    headless: { args: [], promptArgs: ["-p", PROMPT_TOKEN], result: "stdout" },
+    installHint:
+      "Install the Cursor CLI (curl https://cursor.com/install -fsS | bash), or point settings.agent.command at its executable.",
+  },
+  {
+    // A positional arg to the opencode TUI is a project path, not a prompt.
+    id: "opencode",
+    label: "opencode",
+    host: "Warp",
+    command: "opencode",
+    defaultArgs: [],
+    promptArgs: ["--prompt", PROMPT_TOKEN],
+    installHint:
+      "Install opencode (npm install -g opencode-ai), or point settings.agent.command at its executable.",
+  },
+  {
+    // Runs the prompt as the first turn of a normal session; -p is one-shot.
+    id: "copilot",
+    label: "Copilot CLI",
+    host: "Warp",
+    command: "copilot",
+    defaultArgs: [],
+    promptArgs: ["--interactive", PROMPT_TOKEN],
+    installHint:
+      "Install GitHub Copilot CLI (npm install -g @github/copilot), or point settings.agent.command at its executable.",
+  },
+  {
+    // A fork of Gemini CLI, with the same flag.
+    id: "qwen",
+    label: "Qwen Code",
+    host: "Warp",
+    command: "qwen",
+    defaultArgs: [],
+    promptArgs: ["--prompt-interactive", PROMPT_TOKEN],
+    // Same as Gemini CLI, which it forks.
+    headless: { args: [], promptArgs: ["-p", PROMPT_TOKEN], result: "stdout" },
+    installHint:
+      "Install Qwen Code (npm install -g @qwen-code/qwen-code), or point settings.agent.command at its executable.",
+  },
+  {
+    // `goose run` works through the instructions file; --interactive then
+    // keeps the session open instead of exiting.
+    id: "goose",
+    label: "Goose",
+    host: "Warp",
+    command: "goose",
+    defaultArgs: [],
+    promptArgs: ["run", "--interactive", "--instructions", PROMPT_FILE_TOKEN],
+    installHint:
+      "Install the Goose CLI (brew install block-goose-cli), or point settings.agent.command at its executable.",
+  },
+  {
     id: "claude-desktop",
     label: "Claude Code",
     host: "the Claude app",
@@ -159,6 +267,8 @@ export interface ResolvedAgent {
   host: string;
   command: string;
   args: string[];
+  promptArgs: string[];
+  resumeArgs?: string[];
   /** The agent's non-interactive mode, if it has one. */
   headless?: HeadlessInvocation;
   app?: DesktopApp;
@@ -176,12 +286,56 @@ export function resolveAgent(config: AgentConfig): ResolvedAgent {
     host: def.host,
     command: config.command.trim() || def.command,
     args: config.args.length > 0 ? config.args : def.defaultArgs,
+    promptArgs: def.promptArgs ?? [PROMPT_TOKEN],
+    ...(def.resumeArgs ? { resumeArgs: def.resumeArgs } : {}),
     ...(def.headless ? { headless: def.headless } : {}),
     ...(def.app ? { app: def.app } : {}),
   };
 }
 
-/** How `status` and `agents` describe an agent: its command line, or its app. */
-export function describeAgent(agent: { host: string; command: string; args: string[]; app?: DesktopApp }): string {
-  return agent.app ? `opens in ${agent.host}` : [agent.command, ...agent.args].join(" ");
+/** Swap the prompt placeholders in one arg for real values. */
+export function fillPromptArg(arg: string, prompt: string, promptFile: string): string {
+  return arg
+    .split(PROMPT_TOKEN)
+    .map((part) => part.split(PROMPT_FILE_TOKEN).join(promptFile))
+    .join(prompt);
+}
+
+/**
+ * The argv a terminal agent's first run gets. Left at their defaults, the
+ * prompt shows as `<prompt>` and the file as its path in the worktree, which
+ * is what the CLI prints.
+ */
+export function agentArgv(
+  agent: Pick<ResolvedAgent, "command" | "args" | "promptArgs">,
+  prompt = "<prompt>",
+  promptFile = ".sidequest/prompt.md",
+): string[] {
+  return [agent.command, ...agent.args, ...agent.promptArgs.map((arg) => fillPromptArg(arg, prompt, promptFile))];
+}
+
+/**
+ * How `status` and `agents` describe an agent: the command line it runs (and
+ * its second run, for a one-shot CLI), or the link its app opens.
+ */
+export function describeAgent(
+  agent: Pick<ResolvedAgent, "host" | "command" | "args" | "promptArgs" | "resumeArgs" | "app">,
+): string {
+  if (agent.app) {
+    const link = agent.app.newSessionUri("").split("?")[0];
+    return `opens ${link} in ${agent.host}`;
+  }
+  const first = agentArgv(agent).join(" ");
+  if (!agent.resumeArgs) return first;
+  return `${first}, then ${[agent.command, ...agent.args, ...agent.resumeArgs].join(" ")}`;
+}
+
+/** The command line a headless run uses, or "" for an agent with no headless mode. */
+export function describeHeadless(agent: Pick<ResolvedAgent, "command" | "args" | "headless">): string {
+  if (!agent.headless) return "";
+  return agentArgv({
+    command: agent.command,
+    args: [...agent.headless.args, ...agent.args],
+    promptArgs: agent.headless.promptArgs ?? [PROMPT_TOKEN],
+  }).join(" ");
 }

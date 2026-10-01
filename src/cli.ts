@@ -23,7 +23,7 @@ import { findTerminalApp, sessionHost, TERMINAL_DEFINITIONS, terminalDefinition 
 import { tmuxHasSessionArgv, TMUX_FALLBACK_SESSION } from "./terminals/commands.js";
 import { computeStats, latestSession, loadHistory, MILESTONES } from "./session/history.js";
 import { AutoCleaner, finishedWorktrees, PILE_UP_AT, sweepWorktrees } from "./session/cleanup.js";
-import { AGENT_DEFINITIONS, agentDefinition, describeAgent, resolveAgent } from "./agents/agents.js";
+import { AGENT_DEFINITIONS, agentDefinition, describeAgent, describeHeadless, resolveAgent } from "./agents/agents.js";
 import {
   clearDaemonRecord,
   daemonAlive,
@@ -94,7 +94,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("agents [id]")
-    .description("list the coding agents Sidequest can launch, or switch to one (claude, codex, claude-desktop, chatgpt)")
+    .description("list the coding agents Sidequest can launch, or switch to one (claude, codex, gemini, aider, claude-desktop, ...)")
     .action((id: string | undefined) => wrap(() => agents(id)));
 
   program
@@ -159,7 +159,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("install-hook")
-    .description("add the shell hook that starts Claude when a worktree tab opens")
+    .description("add the shell hook that starts the agent when a worktree tab opens")
     .option("--rc <path>", "shell rc file to modify (default: detected)")
     .option("--print", "print the snippet instead of writing it", false)
     .action((options: { rc?: string; print: boolean }) => wrap(() => installHook(options)));
@@ -321,7 +321,7 @@ async function status(): Promise<void> {
     if (attached !== null) console.log(`Slack windows with the overlay: ${attached}`);
     console.log(`Log: ${daemonLogFile()}`);
   }
-  console.log(`Agent: ${agent.label} (${describeAgent(agent)})`);
+  console.log(`Agent: ${agent.label} (${runsAs(config, agent)})`);
   console.log(`Terminal: ${terminalSummary(config.settings.terminal, agent)}`);
   console.log(`Linked channels: ${Object.keys(config.channels).length}`);
   const s = computeStats(await loadHistory());
@@ -391,11 +391,19 @@ async function agents(id?: string): Promise<void> {
     const marker = def.id === activeId ? "  (active)" : "";
     const where = sessionHost(def, config.settings.terminal);
     console.log(`  ${def.id}${marker}`);
-    console.log(`    ${def.label} — ${def.app ? `opens in ${where}` : `${[def.command, ...def.defaultArgs].join(" ")}, in ${where}`}`);
+    const description = describeAgent(resolveAgent({ id: def.id, command: "", args: [] }));
+    console.log(`    ${def.label} — ${def.app ? description : `${description}, in ${where}`}`);
+    if (!def.app) {
+      const headless = describeHeadless(resolveAgent({ id: def.id, command: "", args: [] }));
+      console.log(`      headless: ${headless || "no"}`);
+    }
   }
   console.log("\nSwitch with `sidequest agents <id>`, or in " + `${configFile()}:`);
-  console.log(`  { "settings": { "agent": { "id": "codex" } } }`);
-  console.log("`command` and `args` override a terminal agent's executable and flags; `sidequest terminal` picks the terminal.");
+  console.log(`  { "settings": { "agent": { "id": "gemini" } } }`);
+  console.log(
+    "`command` and `args` override a terminal agent's executable and flags; the prompt still goes last. " +
+      "`sidequest terminal` picks the terminal.",
+  );
   console.log("An app agent opens a new session in the worktree with the prompt ready; press Enter there to start it.");
 }
 
@@ -848,7 +856,7 @@ async function list(): Promise<void> {
   if (config.settings.terminal === "warp" && !agent.app) {
     console.log(`  warpStrategy:   ${config.settings.warpStrategy}${config.settings.warpPreview ? " (preview)" : ""}`);
   }
-  console.log(`  agent:          ${agent.label} (${describeAgent(agent)})`);
+  console.log(`  agent:          ${agent.label} (${runsAs(config, agent)})`);
   console.log(`  threadContext:  ${config.settings.threadContextLimit} messages`);
   console.log(
     `  autoClean:      ${config.settings.autoClean ? `on, after ${config.settings.autoCleanAfterDays} idle days` : "off"}`,
@@ -1215,6 +1223,14 @@ async function doctor(): Promise<void> {
  * a desktop app never uses it, so say so rather than name a terminal that
  * won't open.
  */
+/** How the active agent is run: its headless command line when that's what sessions use. */
+function runsAs(config: Config, agent: ReturnType<typeof resolveAgent>): string {
+  if (!agent.app && config.settings.terminal === "headless") {
+    return describeHeadless(agent) || `no headless mode; sessions will fail until you switch`;
+  }
+  return describeAgent(agent);
+}
+
 function terminalSummary(id: TerminalId, agent: { label: string; host: string; app?: unknown }): string {
   const label = terminalDefinition(id).label;
   return agent.app ? `${label}, unused: ${agent.label} opens in ${agent.host}` : label;
@@ -1273,7 +1289,7 @@ async function doctorTerminal(
         agent.headless !== undefined,
         `terminal: ${def.label}`,
         agent.headless
-          ? `runs ${[agent.command, ...agent.headless.args].join(" ")} "<prompt>"; ` +
+          ? `runs ${describeHeadless(agent)}; ` +
             "logs to .sidequest/agent.log, answers in .sidequest/result.md"
           : `${agent.label} has no headless mode. Switch with \`sidequest agents\` or \`sidequest terminal\`.`,
       );

@@ -316,16 +316,28 @@ describe("headless runs", () => {
       agentArgs: ["it's"],
       headless: { args: ["-p"], result: "stdout" },
     });
-    expect(script).toContain(`'/opt/my agent' '-p' 'it'\\''s' "$prompt"`);
+    expect(script).toContain(`'/opt/my agent' '-p' 'it'\\''s' "$(cat "$session_dir/prompt.md")"`);
+  });
+
+  it("hands the prompt over the way the headless mode takes it", () => {
+    const script = renderHeadlessScript({
+      worktreePath: "/w",
+      agentCommand: "gemini",
+      agentArgs: ["--model", "pro"],
+      headless: { args: [], promptArgs: ["-p", "{prompt}"], result: "stdout" },
+    });
+    expect(script).toContain(`'gemini' '--model' 'pro' '-p' "$(cat "$session_dir/prompt.md")" </dev/null`);
   });
 });
 
 describe("registries", () => {
-  it("gives the built-in terminal agents a headless mode that writes .sidequest/result.md", () => {
+  it("gives the agents with a clean non-interactive mode a headless invocation, and only those", () => {
+    const withHeadless = AGENT_DEFINITIONS.filter((d) => d.headless).map((d) => d.id);
+    expect(withHeadless).toEqual(["claude", "codex", "gemini", "cursor-agent", "qwen"]);
     // Desktop-app agents never run in a terminal, so they have none.
-    for (const def of AGENT_DEFINITIONS.filter((d) => !d.app)) {
-      const agent = resolveAgent({ id: def.id, command: "", args: [] });
-      expect(agent.headless).toBeDefined();
+    expect(AGENT_DEFINITIONS.filter((d) => d.app && d.headless)).toEqual([]);
+    for (const id of withHeadless) {
+      const agent = resolveAgent({ id, command: "", args: [] });
       if (agent.headless!.result === "file") expect(agent.headless!.args).toContain(".sidequest/result.md");
     }
     expect(resolveAgent({ id: "claude", command: "", args: [] }).headless!.args[0]).toBe("-p");
@@ -384,5 +396,41 @@ describe("createSession, headless", () => {
       await new Promise((r) => setTimeout(r, 25));
     }
     expect(await readFile(files.resultFile, "utf8")).toBe("The answer.\n");
+  });
+
+  it("runs an agent's own promptArgs and resumeArgs in any terminal, via autorun.sh", async () => {
+    const { configSchema } = await import("../src/config/schema.js");
+    const { createSession } = await import("../src/session/create.js");
+    const repoPath = join(root, "repo2");
+    await execFileAsync("mkdir", ["-p", repoPath]);
+    await execFileAsync("git", ["init", "--initial-branch=main"], { cwd: repoPath });
+    await writeFile(join(repoPath, "README.md"), "# test\n");
+    await execFileAsync("git", ["add", "."], { cwd: repoPath });
+    await execFileAsync("git", ["-c", "user.name=t", "-c", "user.email=t@e", "commit", "-m", "i"], { cwd: repoPath });
+
+    const config = configSchema.parse({
+      settings: { terminal: "tmux", agent: { id: "aider" }, worktreesRoot: join(root, "wt2"), fetchBeforeCreate: false },
+      channels: { eng: [{ repoPath, channel: "eng" }] },
+    });
+    // Aider can't run headless, so it is refused there before any worktree is cut.
+    await expect(
+      createSession("fix", { channelName: "eng", authorName: "a", text: "x", ts: "1", permalink: "", threadMessages: [] },
+        configSchema.parse({ ...config, settings: { ...config.settings, terminal: "headless" } })),
+    ).rejects.toThrow(/Aider has no headless mode/);
+
+    onRun = async (command, args) => {
+      if (command === "tmux" && args[0] === "new-window") await rm(join(args[args.indexOf("-c") + 1]!, ".sidequest", "pending"));
+    };
+    const result = await createSession(
+      "fix",
+      { channelName: "eng", authorName: "a", text: "Broken", ts: "1700000000.000100", permalink: "", threadMessages: [] },
+      config,
+    );
+    expect(result.launchError).toBeUndefined();
+    const script = join(result.worktreePath, ".sidequest", "autorun.sh");
+    expect(calls.at(-1)!.args.at(-1)).toBe(script);
+    const body = await readFile(script, "utf8");
+    expect(body).toContain(`'aider' '--message-file' "$session_dir/prompt.md"`);
+    expect(body).toContain(`'aider' '--restore-chat-history'`);
   });
 });

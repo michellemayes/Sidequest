@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { HeadlessInvocation } from "../agents/agents.js";
-import { SESSION_DIR, shellQuote } from "../warp/autorun.js";
+import { PROMPT_TOKEN } from "../agents/agents.js";
+import { SESSION_DIR, shellArg, shellQuote } from "../warp/autorun.js";
 
 export interface HeadlessFiles {
   /** The runner script, the headless counterpart of autorun.sh. */
@@ -49,17 +50,22 @@ export async function writeHeadlessRunner(options: WriteHeadlessOptions): Promis
 
 export function renderHeadlessScript(options: WriteHeadlessOptions): string {
   const { headless } = options;
-  const command = [options.agentCommand, ...headless.args, ...options.agentArgs].map(shellQuote).join(" ");
+  // The prompt goes in the way the headless mode takes it (a trailing
+  // argument unless promptArgs says otherwise), read from its file at run time.
+  const command = [
+    ...[options.agentCommand, ...headless.args, ...options.agentArgs].map(shellQuote),
+    ...(headless.promptArgs ?? [PROMPT_TOKEN]).map(shellArg),
+  ].join(" ");
   const agentLine = options.agentLabel ? `# Agent: ${options.agentLabel}\n` : "";
 
   // stdin is /dev/null: nobody is there to answer a question, and an agent
   // that waits for one would hang forever instead of failing.
   const runLine =
     headless.result === "stdout"
-      ? `${command} "$prompt" </dev/null 2>>"$log" | tee "$partial" >>"$log"
+      ? `${command} </dev/null 2>>"$log" | tee "$partial" >>"$log"
 status=\${PIPESTATUS[0]}
 if [ "$status" -eq 0 ]; then mv "$partial" "$result"; else rm -f "$partial"; fi`
-      : `${command} "$prompt" </dev/null >>"$log" 2>&1
+      : `${command} </dev/null >>"$log" 2>&1
 status=$?`;
 
   return `#!/usr/bin/env bash
@@ -87,7 +93,6 @@ if [ ! -f "$session_dir/prompt.md" ]; then
 fi
 
 rm -f "$result" "$partial"
-prompt="$(cat "$session_dir/prompt.md")"
 echo "sidequest: started $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$log"
 ${runLine}
 echo "sidequest: finished $(date -u +%Y-%m-%dT%H:%M:%SZ), exit $status" >>"$log"
