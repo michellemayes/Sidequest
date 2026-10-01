@@ -22,7 +22,7 @@ import { agentDidNotStart } from "./terminals/launch.js";
 import { findTerminalApp, sessionHost, TERMINAL_DEFINITIONS, terminalDefinition } from "./terminals/registry.js";
 import { tmuxHasSessionArgv, TMUX_FALLBACK_SESSION } from "./terminals/commands.js";
 import { computeStats, latestSession, loadHistory, MILESTONES } from "./session/history.js";
-import { AutoCleaner, finishedWorktrees, PILE_UP_AT, sweepWorktrees } from "./session/cleanup.js";
+import { AutoCleaner, cleanSweepOptions, finishedWorktrees, PILE_UP_AT, sweepWorktrees } from "./session/cleanup.js";
 import { AGENT_DEFINITIONS, agentDefinition, describeAgent, describeHeadless, resolveAgent } from "./agents/agents.js";
 import {
   clearDaemonRecord,
@@ -150,7 +150,8 @@ export async function runCli(argv: string[]): Promise<void> {
     .description("remove finished worktrees")
     .option("--force", "also remove worktrees with uncommitted changes", false)
     .option("--all", "remove every Sidequest worktree, not just merged ones", false)
-    .action((options: { force: boolean; all: boolean }) => wrap(() => clean(options)));
+    .option("--recent", "also remove worktrees touched in the last hour", false)
+    .action((options: { force: boolean; all: boolean; recent: boolean }) => wrap(() => clean(options)));
 
   program
     .command("init")
@@ -680,6 +681,22 @@ async function runAttacherLoop(options: {
   const daemonized = Boolean(process.env.SIDEQUEST_DAEMON);
   const agentLabel = resolveAgent(config.settings.agent).label;
 
+  // The daemon is long-lived and mostly does background work nobody awaits,
+  // so one promise that slips through without a catch should cost a line in
+  // the log, not the overlay in every Slack window.
+  process.on("unhandledRejection", (reason) => {
+    log.error("unhandled rejection (the daemon keeps running)", reason);
+  });
+  // A synchronous throw that reached the top is different: whatever it
+  // interrupted is half done, and a daemon in that state can go on answering
+  // clicks wrongly. Log it and stop; `status` then says the daemon is not
+  // running, and `start` brings back a clean one.
+  process.on("uncaughtException", (err) => {
+    log.error("uncaught exception; stopping the daemon", err);
+    if (daemonized) void clearDaemonRecord().finally(() => process.exit(1));
+    else process.exit(1);
+  });
+
   if (daemonized) await writeDaemonRecord((await builtCommit(installRoot())) ?? "");
   // Until the banner is out, `start` reports the attach state itself; a running
   // commentary before it would say the same thing twice, out of order.
@@ -720,6 +737,8 @@ async function runAttacherLoop(options: {
         case "attach-error":
         case "poll-error":
         case "ask-error":
+        case "config-error":
+        case "status-error":
           log.warn(`${event.type}: ${event.message}`);
           break;
         default:
@@ -898,7 +917,7 @@ async function sessions(): Promise<void> {
   }
 }
 
-async function clean(options: { force: boolean; all: boolean }): Promise<void> {
+async function clean(options: { force: boolean; all: boolean; recent: boolean }): Promise<void> {
   const config = await loadConfig();
   if (linkedRepoPaths(config).length === 0) {
     console.log("No repos are linked yet.");
@@ -908,8 +927,7 @@ async function clean(options: { force: boolean; all: boolean }): Promise<void> {
   // The rules themselves live in sweepWorktrees, shared with the daemon's
   // autoClean; this only says what happened.
   const outcomes = await sweepWorktrees(config, {
-    force: options.force,
-    all: options.all,
+    ...cleanSweepOptions(options),
     onOutcome: (o) => {
       switch (o.kind) {
         case "removed":
@@ -923,9 +941,15 @@ async function clean(options: { force: boolean; all: boolean }): Promise<void> {
         case "dirty":
           console.log(`skip    ${o.path} — uncommitted changes (use --force)`);
           break;
-        case "recent":
-          // Only an idle threshold produces this, and clean never sets one.
+        case "recent": {
+          // Merged can just mean nothing committed yet: an Investigate or
+          // Ask session still being read, or one still being created.
+          const minutes = Math.max(1, Math.round(o.idleMs / 60_000));
+          console.log(
+            `keep    ${o.branch} — touched ${minutes} minute${minutes === 1 ? "" : "s"} ago (use --recent to remove anyway)`,
+          );
           break;
+        }
         case "repo-error":
           console.log(`skip    ${o.repoPath} — ${o.message}`);
           break;
@@ -934,7 +958,7 @@ async function clean(options: { force: boolean; all: boolean }): Promise<void> {
   });
 
   const removed = outcomes.filter((o) => o.kind === "removed").length;
-  const kept = outcomes.filter((o) => o.kind === "not-merged" || o.kind === "dirty").length;
+  const kept = outcomes.filter((o) => o.kind === "not-merged" || o.kind === "dirty" || o.kind === "recent").length;
   console.log(
     `\nRemoved ${removed} worktree${removed === 1 ? "" : "s"}` +
       (kept > 0 ? `, kept ${kept}.` : "."),
