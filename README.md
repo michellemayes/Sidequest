@@ -200,7 +200,7 @@ It picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest sessions` | List every worktree Sidequest created (in Slack, **⌃⇧S** shows your recent ones) |
 | `sidequest reopen [ref]` | Reopen a session's terminal (the latest if you name none). Headless, it opens the answer, or the log while it's still running |
 | `sidequest stats` | Your total, today's count, current and best streak |
-| `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force`. Turn on `autoClean` and the daemon does this for you |
+| `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force`, or anything touched in the last hour unless you pass `--recent`. Turn on `autoClean` and the daemon does this for you |
 | `sidequest link <path> -c <channel>` | Link a repo to a channel from the terminal. Linking a second repo adds it; the first stays the default |
 | `sidequest unlink [repo] -c <channel>` | Unlink one repo (by path or label) from a channel, or all of them if you name none |
 | `sidequest replies [on\|off]` | Show the thread replies sessions post, or turn them on or off |
@@ -394,12 +394,14 @@ how to install it if that fails.
 removes the ones whose branch is merged into the base, deleting the branch too
 (with `git branch -d`, which refuses one holding commits the base doesn't
 have), and never a worktree with uncommitted changes unless you pass `--force`.
+It also leaves alone anything touched in the last hour: Investigate, Review and
+Ask commit nothing, so their branch counts as merged the moment it's cut, while
+the agent may still be working in it or you may still be reading what it
+found. Pass `--recent` when you know they're done.
 
 Turn on `autoClean` and the running daemon does the same every six hours, by
-the same rules, plus one more: it leaves a worktree alone until nothing has
-touched it for `autoCleanAfterDays`. Investigate, Review and Ask commit
-nothing, so their branch counts as merged the moment it's cut, while you may
-still be reading what the agent found. It never fetches, so "merged" means
+the same rules, except that it waits until nothing has touched a worktree for
+`autoCleanAfterDays` rather than an hour. It never fetches, so "merged" means
 merged into the base as of your last session's fetch, and it logs what it
 removed to `~/.sidequest/sidequest.log`. It's off by default, since deleting
 directories should be something you ask for. Until you turn it on,
