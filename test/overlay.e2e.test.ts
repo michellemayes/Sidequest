@@ -253,6 +253,9 @@ describeIfChrome("overlay over CDP", () => {
   }
 
   const UI = "document.getElementById('sidequest-layer').shadowRoot";
+  /** What matches a selector in the chips drawn inside messages, each in a shadow root of its own. */
+  const INLINE =
+    "((sel) => Array.from(document.querySelectorAll('sidequest-inline')).flatMap((h) => Array.from(h.shadowRoot.querySelectorAll(sel))))";
 
   /** The overlay only draws on hover, so the tests move a pointer first. */
   async function hover(session: CdpSession, id: string | null): Promise<void> {
@@ -265,7 +268,7 @@ describeIfChrome("overlay over CDP", () => {
    * Whether any shown overlay element matching `selector` covers the text of
    * a row — the words someone wrote, not just the row's box.
    */
-  function coversText(selector: string, rowId: string): string {
+  function coversText(selector: string, rowId: string, from = `((sel) => ${UI}.querySelectorAll(sel))`): string {
     return `(() => {
       const content = document.getElementById('${rowId}').querySelector('[data-qa="message_content"]');
       const range = document.createRange();
@@ -276,7 +279,7 @@ describeIfChrome("overlay over CDP", () => {
         range.selectNodeContents(n);
         ink.push(...Array.from(range.getClientRects()));
       }
-      return Array.from(${UI}.querySelectorAll('${selector}'))
+      return Array.from(${from}('${selector}'))
         .filter((el) => !el.classList.contains('sq-off'))
         .map((el) => el.getBoundingClientRect())
         .some((a) => ink.some((b) =>
@@ -456,7 +459,7 @@ describeIfChrome("overlay over CDP", () => {
       const deadline = Date.now() + 25_000;
       while (Date.now() < deadline) {
         text = String(
-          (await evaluate(session, `${UI}.querySelector('.sq-result')?.textContent || ''`)) ?? "",
+          (await evaluate(session, `${INLINE}('.sq-result:not(.sq-off)')[0]?.textContent || ''`)) ?? "",
         );
         if (text && !text.startsWith("Starting")) break;
         await sleep(300);
@@ -465,24 +468,37 @@ describeIfChrome("overlay over CDP", () => {
       // The branch name is built from the message text, which came off the DOM.
       expect(text).toContain("fix/checkout-total-is-wrong-for-gift-cards");
 
-      // The result is drawn against the message it belongs to, at its bottom
-      // edge: beside the last line where the words leave room, on a line of
-      // its own under them where they do not. Never over what anyone wrote.
+      // The result is part of the message it belongs to: one element of the
+      // overlay's own right after the message's content, under the words, and
+      // the pill keeps clear of it.
       const anchored = await evaluate(
         session,
         `(() => {
-           const line = ${UI}.querySelector('.sq-result').getBoundingClientRect();
+           const content = document.querySelector('#row-1 [data-qa="message_content"]');
+           const chip = content.nextElementSibling;
+           const line = chip.shadowRoot.querySelector('.sq-result').getBoundingClientRect();
            const btn = ${UI}.querySelector('.sq-launch').getBoundingClientRect();
-           const row = document.getElementById('row-1').getBoundingClientRect();
+           const text = content.querySelector('.p-rich_text_section').getBoundingClientRect();
            return JSON.stringify({
-             atBottom: Math.abs(row.bottom - line.bottom) <= line.height,
-             clearOfButton: line.right <= btn.left - 2 || line.top >= btn.bottom - 1,
+             inline: chip.localName,
+             inRow: document.getElementById('row-1').contains(chip),
+             underText: line.top >= text.bottom - 1,
+             clearOfButton: line.right <= btn.left - 2 || line.top >= btn.bottom - 1 || line.bottom <= btn.top + 1,
            });
          })()`,
       );
-      expect(JSON.parse(String(anchored))).toEqual({ atBottom: true, clearOfButton: true });
-      expect(await evaluate(session, coversText(".sq-result", "row-1"))).toBe(false);
-      expect(await evaluate(session, coversText(".sq-result", "row-2"))).toBe(false);
+      expect(JSON.parse(String(anchored))).toEqual({
+        inline: "sidequest-inline",
+        inRow: true,
+        underText: true,
+        clearOfButton: true,
+      });
+      expect(await evaluate(session, coversText(".sq-result", "row-1", INLINE))).toBe(false);
+      expect(await evaluate(session, coversText(".sq-result", "row-2", INLINE))).toBe(false);
+      // The message text read off the row is still only what was written.
+      expect(
+        await evaluate(session, `document.querySelector('#row-1 [data-qa="message_content"]').innerText.trim()`),
+      ).toBe("Checkout total is wrong for gift cards");
 
       const { stdout } = await exec("git", ["branch", "--list"], { cwd: repoPath });
       expect(stdout).toContain("fix/checkout-total-is-wrong-for-gift-cards");
@@ -506,7 +522,7 @@ describeIfChrome("overlay over CDP", () => {
     const { attacher, session } = await attachAndEval();
     try {
       await sleep(600);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
 
       // Every line of row-4 runs to the right edge, so the pill has nowhere
       // beside the words to go.
@@ -532,7 +548,7 @@ describeIfChrome("overlay over CDP", () => {
     const { attacher, session } = await attachAndEval();
     try {
       await sleep(600);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       await evaluate(session, "window.__pinToComposer(true)");
       await sleep(100);
 
@@ -568,7 +584,7 @@ describeIfChrome("overlay over CDP", () => {
     const { attacher, session } = await attachAndEval();
     try {
       await sleep(600);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
 
       // Not on a message with no ticket in it.
       await hover(session, "row-1");
@@ -601,8 +617,8 @@ describeIfChrome("overlay over CDP", () => {
       // Named for the ticket, so Linear links the branch back to it.
       expect(text).toContain("Linear DATA-3051 → linear/data-3051-quiet-the-flapping-alarm");
       // And the line has its own line, under a message that runs edge to edge.
-      expect(await evaluate(session, coversText(".sq-result", "row-3"))).toBe(false);
-      expect(await evaluate(session, coversText(".sq-result", "row-4"))).toBe(false);
+      expect(await evaluate(session, coversText(".sq-result", "row-3", INLINE))).toBe(false);
+      expect(await evaluate(session, coversText(".sq-result", "row-4", INLINE))).toBe(false);
 
       const worktrees = await exec("git", ["worktree", "list"], { cwd: repoPath });
       const line = worktrees.stdout.split("\n").find((l) => l.includes("data-3051"));
@@ -621,7 +637,7 @@ describeIfChrome("overlay over CDP", () => {
     const original = String(await evaluate(session, `${section}.innerHTML`));
     try {
       await sleep(600);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       // A message of its own, linking three tickets: only the first two are offered.
       await evaluate(session, "window.__recycle('row-2', 'x', '1757438888.000800')");
       await evaluate(
@@ -652,7 +668,7 @@ describeIfChrome("overlay over CDP", () => {
       // The key leads the branch, upper-case, so Jira's development panel finds it.
       expect(jira).toContain("Jira OPS-7 → jira/OPS-7-dupe-of-123");
 
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       await hover(session, "row-2");
       await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
       await sleep(150);
@@ -673,7 +689,7 @@ describeIfChrome("overlay over CDP", () => {
     } finally {
       await evaluate(session, `${section}.innerHTML = ${JSON.stringify(original)}`);
       await evaluate(session, "window.__recycle('row-2', 'only on the EU store', '1757430060.000200')");
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       attacher.stop();
       session.close();
     }
@@ -686,9 +702,9 @@ describeIfChrome("overlay over CDP", () => {
 
       // Results from earlier tests are still on screen — this page is never
       // reloaded. Their × dismisses them, which is also how a reader does it.
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       await sleep(150);
-      expect(await evaluate(session, `${UI}.querySelectorAll('.sq-result').length`)).toBe(0);
+      expect(await evaluate(session, `${INLINE}('.sq-result:not(.sq-off)').length`)).toBe(0);
 
       await hover(session, "row-2");
       await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
@@ -702,7 +718,7 @@ describeIfChrome("overlay over CDP", () => {
       const deadline = Date.now() + 25_000;
       while (Date.now() < deadline) {
         text = String(
-          (await evaluate(session, `${UI}.querySelector('.sq-result')?.textContent || ''`)) ?? "",
+          (await evaluate(session, `${INLINE}('.sq-result:not(.sq-off)')[0]?.textContent || ''`)) ?? "",
         );
         if (text && !text.startsWith("Starting")) break;
         await sleep(300);
@@ -714,7 +730,7 @@ describeIfChrome("overlay over CDP", () => {
       await sleep(800);
 
       // The old result must not still be sitting under someone else's message.
-      const results = await evaluate(session, `${UI}.querySelectorAll('.sq-result').length`);
+      const results = await evaluate(session, `${INLINE}('.sq-result:not(.sq-off)').length`);
       expect(results).toBe(0);
     } finally {
       attacher.stop();
@@ -982,7 +998,7 @@ describeIfChrome("overlay over CDP", () => {
       text = String(
         (await evaluate(
           session,
-          `${UI}.querySelector('.sq-result:not([data-kind="busy"]) .sq-result-text')?.textContent || ''`,
+          `${INLINE}('.sq-result:not(.sq-off):not([data-kind="busy"]) .sq-result-text')[0]?.textContent || ''`,
         )) ?? "",
       );
       if (text) break;
@@ -1000,7 +1016,7 @@ describeIfChrome("overlay over CDP", () => {
     const { attacher, session } = await attachAndEval();
     try {
       await sleep(600);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       await evaluate(session, "window.__shortcuts.length = 0");
 
       await hover(session, "row-1");
@@ -1028,10 +1044,10 @@ describeIfChrome("overlay over CDP", () => {
       expect(posts).toEqual([]);
 
       // Once the line is dismissed, the message keeps a quiet mark instead…
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       await sleep(300);
       const mark = await evaluate(session, `(() => {
-        const marks = Array.from(${UI}.querySelectorAll('.sq-mark')).filter((m) => !m.classList.contains('sq-off'));
+        const marks = ${INLINE}('.sq-mark').filter((m) => !m.classList.contains('sq-off'));
         const row = document.getElementById('row-1').getBoundingClientRect();
         const hit = marks.find((m) => {
           const r = m.getBoundingClientRect();
@@ -1068,7 +1084,7 @@ describeIfChrome("overlay over CDP", () => {
     const { attacher, session } = await attachAndEval();
     try {
       await sleep(600);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       // Slack's client keeps the workspace and its session token here.
       await evaluate(session, `localStorage.setItem('localConfig_v2', JSON.stringify({
         teams: { T0SMOKE: { url: location.origin + '/', token: 'xoxc-test' } },
@@ -1106,7 +1122,7 @@ describeIfChrome("overlay over CDP", () => {
   /** The text of the mark drawn on a row, or '' when there is none. */
   function markOn(rowId: string): string {
     return `(() => {
-      const marks = Array.from(${UI}.querySelectorAll('.sq-mark')).filter((m) => !m.classList.contains('sq-off'));
+      const marks = ${INLINE}('.sq-mark').filter((m) => !m.classList.contains('sq-off'));
       const row = document.getElementById('${rowId}').getBoundingClientRect();
       const hit = marks.find((m) => {
         const r = m.getBoundingClientRect();
@@ -1131,7 +1147,7 @@ describeIfChrome("overlay over CDP", () => {
     const { attacher, session } = await attachAndEval();
     try {
       await sleep(600);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       // Here the fixture's own server plays Slack's file host.
       await evaluate(session, `window.__sidequestSetConfig(JSON.stringify({ fileHosts: '^127\\\\.0\\\\.0\\\\.1$' }))`);
       // A screenshot the way Slack draws one: a thumbnail inside a link to the original.
@@ -1171,7 +1187,7 @@ describeIfChrome("overlay over CDP", () => {
     const { attacher, session } = await attachAndEval({ watchIntervalMs: 300 });
     try {
       await sleep(600);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       await evaluate(session, `localStorage.setItem('localConfig_v2', JSON.stringify({
         teams: { T0SMOKE: { url: location.origin + '/', token: 'xoxc-test' } },
       }))`);
@@ -1181,7 +1197,7 @@ describeIfChrome("overlay over CDP", () => {
       await sleep(150);
       await press(session, "1", "Digit1", 49);
       expect(await settledResult(session)).toContain("investigate/checkout-total");
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       // The pointer moves on, as it would, and leaves the mark its corner.
       await hover(session, null);
 
@@ -1201,7 +1217,7 @@ describeIfChrome("overlay over CDP", () => {
 
       // The mark opens the reply to read, in Slack's markup, before it posts.
       await evaluate(session, `(() => {
-        const mark = Array.from(${UI}.querySelectorAll('.sq-mark')).find((m) => m.textContent.includes('reply ready'));
+        const mark = ${INLINE}('.sq-mark').find((m) => m.textContent.includes('reply ready'));
         mark.click();
       })()`);
       const draft = await waitFor(session, `${UI}.querySelector('.sq-reply-input')?.value || ''`, Boolean);
@@ -1248,7 +1264,7 @@ describeIfChrome("overlay over CDP", () => {
     const { attacher, session } = await attachAndEval({ watchIntervalMs: 300 });
     try {
       await sleep(600);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       await evaluate(session, `localStorage.setItem('localConfig_v2', JSON.stringify({
         teams: { T0SMOKE: { url: location.origin + '/', token: 'xoxc-test' } },
       }))`);
@@ -1294,7 +1310,7 @@ describeIfChrome("overlay over CDP", () => {
     const { attacher, session } = await attachAndEval();
     try {
       await sleep(600);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       await hover(session, "row-1");
       await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
       await sleep(150);
@@ -1320,7 +1336,7 @@ describeIfChrome("overlay over CDP", () => {
     const { attacher, session } = await attachAndEval();
     try {
       await sleep(600);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       await evaluate(session, `localStorage.setItem('localConfig_v2', JSON.stringify({
         teams: { T0SMOKE: { url: location.origin + '/', token: 'xoxc-test' } },
       }))`);
@@ -1355,7 +1371,7 @@ describeIfChrome("overlay over CDP", () => {
     const { attacher, session } = await attachAndEval();
     try {
       await sleep(600);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       await evaluate(session, "window.__shortcuts.length = 0");
 
       await hover(session, "row-1");
@@ -1403,7 +1419,7 @@ describeIfChrome("overlay over CDP", () => {
     const { attacher, session } = await attachAndEval();
     try {
       await sleep(600);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       await hover(session, "row-2");
       await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
       await sleep(150);
@@ -1414,7 +1430,7 @@ describeIfChrome("overlay over CDP", () => {
       await press(session, "Escape", "Escape", 27);
       await sleep(100);
       expect(await evaluate(session, `!!${UI}.querySelector('.sq-menu')`)).toBe(false);
-      expect(await evaluate(session, `${UI}.querySelectorAll('.sq-result').length`)).toBe(0);
+      expect(await evaluate(session, `${INLINE}('.sq-result:not(.sq-off)').length`)).toBe(0);
     } finally {
       attacher.stop();
       session.close();
@@ -1556,7 +1572,7 @@ describeIfChrome("overlay over CDP", () => {
       // The fixture page outlives each test, overlay and all; hand it this config.
       await attacher.broadcastConfig();
       await sleep(150);
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
 
       // The pill says there is more than one.
       expect(await evaluate(session, `${UI}.querySelector('.sq-channel .sq-channel-label').textContent`))
@@ -1595,7 +1611,7 @@ describeIfChrome("overlay over CDP", () => {
       expect(main.stdout).not.toContain("fix/checkout-total-is-wrong-for-gift-cards");
 
       // The next menu in this channel opens on the repo just used.
-      await evaluate(session, `${UI}.querySelectorAll('.sq-result-x').forEach((el) => el.click())`);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       await hover(session, "row-2");
       await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
       await sleep(150);

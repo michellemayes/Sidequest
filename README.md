@@ -73,7 +73,8 @@ It opens on the repo the channel's last session used.
 
 A toast confirms the launch with your running count, today's count and your
 day streak. The branch name, or the error if something went wrong, shows up
-under the message; click it to reopen the session, or **×** to dismiss it.
+as a chip inside the message, under its text, like a reaction; click it to
+reopen the session, or **×** to dismiss it.
 
 Messages you've already started a session from keep a small **✦ Fix** mark.
 Click it to jump back into that session. Its menu also leads with **Back to Fix**,
@@ -175,8 +176,10 @@ one. The shell hook, `warpStrategy` and `warpPreview` only matter for the Warp a
 
 <img src="docs/demo/menu.png" width="720" alt="The Sidequest menu open on a message, with Investigate, Fix and Review">
 
-The overlay sits in its own shadow-DOM layer and never modifies Slack's DOM. It
-picks up your Slack theme and moves out of the way of Slack's own buttons.
+The overlay sits in its own shadow-DOM layer. The one thing it puts into
+Slack's DOM is that chip: a single element after a message's content, with its
+own shadow root, so it scrolls with the message instead of floating over it.
+It picks up your Slack theme and moves out of the way of Slack's own buttons.
 
 ## CLI
 
