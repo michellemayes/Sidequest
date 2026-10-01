@@ -43,6 +43,8 @@
     repoLabels: {},
     lastRepos: {},
     agentLabel: 'Claude Code',
+    agentHost: 'Warp',
+    agentInApp: false,
     sessions: {},
     stats: { total: 0, today: 0, streak: 0 },
     postResults: 'ask',
@@ -1331,7 +1333,7 @@
           reopen(entry.branch, sig);
           schedule();
         });
-        again.title = `Open ${entry.branch} in Warp again`;
+        again.title = `Open ${entry.branch} in ${CONFIG.agentHost} again`;
         spans(again, [['sq-glyph', '↩'], ['', `Back to ${entry.label || 'session'}`], ['sq-sub', shortBranch(entry.branch)]]);
         menu.append(again);
       }
@@ -1803,8 +1805,10 @@
   function celebrate(prompt, res) {
     const s = res.stats;
     const where = res.warning
-      ? 'Worktree ready — Warp did not open'
-      : `${CONFIG.agentLabel} is starting in Warp`;
+      ? `Worktree ready — ${CONFIG.agentHost} did not open`
+      : CONFIG.agentInApp
+        ? `Prompt ready in ${CONFIG.agentHost} — press Enter there to start`
+        : `${CONFIG.agentLabel} is starting in ${CONFIG.agentHost}`;
     if (!s) {
       toast({ title: `${prompt.label} is underway`, sub: where, burst: true });
       return;
@@ -2725,7 +2729,7 @@
     open.className = 'sq-session-open';
     open.title = s.state === 'gone'
       ? `${s.branch}'s worktree was deleted — × drops what git still keeps of it`
-      : `Open ${s.branch} in Warp again`;
+      : `Open ${s.branch} in ${CONFIG.agentHost} again`;
 
     const top = document.createElement('span');
     top.className = 'sq-session-top';
@@ -2842,7 +2846,7 @@
     });
   }
 
-  /** Into Warp: the panel has done its job, so it gets out of the way. */
+  /** Into the agent: the panel has done its job, so it gets out of the way. */
   function reopenFromPanel(s) {
     closeSessions();
     schedule();
@@ -2851,7 +2855,7 @@
         toast({ title: 'Could not reopen that session', sub: res.hint ? `${res.error} ${res.hint}` : res.error, kind: 'error' });
         return;
       }
-      toast({ title: `Back in ${res.branch || s.branch}`, sub: 'Opening it in Warp.' });
+      toast({ title: `Back in ${res.branch || s.branch}`, sub: `Opening it in ${CONFIG.agentHost}.` });
     }).catch((err) => {
       toast({ title: 'Could not reopen that session', sub: err.message, kind: 'error' });
     });
@@ -3025,7 +3029,7 @@
         text.textContent = entry.text;
         // The line is one line wide; the tooltip is where all of it lives.
         el.title = entry.branch
-          ? `${entry.text}\n\nClick to open ${entry.branch} in Warp again.`
+          ? `${entry.text}\n\nClick to open ${entry.branch} in ${CONFIG.agentHost} again.`
           : entry.text;
       }
       if (el.dataset.kind !== entry.kind) el.dataset.kind = entry.kind;
@@ -3074,7 +3078,7 @@
         el.title = `Sidequested → ${last.branch}` +
           (list.length > 1 ? ` (and ${list.length - 1} more)` : '') +
           (detail ? `\n${detail}` : '') +
-          (last.status && last.status.reply ? '\nClick to review the reply.' : '\nClick to open it in Warp again.');
+          (last.status && last.status.reply ? '\nClick to review the reply.' : `\nClick to open it in ${CONFIG.agentHost} again.`);
         const state = (last.status && last.status.state) || '';
         if (state) el.dataset.state = state;
         else delete el.dataset.state;

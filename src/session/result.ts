@@ -30,8 +30,7 @@ export function resultInstructions(mode: PostResults): string {
   return `
 
 ## When you are done
-Write a short reply for the Slack thread this came from to \`${SESSION_DIR}/${RESULT_FILE}\` (git ignores it): what you found or what you changed and why, in a few sentences of Markdown, written for whoever asked. ${who}, so do not sign it or address me. Leave it out if you stopped to ask me something; write it again if we pick the work back up and the answer changes.
-`;
+Write a short reply for the Slack thread this came from to \`${SESSION_DIR}/${RESULT_FILE}\` (git ignores it): what you found or what you changed and why, in a few sentences of Markdown, written for whoever asked. ${who}, so do not sign it or address me. Leave it out if you stopped to ask me something; write it again if we pick the work back up and the answer changes.`;
 }
 
 export interface ResultFile {
