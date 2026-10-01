@@ -20,7 +20,7 @@ import { strategyOrder } from "./warp/launcher.js";
 import { findSession, openSession } from "./session/reopen.js";
 import { computeStats, latestSession, loadHistory, MILESTONES } from "./session/history.js";
 import { AutoCleaner, finishedWorktrees, PILE_UP_AT, sweepWorktrees } from "./session/cleanup.js";
-import { AGENT_DEFINITIONS, agentDefinition, describeInvocation, resolveAgent } from "./agents/agents.js";
+import { AGENT_DEFINITIONS, agentDefinition, describeAgent, resolveAgent } from "./agents/agents.js";
 import {
   clearDaemonRecord,
   daemonAlive,
@@ -63,7 +63,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .name("sidequest")
-    .description("Turn any Slack message into an agent session in a fresh git worktree, opened in Warp.")
+    .description("Turn any Slack message into an agent session in a fresh git worktree, opened in Warp or a desktop app.")
     .version("0.1.0");
 
   program
@@ -91,7 +91,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("agents [id]")
-    .description("list the coding agents Sidequest can launch, or switch to one (claude, codex, gemini, aider, ...)")
+    .description("list the coding agents Sidequest can launch, or switch to one (claude, codex, gemini, aider, claude-desktop, ...)")
     .action((id: string | undefined) => wrap(() => agents(id)));
 
   program
@@ -101,7 +101,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("reopen [ref]")
-    .description("open Warp on a session again (branch name or path; default: the latest)")
+    .description("open Warp (or the agent's app) on a session again (branch name or path; default: the latest)")
     .action((ref: string | undefined) => wrap(() => reopen(ref)));
 
   program
@@ -312,7 +312,7 @@ async function status(): Promise<void> {
     if (attached !== null) console.log(`Slack windows with the overlay: ${attached}`);
     console.log(`Log: ${daemonLogFile()}`);
   }
-  console.log(`Agent: ${agent.label} (${describeInvocation(agent)})`);
+  console.log(`Agent: ${agent.label} (${describeAgent(agent)})`);
   console.log(`Linked channels: ${Object.keys(config.channels).length}`);
   const s = computeStats(await loadHistory());
   if (s.total > 0) {
@@ -366,7 +366,7 @@ async function agents(id?: string): Promise<void> {
       // A custom command belongs to the previous agent; don't carry it over.
       if (config.settings.agent.id !== def.id) config.settings.agent = { id: def.id, command: "", args: [] };
     });
-    console.log(`New sessions will use ${def.label}. A running daemon picks this up on the next click.`);
+    console.log(`New sessions will use ${def.label} in ${def.host}. A running daemon picks this up on the next click.`);
     return;
   }
 
@@ -376,12 +376,13 @@ async function agents(id?: string): Promise<void> {
   for (const def of AGENT_DEFINITIONS) {
     const marker = def.id === activeId ? "  (active)" : "";
     console.log(`  ${def.id}${marker}`);
-    const invocation = describeInvocation(resolveAgent({ id: def.id, command: "", args: [] }));
-    console.log(`    ${def.label} — ${invocation}`);
+    const description = describeAgent(resolveAgent({ id: def.id, command: "", args: [] }));
+    console.log(`    ${def.label} — ${def.app ? description : `${description}, in Warp`}`);
   }
   console.log("\nSwitch with `sidequest agents <id>`, or in " + `${configFile()}:`);
   console.log(`  { "settings": { "agent": { "id": "gemini" } } }`);
-  console.log("`command` and `args` override the agent's executable and flags; the prompt still goes last.");
+  console.log("`command` and `args` override a Warp agent's executable and flags; the prompt still goes last.");
+  console.log("An app agent opens a new session in the worktree with the prompt ready; press Enter there to start it.");
 }
 
 async function replies(state?: string): Promise<void> {
@@ -413,7 +414,7 @@ async function replies(state?: string): Promise<void> {
 }
 
 /**
- * Open Warp on a worktree Sidequest created earlier, by branch name or path —
+ * Open Warp (or the agent's app) on a worktree Sidequest created earlier, by branch name or path —
  * or, with nothing named, the most recent one. Handy when Warp opened in the
  * wrong place or the agent never started: if the session's pending marker is
  * still unclaimed, the shell hook starts the agent on arrival.
@@ -442,7 +443,7 @@ async function reopen(ref: string | undefined): Promise<void> {
     );
   }
   const launch = await openSession(config, found);
-  console.log(`Opened Warp on ${found.worktree.path} (${launch.strategy}).`);
+  console.log(`Opened ${launch.host} on ${found.worktree.path} (${launch.strategy}).`);
   if (launch.agentStarted === false) {
     console.log("The agent did not start. Run `sidequest install-hook`, open a new Warp tab there, or run .sidequest/autorun.sh.");
   }
@@ -770,7 +771,7 @@ async function list(): Promise<void> {
   console.log("settings");
   console.log(`  worktreesRoot:  ${config.settings.worktreesRoot}`);
   console.log(`  warpStrategy:   ${config.settings.warpStrategy}${config.settings.warpPreview ? " (preview)" : ""}`);
-  console.log(`  agent:          ${agent.label} (${describeInvocation(agent)})`);
+  console.log(`  agent:          ${agent.label} (${describeAgent(agent)})`);
   console.log(`  threadContext:  ${config.settings.threadContextLimit} messages`);
   console.log(
     `  autoClean:      ${config.settings.autoClean ? `on, after ${config.settings.autoCleanAfterDays} idle days` : "off"}`,
@@ -972,6 +973,18 @@ const PROMPT_TOKENS = [
   "question",
 ] as const;
 
+/**
+ * Whether one of these apps is installed; null where there is no way to ask.
+ * `open -Ra` finds an app by name without launching it.
+ */
+async function appInstalled(names: string[]): Promise<boolean | null> {
+  if (platform() !== "darwin") return null;
+  for (const name of names) {
+    if (await succeeds("open", ["-Ra", name])) return true;
+  }
+  return false;
+}
+
 async function doctor(): Promise<void> {
   const config = await loadConfig();
   let problems = 0;
@@ -987,12 +1000,22 @@ async function doctor(): Promise<void> {
   check(await succeeds("git", ["--version"]), "git", "required to create worktrees");
 
   const agent = resolveAgent(config.settings.agent);
-  const agentOk = await succeeds(agent.command, ["--version"]);
-  check(
-    agentOk,
-    `${agent.label} (${agent.command})`,
-    agentOk ? "" : agentDefinition(agent.id).installHint,
-  );
+  if (agent.app) {
+    const installed = await appInstalled(agent.app.appNames);
+    if (installed === null) {
+      console.log(`  --   ${agent.label} in ${agent.host}`);
+      console.log(`       can't check for the app on ${platform()}. ${agentDefinition(agent.id).installHint}`);
+    } else {
+      check(installed, `${agent.label} in ${agent.host}`, installed ? "" : agentDefinition(agent.id).installHint);
+    }
+  } else {
+    const agentOk = await succeeds(agent.command, ["--version"]);
+    check(
+      agentOk,
+      `${agent.label} (${agent.command})`,
+      agentOk ? "" : agentDefinition(agent.id).installHint,
+    );
+  }
 
   const opener = uriOpener();
   check(

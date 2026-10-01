@@ -14,7 +14,9 @@
  *      or repos: a channel can have several, and the menu then asks which.
  * And three that follow from them: a line on a message while its session
  * starts, a quiet mark on every message that already has one (click it to be
- * back in that session), and a toast when a session lands.
+ * back in that session), and a toast when a session lands. Then the sessions
+ * panel (⌃⇧S, or from the channel button's panel): your recent sessions that
+ * still have a worktree, to reopen or to remove once they are done.
  *
  * Both are drawn in a layer of sidequest's own: one zero-sized, pointer-events:
  * none host at the end of <body>, with a shadow root holding every element and
@@ -41,6 +43,8 @@
     repoLabels: {},
     lastRepos: {},
     agentLabel: 'Claude Code',
+    agentHost: 'Warp',
+    agentInApp: false,
     sessions: {},
     stats: { total: 0, today: 0, streak: 0 },
     verbose: false,
@@ -60,6 +64,14 @@
   const PANEL_SUGGESTIONS = 6;
   // What the overlay leaves between itself and anything of Slack's.
   const GAP = 8;
+  /*
+   * The sessions panel's shortcut: Control-Shift-S. Slack on the Mac binds its
+   * own shortcuts to Command, and macOS's text-editing keys are Control with
+   * no Shift, so this chord is free on both counts.
+   */
+  const isSessionsKey = (event) => event.ctrlKey && event.shiftKey && !event.metaKey && !event.altKey
+    && event.code === 'KeyS';
+  const SESSIONS_KEY_LABEL = '⌃⇧S';
 
   const SEL = {
     item: '[data-qa="virtual-list-item"]',
@@ -402,6 +414,63 @@
       background: transparent; border: 0; border-radius: 3px; cursor: pointer;
     }
     .sq-linked-x:hover { opacity: 1; background: var(--sq-wash); }
+    /* A panel's title with a quiet way elsewhere beside it: from a channel's
+       repos to every session, and back. */
+    .sq-panel-head { display: flex; align-items: baseline; gap: 8px; }
+    .sq-panel-head .sq-panel-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sq-panel-aside {
+      flex: 0 0 auto; margin: 0 0 0 auto; padding: 0 6px;
+      font-family: inherit; font-size: 11px; line-height: 18px;
+      color: inherit; opacity: .6;
+      background: transparent; border: 0; border-radius: 4px; cursor: pointer;
+    }
+    .sq-panel-aside:hover { opacity: 1; background: var(--sq-wash); }
+
+    /* The sessions panel: the panel's frame, a list in it. */
+    .sq-sessions { width: 360px; }
+    .sq-sessions-list {
+      display: flex; flex-direction: column; gap: 1px;
+      max-height: min(360px, 60vh); overflow-y: auto; margin: 0 -4px;
+    }
+    .sq-session { display: flex; align-items: flex-start; gap: 2px; border-radius: 5px; }
+    .sq-session:hover, .sq-session[data-active="1"] { background: var(--sq-wash); }
+    .sq-session[data-busy="1"] { opacity: .5; pointer-events: none; }
+    .sq-session-open {
+      display: flex; flex-direction: column; gap: 1px;
+      flex: 1 1 auto; min-width: 0; padding: 5px 4px 5px 8px; margin: 0;
+      font-family: inherit; font-size: 12px; line-height: 16px;
+      color: inherit; text-align: left;
+      background: transparent; border: 0; border-radius: 5px; cursor: pointer;
+    }
+    .sq-session-top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+    .sq-session-branch { min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sq-session-meta { font-size: 11px; opacity: .65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sq-session-state { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+    .sq-session-state:empty { display: none; }
+    .sq-chip {
+      padding: 0 6px; font-size: 10px; line-height: 15px;
+      border: 1px solid var(--sq-line); border-radius: 8px; opacity: .8;
+    }
+    .sq-chip[data-tone="ok"] { color: var(--sq-ok); border-color: color-mix(in srgb, var(--sq-ok) 45%, transparent); opacity: 1; }
+    .sq-chip[data-tone="warn"] { color: #e8912d; border-color: color-mix(in srgb, #e8912d 45%, transparent); opacity: 1; }
+    .sq-chip[data-tone="bad"] { color: var(--sq-bad); border-color: color-mix(in srgb, var(--sq-bad) 45%, transparent); opacity: 1; }
+    .sq-session-x {
+      flex: 0 0 auto; margin: 4px 4px 0 0; padding: 0 6px;
+      font: inherit; font-size: 13px; line-height: 20px; color: inherit; opacity: .4;
+      background: transparent; border: 0; border-radius: 3px; cursor: pointer;
+    }
+    .sq-session-x:hover { opacity: 1; background: var(--sq-wash); }
+    /* Asking before removing, in the row itself, so what is being removed
+       stays in view while the question is asked. */
+    .sq-session-confirm {
+      display: flex; flex-direction: column; gap: 6px;
+      flex: 1 1 auto; min-width: 0; padding: 6px 8px;
+      font-size: 12px; line-height: 16px;
+    }
+    .sq-session[data-confirm="force"] { box-shadow: inset 2px 0 0 var(--sq-bad); }
+    .sq-session-confirm .sq-panel-actions { margin: 0; }
+    .sq-panel-actions button[data-danger="1"] { color: #fff; background: var(--sq-bad); border-color: var(--sq-bad); }
+    .sq-panel-actions button[data-danger="1"]:hover { background: color-mix(in srgb, var(--sq-bad) 85%, #000); }
   `;
 
   /* ----------------------------------------------------------------- layer */
@@ -415,6 +484,7 @@
   let menuSig = '';
   let menuIndex = -1;
   let panelEl = null;
+  let sessionsEl = null;
   /** Keys for whichever text box holds the keyboard: the path box or the Ask box. */
   let boxKeys = null;
   let toastEl = null;
@@ -432,6 +502,7 @@
     menuSig = '';
     menuIndex = -1;
     panelEl = null;
+    sessionsEl = null;
     boxKeys = null;
     toastEl = null;
     themeSig = '';
@@ -556,6 +627,8 @@
     } catch {
       return;
     }
+    // A broadcast follows every new session, so an open list catches up.
+    if (sessionsEl) loadSessions();
     schedule();
   };
 
@@ -1060,6 +1133,7 @@
   function openMenu(row) {
     closeMenu();
     closePanel();
+    closeSessions();
 
     const menu = document.createElement('div');
     menu.className = 'sq-menu';
@@ -1114,7 +1188,7 @@
           reopen(entry.branch, sig);
           schedule();
         });
-        again.title = `Open ${entry.branch} in Warp again`;
+        again.title = `Open ${entry.branch} in ${CONFIG.agentHost} again`;
         spans(again, [['sq-glyph', '↩'], ['', `Back to ${entry.label || 'session'}`], ['sq-sub', shortBranch(entry.branch)]]);
         menu.append(again);
       }
@@ -1563,8 +1637,10 @@
   function celebrate(prompt, res) {
     const s = res.stats;
     const where = res.warning
-      ? 'Worktree ready — Warp did not open'
-      : `${CONFIG.agentLabel} is starting in Warp`;
+      ? `Worktree ready — ${CONFIG.agentHost} did not open`
+      : CONFIG.agentInApp
+        ? `Prompt ready in ${CONFIG.agentHost} — press Enter there to start`
+        : `${CONFIG.agentLabel} is starting in ${CONFIG.agentHost}`;
     if (!s) {
       toast({ title: `${prompt.label} is underway`, sub: where, burst: true });
       return;
@@ -1794,6 +1870,7 @@
   function openPanel(returnRow = null) {
     closeMenu();
     closePanel();
+    closeSessions();
 
     // From a message's menu, the message's channel: in Threads it is not the
     // page's.
@@ -1878,11 +1955,26 @@
     submit.textContent = current.length > 0 ? 'Add' : 'Link';
     actions.append(cancel, submit);
 
+    // The channel button is where the overlay's own business lives, so the
+    // sessions panel is reached from here as well as from its shortcut.
+    const head = document.createElement('div');
+    head.className = 'sq-panel-head';
+    const toSessions = document.createElement('button');
+    toSessions.type = 'button';
+    toSessions.className = 'sq-panel-aside sq-to-sessions';
+    toSessions.textContent = 'Sessions ›';
+    toSessions.title = `Your recent sessions, to reopen or clean up — ${SESSIONS_KEY_LABEL}`;
+    toSessions.addEventListener('click', (event) => {
+      stop(event);
+      openSessions();
+    });
+    head.append(title, toSessions);
+
     input.placeholder = current.length > 0
       ? 'Add a repo: search, or paste a path'
       : 'Search your repos, or paste a path';
     if (current.length === 0) hide(linked);
-    panel.append(title, linked, input, list, note, error, actions);
+    panel.append(head, linked, input, list, note, error, actions);
 
     let repos = [];
     let visible = [];
@@ -2053,11 +2145,12 @@
     const text = linked ? repo || 'Linked' : 'Link a repo';
     if (label.textContent !== text) label.textContent = text;
 
-    const title = linked
+    let title = linked
       ? repos.length > 1
         ? `#${channel} starts ${CONFIG.agentLabel} sessions in ${repos.join(', ')} — click to add or unlink`
         : `#${channel} starts ${CONFIG.agentLabel} sessions in ${repo} — click to add another or unlink`
       : `Link #${channel} to a git repo so messages can start ${CONFIG.agentLabel} sessions`;
+    title += `\n${SESSIONS_KEY_LABEL} lists your sessions`;
     if (channelBtn.title !== title) channelBtn.title = title;
 
     const box = channelAnchorBox(anchor);
@@ -2096,6 +2189,395 @@
     const header = document.querySelector(SEL.header);
     const top = header ? header.getBoundingClientRect().bottom + 8 : 12;
     placeAt(panelEl, (window.innerWidth - panelEl.offsetWidth) / 2, top);
+  }
+
+  /* -------------------------------------------------------- sessions panel */
+
+  /*
+   * What `sidequest sessions` knows, and a little more, without leaving Slack:
+   * your recent sessions that still have a worktree, newest first, each with
+   * where it came from and what state it is in. The daemon asks git for that
+   * state every time the panel opens, which takes a moment, so the last list
+   * it sent is drawn straight away in the meantime: opening the panel never
+   * waits on git to show something.
+   *
+   * Removing one follows `sidequest clean`'s rules, and the daemon is what
+   * enforces them, not this: uncommitted work is refused unless the request
+   * says to discard it, and the panel only says so once the reader has been
+   * shown how much would go and has clicked the button that says so.
+   */
+  let sessionsList = null;
+  let sessionsError = '';
+  let sessionsLoading = false;
+  let sessionsTicket = 0;
+  let sessionsIndex = -1;
+  /** The row asking whether to remove it: `{ id, dirty }`, dirty > 0 meaning discard. */
+  let confirming = null;
+  const removing = new Set();
+
+  function closeSessions() {
+    sessionsEl?.remove();
+    sessionsEl = null;
+    sessionsIndex = -1;
+    confirming = null;
+  }
+
+  function toggleSessions() {
+    if (sessionsEl) {
+      closeSessions();
+      schedule();
+    } else {
+      openSessions();
+    }
+  }
+
+  function openSessions() {
+    if (!ensureLayer()) return;
+    closeMenu();
+    closePanel();
+    closeSessions();
+
+    const panel = document.createElement('div');
+    panel.className = 'sq-panel sq-sessions';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', 'Sidequest sessions');
+    sessionsEl = panel;
+    ui.append(panel);
+    loadSessions();
+  }
+
+  function loadSessions() {
+    const ticket = ++sessionsTicket;
+    sessionsLoading = true;
+    renderSessions();
+    ask({ op: 'list-sessions' }).then((res) => {
+      if (ticket !== sessionsTicket) return;
+      if (res.error) {
+        sessionsError = res.hint ? `${res.error} ${res.hint}` : res.error;
+        return;
+      }
+      sessionsError = '';
+      sessionsList = Array.isArray(res.sessions) ? res.sessions : [];
+    }).catch((err) => {
+      if (ticket === sessionsTicket) sessionsError = err.message;
+    }).finally(() => {
+      if (ticket !== sessionsTicket) return;
+      sessionsLoading = false;
+      renderSessions();
+    });
+  }
+
+  /** Redrawn whole on every change: it is a dozen rows, and it keeps them honest. */
+  function renderSessions() {
+    const panel = sessionsEl;
+    if (!panel) return;
+    const previous = panel.querySelector('.sq-sessions-list');
+    const scrollTop = previous ? previous.scrollTop : 0;
+    const sessions = sessionsList || [];
+    sessionsIndex = Math.min(sessionsIndex, sessions.length - 1);
+    if (confirming && !sessions.some((s) => s.id === confirming.id)) confirming = null;
+
+    const head = document.createElement('div');
+    head.className = 'sq-panel-head';
+    const title = document.createElement('div');
+    title.className = 'sq-panel-title';
+    title.textContent = 'Sidequest sessions';
+    head.append(title);
+    if (currentChannel()) {
+      const repos = document.createElement('button');
+      repos.type = 'button';
+      repos.className = 'sq-panel-aside sq-to-repos';
+      repos.textContent = 'Repos ›';
+      repos.title = `The repos #${currentChannel()} starts sessions in`;
+      repos.addEventListener('click', (event) => {
+        stop(event);
+        openPanel(null);
+        schedule();
+      });
+      head.append(repos);
+    }
+
+    const list = document.createElement('div');
+    list.className = 'sq-sessions-list';
+    list.setAttribute('role', 'listbox');
+    sessions.forEach((s, i) => list.append(sessionRow(s, i)));
+    if (sessions.length === 0) hide(list);
+
+    const note = document.createElement('div');
+    note.className = 'sq-panel-note';
+    if (sessions.length === 0) {
+      note.textContent = sessionsLoading || !sessionsList
+        ? 'Checking your worktrees…'
+        : 'No sessions with a worktree left. Hover a message and click Sidequest to start one.';
+    } else {
+      note.textContent = `${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}` +
+        (sessionsLoading ? ' · checking…' : ' · ↑↓ ↵ open · ⌫ remove · Esc close');
+    }
+
+    const error = document.createElement('div');
+    error.className = 'sq-panel-error';
+    error.textContent = sessionsError;
+    if (!sessionsError) hide(error);
+
+    panel.replaceChildren(head, list, note, error);
+    list.scrollTop = scrollTop;
+    keepActiveInView(list);
+    schedule();
+  }
+
+  /** Scrolled by hand: scrollIntoView could move a scroller of Slack's as well. */
+  function keepActiveInView(list) {
+    const row = list.querySelector('.sq-session[data-active="1"]');
+    if (!row) return;
+    const top = row.offsetTop - list.offsetTop;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (top + row.offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = top + row.offsetHeight - list.clientHeight;
+    }
+  }
+
+  /** "5m", "3h", "2d": how long ago, as tersely as Slack says it. */
+  function ageOf(iso) {
+    const at = Date.parse(iso);
+    if (!Number.isFinite(at)) return '';
+    const secs = Math.max(0, (Date.now() - at) / 1000);
+    if (secs < 60) return 'now';
+    if (secs < 3600) return `${Math.floor(secs / 60)}m`;
+    if (secs < 86400) return `${Math.floor(secs / 3600)}h`;
+    if (secs < 86400 * 14) return `${Math.floor(secs / 86400)}d`;
+    return `${Math.floor(secs / (86400 * 7))}w`;
+  }
+
+  /** What is cheaply known about a session, as [text, tone, tooltip]. */
+  function sessionChips(s) {
+    if (s.state === 'gone') {
+      return [['worktree deleted', 'bad', 'The directory is gone; git still has it registered.']];
+    }
+    const chips = [];
+    if (s.pending) chips.push(['not started', '', `${CONFIG.agentLabel} has not picked this session up yet.`]);
+    if (typeof s.ahead === 'number') {
+      chips.push(s.ahead === 0
+        ? ['no commits', '', 'Nothing on the branch that its base does not have.']
+        : [`${s.ahead} ${s.ahead === 1 ? 'commit' : 'commits'}`, 'ok', 'Commits on the branch that its base does not have yet.']);
+    }
+    if (typeof s.dirty === 'number' && s.dirty > 0) {
+      chips.push([`${s.dirty} uncommitted`, 'warn', 'Changed or new files not yet committed.']);
+    }
+    return chips;
+  }
+
+  function sessionRow(s, index) {
+    const row = document.createElement('div');
+    row.className = 'sq-session';
+    row.dataset.id = s.id;
+    row.dataset.state = s.state;
+    row.setAttribute('role', 'option');
+    if (index === sessionsIndex) row.dataset.active = '1';
+    row.setAttribute('aria-selected', index === sessionsIndex ? 'true' : 'false');
+    if (removing.has(s.id)) row.dataset.busy = '1';
+
+    if (confirming && confirming.id === s.id) {
+      row.dataset.confirm = confirming.dirty > 0 ? 'force' : 'plain';
+      row.append(confirmBox(s, confirming.dirty));
+      return row;
+    }
+
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'sq-session-open';
+    open.title = s.state === 'gone'
+      ? `${s.branch}'s worktree was deleted — × drops what git still keeps of it`
+      : `Open ${s.branch} in Warp again`;
+
+    const top = document.createElement('span');
+    top.className = 'sq-session-top';
+    spans(top, [['sq-session-branch', s.branch], ['sq-sub', ageOf(s.createdAt)]]);
+    const when = new Date(s.createdAt);
+    if (!Number.isNaN(when.getTime())) top.lastChild.title = when.toLocaleString();
+
+    const meta = document.createElement('span');
+    meta.className = 'sq-session-meta';
+    meta.textContent = [s.promptLabel, s.repo, s.channel ? `#${s.channel}` : ''].filter(Boolean).join(' · ');
+
+    const state = document.createElement('span');
+    state.className = 'sq-session-state';
+    for (const [text, tone, tip] of sessionChips(s)) {
+      const chip = document.createElement('span');
+      chip.className = 'sq-chip';
+      if (tone) chip.dataset.tone = tone;
+      chip.textContent = text;
+      chip.title = tip;
+      state.append(chip);
+    }
+
+    open.append(top, meta, state);
+    open.addEventListener('click', (event) => {
+      stop(event);
+      sessionsIndex = index;
+      if (s.state === 'gone') askRemove(s, index);
+      else reopenFromPanel(s);
+    });
+
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'sq-session-x';
+    x.textContent = '×';
+    x.title = `Remove ${s.branch}'s worktree…`;
+    x.setAttribute('aria-label', x.title);
+    x.addEventListener('click', (event) => {
+      stop(event);
+      askRemove(s, index);
+    });
+
+    row.append(open, x);
+    return row;
+  }
+
+  /**
+   * The question, asked in the row. A worktree with uncommitted work says how
+   * much and asks to discard it; only that answer sends `force`.
+   */
+  function confirmBox(s, dirty) {
+    const box = document.createElement('div');
+    box.className = 'sq-session-confirm';
+    const text = document.createElement('div');
+    if (s.state === 'gone') {
+      text.textContent = `Drop ${s.branch}? Its worktree is already deleted; this clears what git still keeps of it.`;
+    } else if (dirty > 0) {
+      text.textContent = `${s.branch} has ${dirty} uncommitted ${dirty === 1 ? 'change' : 'changes'}. ` +
+        `Discard ${dirty === 1 ? 'it' : 'them'} and remove the worktree? This cannot be undone.`;
+    } else {
+      text.textContent = `Remove ${s.branch}'s worktree? The branch is kept if it has commits that are not merged.`;
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'sq-panel-actions';
+    const cancel = menuButton('sq-confirm-cancel', () => {
+      confirming = null;
+      renderSessions();
+    });
+    cancel.textContent = 'Cancel';
+    const go = menuButton('sq-confirm-remove', () => removeFromPanel(s, dirty > 0));
+    go.dataset.danger = '1';
+    go.textContent = dirty > 0 ? 'Discard and remove' : s.state === 'gone' ? 'Drop' : 'Remove';
+    go.title = dirty > 0 ? 'Deletes the uncommitted changes for good' : 'Enter';
+    actions.append(cancel, go);
+
+    box.append(text, actions);
+    return box;
+  }
+
+  function askRemove(s, index) {
+    sessionsIndex = index;
+    confirming = { id: s.id, dirty: typeof s.dirty === 'number' && s.dirty > 0 ? s.dirty : 0 };
+    renderSessions();
+  }
+
+  function removeFromPanel(s, force) {
+    if (removing.has(s.id)) return;
+    removing.add(s.id);
+    confirming = null;
+    sessionsError = '';
+    renderSessions();
+    ask({ op: 'remove-session', session: s.id, force }).then((res) => {
+      if (res.error) {
+        if (!force && typeof res.dirty === 'number' && res.dirty > 0) {
+          // It changed since the list was drawn. Ask again, now saying what
+          // would be lost, rather than failing at the reader.
+          confirming = { id: s.id, dirty: res.dirty };
+          sessionsList = (sessionsList || []).map((x) => (x.id === s.id ? Object.assign({}, x, { dirty: res.dirty }) : x));
+        } else {
+          sessionsError = res.hint ? `${res.error} ${res.hint}` : res.error;
+        }
+        return;
+      }
+      sessionsList = (sessionsList || []).filter((x) => x.id !== s.id);
+      toast({
+        title: `Removed ${res.branch || s.branch}`,
+        sub: res.removedBranch ? 'Its worktree and branch are gone.' : 'Removed its worktree; kept the branch.',
+      });
+    }).catch((err) => {
+      sessionsError = err.message;
+    }).finally(() => {
+      removing.delete(s.id);
+      renderSessions();
+    });
+  }
+
+  /** Into Warp: the panel has done its job, so it gets out of the way. */
+  function reopenFromPanel(s) {
+    closeSessions();
+    schedule();
+    ask({ op: 'reopen', session: s.id, branch: s.branch }).then((res) => {
+      if (res.error) {
+        toast({ title: 'Could not reopen that session', sub: res.hint ? `${res.error} ${res.hint}` : res.error, kind: 'error' });
+        return;
+      }
+      toast({ title: `Back in ${res.branch || s.branch}`, sub: 'Opening it in Warp.' });
+    }).catch((err) => {
+      toast({ title: 'Could not reopen that session', sub: err.message, kind: 'error' });
+    });
+  }
+
+  /**
+   * ↑ and ↓ move, Enter opens, Delete or Backspace asks to remove, Escape
+   * backs out of the question (and, with none asked, closes the panel through
+   * the document-level Escape like every other piece of the overlay). Enter
+   * answers a plain removal, never a discard: that takes the button.
+   */
+  function sessionsKeys(event) {
+    if (!sessionsEl || event.metaKey || event.ctrlKey || event.altKey) return false;
+    const active = document.activeElement;
+    if (active && active !== host && active !== document.body
+      && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) {
+      return false;
+    }
+    const list = sessionsList || [];
+    const key = event.key;
+    if (confirming && key === 'Escape') {
+      confirming = null;
+      renderSessions();
+      return true;
+    }
+    if (confirming && key === 'Enter') {
+      const s = list.find((x) => x.id === confirming.id);
+      if (s && !(confirming.dirty > 0)) removeFromPanel(s, false);
+      return true;
+    }
+    if ((key === 'ArrowDown' || key === 'ArrowUp') && list.length > 0) {
+      const step = key === 'ArrowDown' ? 1 : -1;
+      sessionsIndex = sessionsIndex < 0
+        ? (step > 0 ? 0 : list.length - 1)
+        : (sessionsIndex + step + list.length) % list.length;
+      confirming = null;
+      renderSessions();
+      return true;
+    }
+    const current = sessionsIndex >= 0 ? list[sessionsIndex] : null;
+    if (!current) return false;
+    if (key === 'Enter') {
+      if (current.state === 'gone') askRemove(current, sessionsIndex);
+      else reopenFromPanel(current);
+      return true;
+    }
+    if (key === 'Delete' || key === 'Backspace') {
+      askRemove(current, sessionsIndex);
+      return true;
+    }
+    return false;
+  }
+
+  /** Under the channel pill, like the repo panel; under the header when it is hidden. */
+  function placeSessions() {
+    if (!sessionsEl) return;
+    const pill = channelBtn.getBoundingClientRect();
+    if (pill.width > 0) {
+      placeAt(sessionsEl, pill.left, pill.bottom + 6);
+      return;
+    }
+    const header = document.querySelector(SEL.header);
+    const top = header ? header.getBoundingClientRect().bottom + 8 : 12;
+    placeAt(sessionsEl, (window.innerWidth - sessionsEl.offsetWidth) / 2, top);
   }
 
   /* ------------------------------------------------------------- placement */
@@ -2205,7 +2687,7 @@
         text.textContent = entry.text;
         // The line is one line wide; the tooltip is where all of it lives.
         el.title = entry.branch
-          ? `${entry.text}\n\nClick to open ${entry.branch} in Warp again.`
+          ? `${entry.text}\n\nClick to open ${entry.branch} in ${CONFIG.agentHost} again.`
           : entry.text;
       }
       if (el.dataset.kind !== entry.kind) el.dataset.kind = entry.kind;
@@ -2252,7 +2734,7 @@
         const last = list[list.length - 1];
         el.title = `Sidequested → ${last.branch}` +
           (list.length > 1 ? ` (and ${list.length - 1} more)` : '') +
-          '\nClick to open it in Warp again.';
+          `\nClick to open it in ${CONFIG.agentHost} again.`;
       }
       const rect = row.getBoundingClientRect();
       if (clip && onScreen(rect, clip)) {
@@ -2269,6 +2751,7 @@
 
     placeToast(clip);
     refreshChannelButton();
+    placeSessions();
   }
 
   /* -------------------------------------------------------------- triggers */
@@ -2300,6 +2783,7 @@
     if (fromOverlay(event.target)) return;
     closeMenu();
     closePanel();
+    closeSessions();
     schedule();
   }, true);
 
@@ -2307,6 +2791,7 @@
     if (event.key !== 'Escape') return;
     closeMenu();
     closePanel();
+    closeSessions();
     schedule();
   }, true);
 
@@ -2335,7 +2820,15 @@
   }
 
   window.addEventListener('keydown', (event) => {
-    if (menuKeys(event)) {
+    // The one chord the overlay answers wherever focus is, the composer
+    // included; stopped here so Slack never takes it for a keystroke.
+    if (isSessionsKey(event)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      toggleSessions();
+      return;
+    }
+    if (menuKeys(event) || sessionsKeys(event)) {
       event.preventDefault();
       event.stopImmediatePropagation();
       schedule();

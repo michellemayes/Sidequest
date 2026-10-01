@@ -9,9 +9,10 @@ with the message and its thread as the prompt.
 
 ![Sidequest demo: pick Fix on a Slack message, watch Claude Code fix it in a Warp tab on a new worktree, and find the branch linked back in Slack](docs/demo/demo.gif)
 
-<sub>End to end: the real overlay over a mock channel, then the Warp tab it opens and the
-agent committing a fix on the new branch (the terminal is scripted for the recording).
-See [`docs/demo`](docs/demo) to re-record it.</sub>
+<sub>End to end: the real overlay running over a mock of the Slack desktop app, then the Warp
+tab it opens with Claude Code finding, testing and committing the fix on the new branch, then
+the branch linked back under the message. The Slack window and the terminal session are staged
+for the recording; see [`docs/demo`](docs/demo) to re-record it.</sub>
 
 - **No Slack app, no bot token, no workspace install.** Sidequest attaches to the
   Slack desktop app you already use.
@@ -22,9 +23,13 @@ See [`docs/demo`](docs/demo) to re-record it.</sub>
 
 ## Quick start
 
-You'll need macOS, Node 20+, git, [Warp](https://www.warp.dev/), and a coding
-agent on your `PATH`: [Claude Code](https://claude.com/claude-code) by default,
-or any of the [others Sidequest knows](#agents).
+You'll need macOS, Node 20+, git, and one of:
+
+- [Warp](https://www.warp.dev/) with a coding agent on your `PATH`:
+  [Claude Code](https://claude.com/claude-code) by default, or Codex, Gemini CLI,
+  Aider or any of the [others Sidequest knows](#agents), or
+- the [Claude desktop app](https://claude.com/download) or the
+  [ChatGPT desktop app](https://chatgpt.com/download) (see [Desktop apps](#desktop-apps)).
 
 ```bash
 git clone https://github.com/michellemayes/Sidequest.git
@@ -70,6 +75,16 @@ Messages you've already started a session from keep a small **✦ Fix** mark.
 Click it to jump back into that session. Its menu also leads with **Back to Fix**,
 so you don't cut a duplicate branch by accident.
 
+Press **⌃⇧S** anywhere in Slack (or click **Sessions ›** in the repo button's
+panel) for your recent sessions that still have a worktree, newest first. Each
+shows its branch, the prompt, repo and channel it came from, how long ago, and
+what git says about it: commits the base doesn't have yet, uncommitted files,
+whether the agent has started, or that the worktree was deleted. Click one (or
+**↑**/**↓** and **Enter**) to reopen it in Warp. **×** (or **Delete**) removes a
+finished one by the same rules as `sidequest clean`: the branch stays if it has
+unmerged commits, and a worktree with uncommitted changes is only removed once
+you've been told how many and clicked **Discard and remove**.
+
 | | What the agent does |
 | --- | --- |
 | **Investigate** | Reproduces the problem, traces it to the code, explains it and recommends a fix. Changes nothing. |
@@ -94,7 +109,31 @@ and a local daemon then:
 
 1. creates `git worktree add -b <branch> <path> origin/<base>`,
 2. writes the prompt to `<worktree>/.sidequest/prompt.md` (git-excluded),
-3. opens Warp on the worktree and starts your agent.
+3. opens Warp on the worktree and starts your agent (or opens your agent's desktop
+   app there, see [Desktop apps](#desktop-apps)).
+
+### Desktop apps
+
+Sessions don't have to open in Warp. Two agents live in desktop apps instead:
+
+```bash
+sidequest agents claude-desktop   # Claude Code in the Claude app
+sidequest agents chatgpt          # Codex in the ChatGPT app
+sidequest agents claude           # back to Claude Code in Warp
+```
+
+The worktree, branch and prompt are made exactly as before. Then, instead of a
+Warp tab, Sidequest opens the app with a deep link
+([`claude://code/new`](https://support.claude.com/en/articles/14729294-open-claude-desktop-with-a-link),
+[`codex://threads/new`](https://learn.chatgpt.com/docs/reference/commands)): a new
+session in the worktree with the prompt already in the composer. Press **Enter**
+there to start it. Claude asks you to trust the folder the first time. A prompt too
+long for a link (over 12,000 characters) is left in `.sidequest/prompt.md`, and the
+composer asks the agent to read it.
+
+Reopening a session (`sidequest reopen`, or **Back to Fix** in Slack) starts a new
+session in the app on the same worktree; the links can't reach back into an earlier
+one. The shell hook, `warpStrategy` and `warpPreview` only matter for the Warp agents.
 
 <img src="docs/demo/menu.png" width="720" alt="The Sidequest menu open on a message, with Investigate, Fix and Review">
 
@@ -109,14 +148,14 @@ picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest start` / `stop` / `status` | Run the background daemon (logs in `~/.sidequest/sidequest.log`) |
 | `sidequest update` | Pull the latest and rebuild, reinstalling dependencies only if they changed; restarts a running daemon (`--no-restart` to skip) |
 | `sidequest doctor` | Check git, Warp, the agent, Slack.app, the debug port, and whether the build is current |
-| `sidequest sessions` | List every worktree Sidequest created |
+| `sidequest sessions` | List every worktree Sidequest created (in Slack, **⌃⇧S** shows your recent ones) |
 | `sidequest reopen [ref]` | Reopen Warp on a session (the latest if you name none) |
 | `sidequest stats` | Your total, today's count, current and best streak |
 | `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force`. Turn on `autoClean` and the daemon does this for you |
 | `sidequest link <path> -c <channel>` | Link a repo to a channel from the terminal. Linking a second repo adds it; the first stays the default |
 | `sidequest unlink [repo] -c <channel>` | Unlink one repo (by path or label) from a channel, or all of them if you name none |
 | `sidequest replies [on\|off]` | Show the thread replies sessions post, or turn them on or off |
-| `sidequest agents [id]` | Show the available agents and how each is run, or switch the one new sessions use (`sidequest agents gemini`) |
+| `sidequest agents [id]` | Show the available agents and how each is run, or switch the one new sessions use (`sidequest agents gemini`, `sidequest agents claude-desktop`) |
 | `sidequest list` / `prompts` | Show linked channels and prompt templates |
 
 ## Configuration
@@ -178,8 +217,9 @@ without a heading). With nothing typed in the Ask box, its reply is
 ```
 
 <a id="agents"></a>
-**Agents.** Every session starts an interactive agent whose first turn is the
-prompt. Each CLI takes that prompt its own way, and Sidequest knows which:
+**Agents.** In Warp, every session starts an interactive agent whose first turn
+is the prompt. Each CLI takes that prompt its own way, and Sidequest knows which.
+The two app agents open a [desktop app](#desktop-apps) with the prompt ready instead:
 
 | Id | Agent | Runs |
 | --- | --- | --- |
@@ -192,26 +232,29 @@ prompt. Each CLI takes that prompt its own way, and Sidequest knows which:
 | `copilot` | [Copilot CLI](https://github.com/github/copilot-cli) | `copilot --interactive "<prompt>"` |
 | `qwen` | [Qwen Code](https://github.com/QwenLM/qwen-code) | `qwen --prompt-interactive "<prompt>"` |
 | `goose` | [Goose](https://github.com/block/goose) | `goose run --interactive --instructions .sidequest/prompt.md` |
+| `claude-desktop` | Claude Code in the [Claude app](https://claude.com/download) | opens `claude://code/new` |
+| `chatgpt` | Codex in the [ChatGPT app](https://chatgpt.com/download) | opens `codex://threads/new` |
 
 Aider is the odd one out: it has no way to open a chat with a first message
 (its bare arguments are files to edit, and `--message-file` answers once and
 exits). So Sidequest sends the prompt that way, and when it's done reopens Aider
 on the same chat so you can carry on. Your `args` go right after the command,
 before the prompt (in both of Aider's runs). `sidequest doctor` checks the active
-agent with `--version` and says how to install it if that fails.
+agent with `--version` (or, for an app agent, that the app is installed) and says
+how to install it if that fails.
 
 **Settings** (under `settings`):
 
 | Setting | Default | |
 | --- | --- | --- |
-| `agent` | `{ "id": "claude" }` | Any id from [Agents](#agents) (or run `sidequest agents codex`). Use `command`/`args` to override the executable and add flags |
+| `agent` | `{ "id": "claude" }` | Any id from [Agents](#agents): a CLI in Warp, or `claude-desktop` or `chatgpt` in their desktop apps (or run `sidequest agents codex`). Use `command`/`args` to override a Warp agent's executable and add flags |
 | `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees go |
 | `warpStrategy` | `auto` | `auto` tries a tab config, then a launch config, then a plain new tab, until the agent starts. `tab_config`, `launch_config` or `new_tab` puts that one first |
 | `warpPreview` | `false` | Use Warp Preview |
 | `fetchBeforeCreate` | `true` | Fetch the base branch first. A fetch slower than 3 seconds doesn't hold up the session: it's cut from the local ref while the fetch finishes in the background |
 | `repoSearchRoots` | `[]` | Where to look for repos to suggest. Empty means `~/code`, `~/src`, `~/Developer`, `~/projects` and similar, two levels deep |
 | `threadContextLimit` | `10` | How many earlier messages go into the prompt |
-| `pruneBranchesOnClean` | `true` | Delete merged branches on `clean` (and on auto-clean) |
+| `pruneBranchesOnClean` | `true` | Delete merged branches on `clean` (and on auto-clean, and when you remove a session from the sessions panel) |
 | `autoClean` | `false` | Let the running daemon remove finished worktrees itself. See Cleaning up below |
 | `autoCleanAfterDays` | `7` | How long a merged worktree has to sit untouched before auto-clean removes it |
 | `cdpPort` | `9222` | DevTools port for Slack |
@@ -272,7 +315,8 @@ Sidequest runs commands from argv arrays, never through a shell, and passes the
 prompt in a file, so message text can't inject commands. The overlay runs inside
 Slack's window, so what the daemon sends it is visible there: channel links,
 prompt labels, past sessions' branch names, and (only while a link menu or panel
-is open) the paths of the repos it suggests. Session history is kept in
+is open) the paths of the repos it suggests. The sessions panel adds each
+session's repo label, channel and git counts, but not its path. Session history is kept in
 `~/.sidequest/history.json`. The DevTools port is
 bound to `127.0.0.1`, which means other processes running as your user can reach
 it, as with any Electron app that has remote debugging on.

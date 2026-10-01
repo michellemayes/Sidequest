@@ -2,7 +2,7 @@ import { loadConfig, promptFor } from "../config/store.js";
 import { linksForChannel, repoForChannelName } from "../config/channels.js";
 import { renderPrompt, renderReply, type PromptContext } from "../config/prompts.js";
 import { firstTicket, isTicketPrompt, keepsBranchCase, ticketFor, type Ticket } from "../config/tickets.js";
-import { resolveAgent } from "../agents/agents.js";
+import { linkPrompt, resolveAgent, type DesktopApp, type ResolvedAgent } from "../agents/agents.js";
 import type { Config, PromptKey } from "../config/schema.js";
 import { inspectRepo } from "../git/repo.js";
 import { createWorktree } from "../git/worktree.js";
@@ -17,6 +17,7 @@ import {
 import { removeTabConfig, type WarpSessionSpec } from "../warp/configFiles.js";
 import { branchNameFor, tabTitle, warpConfigName } from "./naming.js";
 import { describeError, UserFacingError } from "../util/errors.js";
+import { openUri } from "../util/openUri.js";
 import { stripSlackMarkup } from "../util/slug.js";
 import { log } from "../util/log.js";
 
@@ -53,13 +54,14 @@ export interface SessionResult {
    * settings.autoReply is off or the prompt has no reply.
    */
   reply: string;
-  /** Set when the worktree is ready but Warp could not be opened, or the agent did not start. */
+  /** Set when the worktree is ready but Warp or the agent's app could not be opened, or the agent did not start. */
   launchError?: string;
 }
 
 /**
  * The whole flow behind one button click: resolve the channel's repo, cut a
- * worktree, render the prompt into it, and open Warp there.
+ * worktree, render the prompt into it, and open Warp there (or the agent's
+ * desktop app, for an agent that lives in one).
  */
 export async function createSession(
   promptKey: PromptKey,
@@ -119,7 +121,7 @@ export async function createSession(
   // write it while git checks the worktree out rather than after.
   let preparedTabConfig: PreparedTabConfig | undefined;
   const preview = config.settings.warpPreview;
-  const tabConfigFirst = strategyOrder(config.settings.warpStrategy)[0] === "tab_config";
+  const tabConfigFirst = !agent.app && strategyOrder(config.settings.warpStrategy)[0] === "tab_config";
 
   let tabConfigName: string | undefined;
   const worktree = await createWorktree({
@@ -168,6 +170,7 @@ export async function createSession(
     ...(agent.resumeArgs ? { resumeArgs: agent.resumeArgs } : {}),
     agentLabel: agent.label,
     title,
+    pending: !agent.app,
   });
 
   const base = {
@@ -181,6 +184,8 @@ export async function createSession(
     agentLabel: agent.label,
     reply,
   };
+
+  if (agent.app) return openInApp(agent, agent.app, worktree.path, body, base, startedAt);
 
   // The worktree and prompt are already on disk and usable. If Warp will not
   // open, say so and hand back the path rather than throwing away the work.
@@ -209,6 +214,31 @@ export async function createSession(
       fellBackToNewTab: false,
       launchError: message,
     };
+  }
+}
+
+/**
+ * Start the session in the agent's desktop app: a new session there, in the
+ * worktree, with the prompt in the composer. Like Warp, a failure to open it
+ * leaves the worktree and prompt in place and says so.
+ */
+async function openInApp(
+  agent: ResolvedAgent,
+  app: DesktopApp,
+  worktreePath: string,
+  prompt: string,
+  base: Omit<SessionResult, "launchStrategy" | "fellBackToNewTab">,
+  startedAt: number,
+): Promise<SessionResult> {
+  const uri = app.newSessionUri(worktreePath, linkPrompt(prompt));
+  try {
+    await openUri(uri, agent.host, `Is ${agent.host} installed? \`sidequest doctor\` checks.`);
+    log.info(`session ready in ${Date.now() - startedAt}ms: ${worktreePath} (${agent.id})`);
+    return { ...base, launchStrategy: agent.id, fellBackToNewTab: false };
+  } catch (err) {
+    const { message } = describeError(err);
+    log.error(`worktree ready at ${worktreePath} but ${agent.host} did not open: ${message}`);
+    return { ...base, launchStrategy: agent.id, fellBackToNewTab: false, launchError: message };
   }
 }
 

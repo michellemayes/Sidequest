@@ -17,7 +17,7 @@ export function platform(): Platform {
 }
 
 /**
- * The command used to hand a URI to the OS so Warp can pick it up.
+ * The command used to hand a URI to the OS so Warp (or a desktop app) can pick it up.
  * Returns null on platforms we have no opener for.
  */
 export function uriOpener(): { command: string; args: string[] } | null {

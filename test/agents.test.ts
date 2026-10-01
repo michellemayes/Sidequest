@@ -6,7 +6,7 @@ import {
   AGENT_DEFINITIONS,
   agentArgv,
   agentDefinition,
-  describeInvocation,
+  describeAgent,
   fillPromptArg,
   resolveAgent,
 } from "../src/agents/agents.js";
@@ -60,9 +60,24 @@ describe("agent registry", () => {
 
   it("ships every supported agent, with unique ids", () => {
     const ids = AGENT_DEFINITIONS.map((d) => d.id);
-    expect(ids).toEqual(["claude", "codex", "gemini", "aider", "cursor-agent", "opencode", "copilot", "qwen", "goose"]);
-    expect(new Set(AGENT_DEFINITIONS.map((d) => d.label)).size).toBe(ids.length);
-    for (const def of AGENT_DEFINITIONS) expect(def.installHint).toContain("settings.agent.command");
+    expect(ids).toEqual([
+      "claude",
+      "codex",
+      "gemini",
+      "aider",
+      "cursor-agent",
+      "opencode",
+      "copilot",
+      "qwen",
+      "goose",
+      "claude-desktop",
+      "chatgpt",
+    ]);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const def of AGENT_DEFINITIONS.filter((d) => !d.app)) {
+      expect(def.host).toBe("Warp");
+      expect(def.installHint).toContain("settings.agent.command");
+    }
   });
 });
 
@@ -98,7 +113,7 @@ describe("agent invocations", () => {
   it("resumes aider's chat after its one-shot first message", () => {
     const aider = resolveAgent({ id: "aider", command: "", args: ["--model", "sonnet"] });
     expect(aider.resumeArgs).toEqual(["--restore-chat-history"]);
-    expect(describeInvocation(aider)).toBe(
+    expect(describeAgent(aider)).toBe(
       "aider --model sonnet --message-file .sidequest/prompt.md, then aider --model sonnet --restore-chat-history",
     );
   });
@@ -109,8 +124,17 @@ describe("agent invocations", () => {
   });
 
   it("describes a plain agent by its first run", () => {
-    expect(describeInvocation(resolveAgent({ id: "opencode", command: "", args: [] }))).toBe(
+    expect(describeAgent(resolveAgent({ id: "opencode", command: "", args: [] }))).toBe(
       "opencode --prompt <prompt>",
+    );
+  });
+
+  it("describes an app agent by the link it opens", () => {
+    expect(describeAgent(resolveAgent({ id: "claude-desktop", command: "", args: [] }))).toBe(
+      "opens claude://code/new in the Claude app",
+    );
+    expect(describeAgent(resolveAgent({ id: "chatgpt", command: "", args: [] }))).toBe(
+      "opens codex://threads/new in the ChatGPT app",
     );
   });
 

@@ -3,112 +3,536 @@
 <head>
 <meta charset="utf-8">
 <title>Sidequest demo</title>
+<!--
+  The stage for the README recording (capture.mjs drives it). Two windows:
+
+  - A Slack desktop window, drawn after the current Slack client (tab rail,
+    search bar, workspace sidebar, channel header with tabs, message rows with
+    reactions and a thread summary, the hover actions, the composer). It keeps
+    the data-qa hooks and class names client/inject.js reads (see SEL in
+    inject.js and test/fixture.html), so the real overlay attaches to it.
+  - A Warp window with Claude Code's terminal UI, which capture.mjs fills in
+    line by line.
+
+  Fonts are bundled in fonts/ so the recording looks the same on any machine:
+  Lato (SIL OFL 1.1) is Slack's face, Hack (MIT / Bitstream Vera) is Warp's
+  default terminal font.
+-->
 <style>
+  @font-face { font-family: Lato; font-weight: 400; src: url(fonts/lato-400.woff2) format('woff2'); }
+  @font-face { font-family: Lato; font-weight: 700; src: url(fonts/lato-700.woff2) format('woff2'); }
+  @font-face { font-family: Lato; font-weight: 900; src: url(fonts/lato-900.woff2) format('woff2'); }
+  @font-face { font-family: Hack; font-weight: 400; src: url(fonts/hack-400.woff2) format('woff2'); }
+  @font-face { font-family: Hack; font-weight: 700; src: url(fonts/hack-700.woff2) format('woff2'); }
+
+  :root {
+    --aub: #3f0e40;          /* window frame: title bar and tab rail */
+    --aub-side: #532754;     /* the channel sidebar sits a shade lighter */
+    --side-text: rgba(249, 237, 255, .8);
+    --side-sel: #f9edff;
+    --side-sel-text: #39063a;
+    --ink: #1d1c1d;
+    --ink-2: #616061;
+    --line: rgba(29, 28, 29, .13);
+    --link: #1264a3;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 15px/1.46 -apple-system, "Segoe UI", "Helvetica Neue", Lato, Arial, sans-serif; color: #1d1c1d; background: linear-gradient(135deg, #1e2a4a 0%, #3b2a5c 55%, #5a3358 100%); height: 100vh; overflow: hidden; }
-  .app { position: absolute; left: 24px; right: 24px; top: 20px; bottom: 64px; display: flex; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.45); }
-  .sidebar { width: 230px; background: #3f0e40; color: #cfc3cf; padding: 14px 0; }
-  .ws { color: #fff; font-weight: 800; font-size: 18px; padding: 0 16px 14px; border-bottom: 1px solid #5d3a5e; margin-bottom: 10px; }
-  .section { font-size: 14px; padding: 6px 16px 4px; opacity: .8; }
-  .ch { padding: 3px 16px 3px 26px; font-size: 15px; }
-  .ch.active { background: #1164a3; color: #fff; }
-  .ch.bold { color: #fff; font-weight: 700; }
-  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .p-view_header { display: flex; align-items: center; height: 52px; padding: 0 18px; border-bottom: 1px solid #e2e2e2; }
-  .name-control { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 18px; font-weight: 900; background: none; border: 0; padding: 0; color: inherit; }
-  .chev { font-size: 11px; color: #616061; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; overflow: hidden; color: var(--ink);
+    font: 15px/1.46668 Lato, "Slack-Lato", "Helvetica Neue", Helvetica, "Segoe UI", Tahoma, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background: radial-gradient(1200px 700px at 15% 0%, #5a4b8a 0%, transparent 60%),
+                radial-gradient(900px 600px at 100% 100%, #8a4a6b 0%, transparent 60%),
+                linear-gradient(160deg, #2b2f55 0%, #3a2d55 50%, #4a2f4f 100%);
+  }
+  svg { display: block; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; }
+
+  /* ================================================================ Slack */
+  .slack {
+    position: absolute; left: 18px; right: 18px; top: 14px; bottom: 50px;
+    background: var(--aub); border-radius: 11px; overflow: hidden;
+    box-shadow: 0 0 0 .5px rgba(0,0,0,.6), 0 22px 60px rgba(0,0,0,.45);
+    display: grid; grid-template-rows: 40px 1fr; grid-template-columns: 70px 1fr;
+  }
+  /* Title bar: traffic lights, history arrows, search, help. */
+  .topbar { grid-column: 1 / 3; display: flex; align-items: center; position: relative; color: rgba(255,255,255,.75); }
+  .lights { display: flex; gap: 8px; padding-left: 14px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.25); }
+  .hist { display: flex; gap: 14px; margin-left: 132px; align-items: center; }
+  .hist svg { opacity: .8; }
+  .hist .dim { opacity: .4; }
+  .search {
+    position: absolute; left: 50%; transform: translateX(-50%); width: 560px; height: 26px;
+    border-radius: 6px; background: rgba(255,255,255,.2); display: flex; align-items: center; gap: 8px;
+    padding: 0 10px; color: rgba(255,255,255,.88); font-size: 13px;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+  }
+  .helpbtn { margin-left: auto; margin-right: 16px; opacity: .85; }
+
+  /* Tab rail: workspace, Home, DMs, Activity, Later, More. */
+  .rail { display: flex; flex-direction: column; align-items: center; padding-top: 8px; gap: 12px; color: #fff; }
+  .ws-icon {
+    width: 36px; height: 36px; border-radius: 9px; background: #fff; display: grid; place-items: center;
+    box-shadow: 0 0 0 2px var(--aub), 0 0 0 4px rgba(255,255,255,.55); margin-bottom: 6px;
+  }
+  .rail-item { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 11px; font-weight: 700; position: relative; }
+  .rail-item .ico { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; }
+  .rail-item.on .ico { background: rgba(255,255,255,.22); }
+  .rail-item .badge {
+    position: absolute; top: -3px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px;
+    border-radius: 9px; background: #cd2553; color: #fff; font-size: 11px; font-weight: 700;
+    display: grid; place-items: center; box-shadow: 0 0 0 2px var(--aub);
+  }
+  .rail-bottom { margin-top: auto; margin-bottom: 14px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .rail-plus { width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,.18); display: grid; place-items: center; }
+  .me { position: relative; }
+  .me .dot { position: absolute; right: -3px; bottom: -3px; width: 12px; height: 12px; border-radius: 50%; background: #2bac76; box-shadow: 0 0 0 2.5px var(--aub); }
+
+  /* The workspace panel: sidebar and channel, one rounded card. */
+  .panel { display: flex; margin: 0 6px 6px 0; border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,.25); min-width: 0; }
+  .sidebar { width: 262px; flex: none; background: var(--aub-side); color: var(--side-text); display: flex; flex-direction: column; }
+  .sb-head { height: 49px; display: flex; align-items: center; padding: 0 12px 0 16px; gap: 6px; color: #fff; }
+  .sb-head .name { font-size: 18px; font-weight: 900; letter-spacing: -.1px; }
+  .sb-head .grow { flex: 1; }
+  .sb-head .hbtn { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; opacity: .9; }
+  .sb-head .compose { background: rgba(255,255,255,.95); color: var(--aub); width: 32px; height: 32px; border-radius: 50%; margin-left: 4px; opacity: 1; }
+  .sb-scroll { padding: 6px 8px; }
+  .sb-row { height: 28px; display: flex; align-items: center; gap: 9px; padding: 0 10px 0 12px; border-radius: 6px; font-size: 15px; white-space: nowrap; }
+  .sb-row .i { width: 18px; display: grid; place-items: center; flex: none; opacity: .85; }
+  .sb-row.bold { color: #fff; font-weight: 900; }
+  .sb-row.bold .i { opacity: 1; }
+  .sb-row.sel { background: var(--side-sel); color: var(--side-sel-text); }
+  .sb-row .mention { margin-left: auto; background: #cd2553; color: #fff; font-size: 12px; font-weight: 700; border-radius: 9px; padding: 0 7px; height: 18px; line-height: 18px; }
+  .sb-row .you { opacity: .7; font-weight: 400; margin-left: 2px; }
+  .sb-sec { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 12px; margin-top: 12px; font-size: 15px; }
+  .sb-sec .caret { font-size: 10px; opacity: .85; width: 18px; text-align: center; }
+  .sb-av { width: 20px; height: 20px; border-radius: 5px; overflow: hidden; position: relative; flex: none; }
+  .sb-av-wrap { position: relative; width: 20px; height: 20px; flex: none; }
+  .sb-av-wrap .p { position: absolute; right: -3px; bottom: -3px; width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 2px var(--aub-side); }
+  .p.on { background: #2bac76; } .p.off { background: var(--aub-side); box-shadow: inset 0 0 0 1.5px rgba(249,237,255,.7), 0 0 0 2px var(--aub-side) !important; }
+
+  /* ---- main view */
+  .main { flex: 1; background: #fff; display: flex; flex-direction: column; min-width: 0; position: relative; }
+  .p-view_header { height: 49px; display: flex; align-items: center; padding: 0 12px 0 16px; flex: none; }
+  .name-control {
+    display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px 3px 4px; margin-left: -4px;
+    border-radius: 6px; font-size: 18px; font-weight: 900; color: var(--ink); cursor: pointer;
+  }
+  .name-control .hash { margin-right: 1px; }
   .gap { flex: 1; }
-  .hbtn { border: 1px solid #ddd; background: #fff; border-radius: 6px; padding: 3px 10px; font-size: 13px; color: #1d1c1d; margin-left: 8px; }
-  #list { flex: 1; overflow: hidden; padding-top: 12px; }
-  .day { text-align: center; font-size: 13px; font-weight: 700; margin: 4px 0 8px; }
-  .row { display: flex; gap: 10px; padding: 8px 20px 8px 20px; }
-  .row.cont { padding-top: 2px; }
-  .row.cont .avatar { visibility: hidden; height: 0; }
-  .avatar { width: 36px; height: 36px; border-radius: 6px; flex: none; color: #fff; font-weight: 700; display: grid; place-items: center; }
-  .body { min-width: 0; flex: 1; }
-  .meta { display: flex; align-items: baseline; gap: 8px; }
-  [data-qa="message_sender_name"] { font-weight: 900; }
-  a.c-timestamp { color: #616061; font-size: 12px; text-decoration: none; }
-  .row.cont .meta { display: none; }
-  code { font: 12px Menlo, monospace; background: #f6f6f6; border: 1px solid #e0e0e0; border-radius: 3px; padding: 1px 3px; color: #c01343; }
-  .composer { margin: 0 20px 20px; border: 1px solid #bbb; border-radius: 8px; padding: 12px; color: #868686; font-size: 14px; }
-  .warp { position: absolute; left: 150px; right: 150px; top: 36px; bottom: 76px; background: #16161d; border-radius: 10px; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,.6); border: 1px solid #33333d; z-index: 2147483600; color: #e4e4e8; font: 13.5px/1.5 Menlo, "DejaVu Sans Mono", monospace; transform-origin: 50% 60%; transition: transform .35s cubic-bezier(.2,.8,.2,1), opacity .3s; }
-  .warp.off { opacity: 0; transform: scale(.94) translateY(20px); }
-  .warp-bar { height: 38px; background: #202029; display: flex; align-items: center; gap: 14px; padding: 0 14px; border-bottom: 1px solid #2c2c36; font-family: -apple-system, "Segoe UI", Lato, Arial, sans-serif; }
-  .dots { display: inline-flex; gap: 8px; } .dots i { width: 12px; height: 12px; border-radius: 50%; display: block; }
-  .warp-tab { background: #2d2d38; color: #f0f0f4; font-size: 12.5px; padding: 4px 16px; border-radius: 6px; }
-  .warp-body { padding: 14px 20px; }
-  .warp-cwd { color: #8e8ea0; margin-bottom: 10px; } .cwd { color: #7aa2f7; } .git { color: #bb9af7; }
-  .term div { white-space: pre-wrap; min-height: 1.5em; }
-  .cc-box { border: 1px solid #d97757; border-radius: 6px; padding: 6px 12px; margin: 2px 0 10px; display: inline-block; }
-  .o { color: #d97757; } .dim { color: #8e8ea0; } .g { color: #9ece6a; } .r { color: #f7768e; } .b { font-weight: 700; color: #fff; } .w { color: #e4e4e8; }
-  .add { background: rgba(158,206,106,.14); color: #b9e08f; } .del { background: rgba(247,118,142,.14); color: #f7a0b0; }
-  .cursor { display: inline-block; width: 8px; height: 1.1em; background: #d97757; vertical-align: text-bottom; }
-  .caption { position: absolute; left: 0; right: 0; bottom: 18px; display: flex; justify-content: center; align-items: center; gap: 10px; color: #fff; font-size: 16px; font-weight: 600; letter-spacing: .1px; }
-  .step { width: 24px; height: 24px; border-radius: 50%; background: #8b5cf6; display: grid; place-items: center; font-size: 13px; font-weight: 800; }
+  .facepile {
+    display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px 0 3px; margin-right: 8px;
+    border-radius: 6px; box-shadow: inset 0 0 0 1px var(--line); font-size: 13px; font-weight: 700; color: var(--ink-2);
+  }
+  .facepile .avs { display: flex; }
+  .facepile .avs span { width: 20px; height: 20px; border-radius: 5px; overflow: hidden; box-shadow: 0 0 0 2px #fff; margin-right: -5px; }
+  .facepile .avs span:last-child { margin-right: 0; }
+  .huddle {
+    display: inline-flex; align-items: center; height: 28px; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--line);
+    color: var(--ink-2); margin-right: 8px;
+  }
+  .huddle .l { padding: 0 8px; display: grid; place-items: center; height: 100%; }
+  .huddle .r { padding: 0 6px; border-left: 1px solid var(--line); height: 100%; display: grid; place-items: center; }
+  .kebab { width: 28px; height: 28px; display: grid; place-items: center; color: var(--ink-2); border-radius: 6px; }
+
+  .tabs { display: flex; align-items: flex-end; gap: 4px; height: 38px; padding: 0 16px; border-bottom: 1px solid var(--line); flex: none; }
+  .tab { display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 8px; font-size: 13px; font-weight: 700; color: var(--ink-2); border-bottom: 2px solid transparent; }
+  .tab.on { color: var(--ink); border-bottom-color: #7a1f7c; }
+  .tab.add { width: 28px; justify-content: center; padding: 0; }
+
+  /* ---- message list */
+  #list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding-bottom: 6px; scrollbar-width: none; }
+  #list::-webkit-scrollbar { display: none; }
+  #list > :first-child { margin-top: auto; }
+  .divider { position: relative; height: 40px; display: grid; place-items: center; flex: none; }
+  .divider::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px solid var(--line); }
+  .divider span {
+    position: relative; background: #fff; border-radius: 24px; box-shadow: inset 0 0 0 1px var(--line);
+    font-size: 13px; font-weight: 700; padding: 0 12px 0 16px; height: 28px; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .c-virtual_list__item { position: relative; flex: none; }
+  .c-message_kit__background { display: flex; padding: 8px 20px; position: relative; }
+  .c-message_kit__background.cont { padding-top: 2px; }
+  .c-virtual_list__item:hover .c-message_kit__background { background: #f8f8f8; }
+  .c-message_kit__gutter__left { width: 36px; margin-right: 8px; flex: none; }
+  .c-message_kit__gutter__left .ts-cont { display: none; font-size: 12px; color: var(--ink-2); line-height: 22px; width: 36px; text-align: right; white-space: nowrap; margin-left: -6px; }
+  .c-virtual_list__item:hover .ts-cont { display: block; }
+  .c-avatar { width: 36px; height: 36px; border-radius: 8px; overflow: hidden; margin-top: 3px; }
+  .c-message_kit__gutter__right { flex: 1; min-width: 0; }
+  .c-message__sender { display: flex; align-items: baseline; gap: 8px; }
+  .c-message__sender_button { font-weight: 900; font-size: 15px; line-height: 22px; }
+  .c-message__sender_button .app { font-size: 10px; font-weight: 700; color: var(--ink-2); background: rgba(29,28,29,.08); border-radius: 3px; padding: 1px 3px; margin-left: 4px; vertical-align: 2px; }
+  a.c-timestamp { color: var(--ink-2); font-size: 12px; text-decoration: none; }
+  .c-message_kit__background.cont a.c-timestamp { display: none; }
+  .p-rich_text_section { font-size: 15px; line-height: 22px; overflow-wrap: anywhere; }
+  .p-rich_text_section + .p-rich_text_section { margin-top: 4px; }
+  code.c-mrkdwn__code {
+    font: 12px/1.5 Monaco, Menlo, Consolas, "Courier New", monospace; color: #c01343;
+    background: rgba(29,28,29,.04); border: 1px solid rgba(29,28,29,.13); border-radius: 3px; padding: 2px 3px 1px;
+  }
+  .c-member_slug { color: #1264a3; background: rgba(29,155,209,.1); border-radius: 3px; padding: 0 2px; }
+  .emoji { font-family: "Apple Color Emoji", "Noto Color Emoji", "Segoe UI Emoji", sans-serif; font-size: 16px; line-height: 1; }
+
+  .c-reaction_bar { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+  .c-reaction {
+    display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 7px; border-radius: 12px;
+    background: rgba(29,28,29,.06); font-size: 11px; font-weight: 700; color: var(--ink);
+  }
+  .c-reaction .emoji { font-size: 15px; }
+  .c-reaction.mine { background: #e8f5fa; box-shadow: inset 0 0 0 1px #1d9bd1; color: #1264a3; }
+  .c-reaction_add { width: 32px; justify-content: center; padding: 0; color: var(--ink-2); background: rgba(29,28,29,.06); }
+
+  .c-message__reply_bar {
+    display: inline-flex; align-items: center; gap: 8px; margin-top: 6px; padding: 5px 8px 5px 5px; margin-left: -5px;
+    border-radius: 6px; border: 1px solid transparent; font-size: 13px; max-width: 600px;
+  }
+  .c-message__reply_bar .avs { display: flex; gap: 4px; }
+  .c-message__reply_bar .avs span { width: 24px; height: 24px; border-radius: 6px; overflow: hidden; }
+  .c-message__reply_count { color: var(--link); font-weight: 700; }
+  .c-message__reply_bar_description { color: var(--ink-2); }
+
+  /* Slack's hover actions: top-right of the hovered row. */
+  .c-message_actions__container {
+    display: none; position: absolute; top: -16px; right: 20px; z-index: 5; height: 36px; padding: 2px;
+    background: #fff; border-radius: 8px; align-items: center; gap: 0;
+    box-shadow: 0 0 0 1px rgba(29,28,29,.13), 0 4px 12px rgba(0,0,0,.08);
+  }
+  .c-virtual_list__item:hover .c-message_actions__container { display: flex; }
+  .c-message_actions__button { width: 32px; height: 32px; border-radius: 6px; display: grid; place-items: center; color: var(--ink-2); }
+  .c-message_actions__button .emoji { font-size: 16px; }
+  .c-message_actions__sep { width: 1px; height: 20px; background: var(--line); margin: 0 3px; }
+
+  /* ---- composer */
+  .composer { margin: 0 20px 20px; border-radius: 8px; box-shadow: inset 0 0 0 1px rgba(29,28,29,.3); flex: none; color: var(--ink-2); }
+  .composer .fmt { display: flex; align-items: center; gap: 2px; padding: 4px 6px; height: 36px; background: rgba(29,28,29,.03); border-radius: 8px 8px 0 0; }
+  .composer .fmt span, .composer .bottom span.b { width: 28px; height: 28px; display: grid; place-items: center; opacity: .75; }
+  .composer .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+  .composer .text { padding: 8px 12px; font-size: 15px; color: #868686; line-height: 22px; }
+  .composer .bottom { display: flex; align-items: center; gap: 2px; padding: 2px 6px 6px; }
+  .composer .plus { width: 28px; height: 28px; border-radius: 50%; background: rgba(29,28,29,.06); display: grid; place-items: center; margin-right: 4px; }
+  .composer .send { margin-left: auto; display: flex; align-items: center; height: 28px; border-radius: 4px; color: rgba(29,28,29,.3); }
+  .composer .send i { width: 1px; height: 18px; background: var(--line); margin: 0 6px; }
+
+  /* ================================================================= Warp */
+  .warp {
+    position: absolute; left: 44px; right: 44px; top: 26px; bottom: 58px; z-index: 2147483600;
+    background: #121212; border-radius: 11px; overflow: hidden; display: flex; flex-direction: column;
+    box-shadow: 0 0 0 .5px rgba(255,255,255,.18), 0 0 0 1px rgba(0,0,0,.8), 0 30px 80px rgba(0,0,0,.6);
+    transform-origin: 50% 70%; transition: transform .38s cubic-bezier(.2,.8,.2,1), opacity .3s ease;
+    font-family: -apple-system, "SF Pro Text", Lato, "Helvetica Neue", Arial, sans-serif;
+  }
+  .warp[hidden] { display: none; }
+  .warp.off { opacity: 0; transform: scale(.95) translateY(18px); }
+  .w-top { height: 38px; flex: none; display: flex; align-items: center; background: #1b1b1b; border-bottom: 1px solid #262626; padding: 0 10px 0 14px; gap: 6px; color: #9b9b9b; }
+  .w-top .lights { padding-left: 0; margin-right: 12px; }
+  .w-tab {
+    height: 28px; min-width: 210px; padding: 0 10px 0 12px; border-radius: 6px; display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: #9b9b9b;
+  }
+  .w-tab.on { background: #2c2c2c; color: #f2f2f2; box-shadow: inset 0 0 0 1px #3a3a3a; }
+  .w-tab .t { flex: 1; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .w-tab .x { opacity: .6; font-size: 13px; }
+  .w-plus { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 6px; color: #9b9b9b; }
+  .w-right { margin-left: auto; display: flex; gap: 14px; align-items: center; }
+
+  .w-body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+  .w-block-head {
+    flex: none; padding: 10px 20px 8px; font: 12.5px/1.4 Hack, Menlo, "DejaVu Sans Mono", monospace; display: flex; gap: 10px; align-items: center;
+    border-bottom: 1px solid #242424;
+  }
+  .w-chip { color: #b5b5b5; } .w-chip.path { color: #57c7ff; } .w-chip.git { color: #c3e88d; }
+  .w-chip.git::before { content: "\2387  "; color: #8a8a8a; }
+  #screen { flex: 1; min-height: 0; overflow: hidden; padding: 12px 20px 16px; }
+
+  /* ---- Claude Code's terminal UI (dark theme colours) */
+  .cc { color: #e8e8e8; font: 13px/19px Hack, Menlo, "DejaVu Sans Mono", monospace; }
+  .cc .ln { white-space: pre-wrap; padding-left: 2ch; text-indent: -2ch; min-height: 19px; }
+  .cc .ln.in4 { padding-left: 5ch; text-indent: -5ch; }
+  .cc .ln.sp { height: 10px; min-height: 10px; }
+  .cc .o { color: #d77757; }      /* Claude orange */
+  .cc .dim { color: #999; }
+  .cc .b { font-weight: 700; }
+  .cc .ok { color: #4eba65; }
+  .cc .err { color: #ff6b80; }
+  .cc .blue { color: #b1b9f9; }
+  .cc .bul { display: inline-block; width: 2ch; text-indent: 0; }
+  .cc .bul::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor; vertical-align: 1px; margin-left: 1px; }
+  .cc .bul.tool { color: #4eba65; } .cc .bul.run { color: #999; animation: blink .8s steps(2) infinite; }
+  .cc .bul.text { color: #e8e8e8; } .cc .bul.fail { color: #ff6b80; }
+  @keyframes blink { 50% { opacity: .2; } }
+  /* The "⎿" elbow, drawn so it matches the real glyph on any machine. */
+  .cc .elbow { display: inline-block; width: 5ch; text-indent: 0; position: relative; height: 1px; }
+  .cc .elbow::before { content: ""; position: absolute; left: calc(2ch + 3px); top: -13px; width: 7px; height: 9px; border-left: 1.3px solid #888; border-bottom: 1.3px solid #888; }
+  .cc .welcome {
+    display: inline-block; border: 1px solid #d77757; border-radius: 6px; padding: 9px 2ch 9px 1ch; margin: 2px 0 12px; line-height: 19px;
+  }
+  .cc .welcome .ln { padding-left: 0; text-indent: 0; }
+  .cc .user { color: #999; }
+  .cc .user .ln { padding-left: 2ch; text-indent: -2ch; }
+  .cc .diff { margin: 0 0 0 5ch; }
+  .cc .diff .ln { padding-left: 0; text-indent: 0; }
+  .cc .add { background: #1f4d2a; } .cc .add .n, .cc .del .n { color: #c9c9c9; }
+  .cc .del { background: #5c2230; }
+  .cc .n { color: #8a8a8a; }
+  .cc .cb { font-size: 16px; line-height: 0; vertical-align: -1px; }
+  .cc .todo-done { color: #999; text-decoration: line-through; }
+  .cc .todo-now { font-weight: 700; color: #b1b9f9; }
+  .cc .spin { color: #d77757; margin-top: 10px; }
+  .cc .spin .word { color: #eb9f7f; }
+  .cc .input { border: 1px solid #888; border-radius: 6px; padding: 5px 1ch; margin-top: 10px; display: flex; gap: 0; }
+  .cc .input .caret { display: inline-block; width: 1ch; height: 17px; background: #e8e8e8; vertical-align: -3px; }
+  .cc .hint { color: #999; padding: 2px 2ch 0; display: flex; }
+  .cc .hint .r { margin-left: auto; }
+  .cc a { color: inherit; text-decoration: none; }
+
+  /* ============================================================= caption */
+  .caption { position: absolute; left: 0; right: 0; bottom: 12px; display: flex; justify-content: center; }
+  .caption .pill {
+    display: inline-flex; align-items: center; gap: 10px; color: #fff; font-size: 15px; font-weight: 700; letter-spacing: .1px;
+    padding: 4px 14px 4px 5px; border-radius: 20px; background: rgba(0,0,0,.28); box-shadow: inset 0 0 0 1px rgba(255,255,255,.12);
+  }
+  .step { width: 22px; height: 22px; border-radius: 50%; background: linear-gradient(135deg, #a78bfa, #7c3aed); display: grid; place-items: center; font-size: 12px; font-weight: 900; }
 </style>
 </head>
 <body>
-<div class="app">
-  <div class="sidebar">
-    <div class="ws">Acme</div>
-    <div class="section">▾ Channels</div>
-    <div class="ch">general</div>
-    <div class="ch active">bugs-storefront</div>
-    <div class="ch bold">deploys</div>
-    <div class="ch">eng-platform</div>
-    <div class="ch">random</div>
-    <div class="section" style="margin-top:10px">▾ Direct messages</div>
-    <div class="ch">Priya Shah</div>
-    <div class="ch">Marcus Lee</div>
+<div class="slack">
+  <div class="topbar">
+    <div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+    <div class="hist">
+      <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 10H4m5-5-5 5 5 5"/></svg>
+      <svg class="dim" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h12m-5-5 5 5-5 5"/></svg>
+      <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l2.5 2"/></svg>
+    </div>
+    <div class="search">
+      <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg>
+      Search Acme
+    </div>
+    <div class="helpbtn"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.8a2.3 2.3 0 1 1 3.2 2.1c-.6.3-1 .8-1 1.5v.4"/><circle cx="10" cy="14.2" r=".4" fill="currentColor"/></svg></div>
   </div>
-  <div class="main">
-    <div class="p-view_header" data-qa="channel_header">
-      <button class="name-control"><span data-qa="channel_name">bugs-storefront</span><span class="chev">▾</span></button>
-      <span class="gap"></span>
-      <button class="hbtn" data-qa="huddle">Huddle</button>
-      <button class="hbtn" data-qa="more">⋮</button>
+
+  <div class="rail">
+    <div class="ws-icon"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 2 3 21h4.2l1.7-4h6.2l1.7 4H21L12 2zm-1.7 11.3L12 9l1.7 4.3h-3.4z" fill="#4a154b"/></svg></div>
+    <div class="rail-item on"><span class="ico"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2.5 2.5 8.6V17a.5.5 0 0 0 .5.5h4.5v-5h5v5H17a.5.5 0 0 0 .5-.5V8.6z"/></svg></span>Home</div>
+    <div class="rail-item"><span class="ico"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3.5 4.5h13v9h-7l-4 3v-3h-2z"/></svg></span>DMs</div>
+    <div class="rail-item"><span class="badge">2</span><span class="ico"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M5 8a5 5 0 0 1 10 0v4l1.5 2.5h-13L5 12zM8 16.5a2 2 0 0 0 4 0"/></svg></span>Activity</div>
+    <div class="rail-item"><span class="ico"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M5.5 3h9v14l-4.5-3.5L5.5 17z"/></svg></span>Later</div>
+    <div class="rail-item"><span class="ico"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg></span>More</div>
+    <div class="rail-bottom">
+      <span class="rail-plus"><svg width="16" height="16" viewBox="0 0 20 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg></span>
+      <span class="me"><span class="av" data-av="michelle" style="width:36px;height:36px;border-radius:8px"></span><span class="dot"></span></span>
     </div>
-    <div id="list">
-      <div class="day">Today</div>
-      <div class="row" data-qa="virtual-list-item" id="r1">
-        <div class="avatar" style="background:#2e7d5b">PS</div>
-        <div class="body">
-          <div class="meta"><span data-qa="message_sender_name">Priya Shah</span>
-            <a class="c-timestamp" href="https://acme.slack.com/archives/C0BUGS/p1759240800000100">2:20 PM</a></div>
-          <div data-qa="message_content"><div class="p-rich_text_section">Heads up: checkout total is wrong when a gift card covers part of the order. The tax is calculated before the gift card is applied, so customers get overcharged.</div></div>
+  </div>
+
+  <div class="panel">
+    <nav class="sidebar">
+      <div class="sb-head">
+        <span class="name">Acme</span>
+        <svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 5 5 5-5"/></svg>
+        <span class="grow"></span>
+        <span class="hbtn"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 6h7m4 0h3M3 14h3m4 0h7"/><circle cx="12" cy="6" r="2"/><circle cx="8" cy="14" r="2"/></svg></span>
+        <span class="hbtn compose"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M13.5 3.5 16.5 6.5 8 15H5v-3z"/></svg></span>
+      </div>
+      <div class="sb-scroll">
+        <div class="sb-row"><span class="i"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3.5 4.5h13v8h-6l-3.5 3v-3H3.5z"/><path d="M7 8h6"/></svg></span>Threads</div>
+        <div class="sb-row"><span class="i"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3.5 12V10a6.5 6.5 0 0 1 13 0v2"/><rect x="3" y="11" width="3.5" height="5" rx="1"/><rect x="13.5" y="11" width="3.5" height="5" rx="1"/></svg></span>Huddles</div>
+        <div class="sb-row"><span class="i"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="m3 10 14-6-5 13-2.5-5z"/></svg></span>Drafts &amp; sent</div>
+        <div class="sb-row"><span class="i"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3.5" y="4" width="13" height="12" rx="2"/><path d="M7 8h6M7 11.5h4"/></svg></span>Directories</div>
+
+        <div class="sb-sec"><span class="caret">▼</span>Channels</div>
+        <div class="sb-row" data-qa="virtual-list-item" data-qa-channel-sidebar-channel-id="C0ANNOUNCE"><span class="i">#</span><span class="p-channel_sidebar__name">announcements</span></div>
+        <div class="sb-row sel" data-qa="virtual-list-item" data-qa-channel-sidebar-channel-id="C0BUGS"><span class="i">#</span><span class="p-channel_sidebar__name">bugs-storefront</span></div>
+        <div class="sb-row bold" data-qa="virtual-list-item" data-qa-channel-sidebar-channel-id="C0DEPLOYS"><span class="i">#</span><span class="p-channel_sidebar__name">deploys</span></div>
+        <div class="sb-row" data-qa="virtual-list-item" data-qa-channel-sidebar-channel-id="C0PLATFORM"><span class="i">#</span><span class="p-channel_sidebar__name">eng-platform</span></div>
+        <div class="sb-row bold" data-qa="virtual-list-item" data-qa-channel-sidebar-channel-id="C0INCIDENTS"><span class="i">#</span><span class="p-channel_sidebar__name">incidents</span><span class="mention">1</span></div>
+        <div class="sb-row" data-qa="virtual-list-item" data-qa-channel-sidebar-channel-id="C0RANDOM"><span class="i">#</span><span class="p-channel_sidebar__name">random</span></div>
+
+        <div class="sb-sec"><span class="caret">▼</span>Direct messages</div>
+        <div class="sb-row bold"><span class="sb-av-wrap"><span class="sb-av" data-av="priya"></span><span class="p on"></span></span>Priya Shah</div>
+        <div class="sb-row"><span class="sb-av-wrap"><span class="sb-av" data-av="marcus"></span><span class="p on"></span></span>Marcus Lee</div>
+        <div class="sb-row"><span class="sb-av-wrap"><span class="sb-av" data-av="dana"></span><span class="p off"></span></span>Dana Okafor</div>
+        <div class="sb-row"><span class="sb-av-wrap"><span class="sb-av" data-av="michelle"></span><span class="p on"></span></span>Michelle Mayes<span class="you">you</span></div>
+      </div>
+    </nav>
+
+    <main class="main">
+      <div class="p-view_header" data-qa="channel_header">
+        <button class="name-control">
+          <svg class="hash" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3 6.5 17M13.5 3 12 17M3.5 7.5h14M2.8 12.5h14"/></svg>
+          <span data-qa="channel_name">bugs-storefront</span>
+          <svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 5 5 5-5"/></svg>
+        </button>
+        <span class="gap"></span>
+        <button class="facepile" data-qa="channel_members"><span class="avs"><span data-av="priya"></span><span data-av="marcus"></span><span data-av="dana"></span></span>14</button>
+        <button class="huddle" data-qa="huddle"><span class="l"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3.5 12V10a6.5 6.5 0 0 1 13 0v2"/><rect x="3" y="11" width="3.5" height="5" rx="1"/><rect x="13.5" y="11" width="3.5" height="5" rx="1"/></svg></span><span class="r"><svg width="10" height="10" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 5 5 5-5"/></svg></span></button>
+        <button class="kebab" data-qa="more"><svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="4.5" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="10" cy="15.5" r="1.6"/></svg></button>
+      </div>
+      <div class="tabs">
+        <span class="tab on"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3.5 4.5h13v9h-7l-4 3v-3h-2z"/></svg>Messages</span>
+        <span class="tab"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="4" y="3" width="12" height="14" rx="2"/><path d="M7 7.5h6M7 10.5h6M7 13.5h3"/></svg>Canvas</span>
+        <span class="tab"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M5 3h6.5L15 6.5V17H5z"/><path d="M11 3v4h4"/></svg>Files</span>
+        <span class="tab add"><svg width="14" height="14" viewBox="0 0 20 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg></span>
+      </div>
+
+      <div id="list" class="c-virtual_list__scroll_container">
+        <div class="divider"><span>Yesterday <svg width="10" height="10" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 5 5 5-5"/></svg></span></div>
+        <div class="c-virtual_list__item" data-qa="virtual-list-item">
+          <div class="c-message_kit__background">
+            <div class="c-message_kit__gutter__left"><div class="c-avatar" data-av="marcus"></div></div>
+            <div class="c-message_kit__gutter__right">
+              <div class="c-message__sender"><button class="c-message__sender_button" data-qa="message_sender_name">Marcus Lee</button>
+                <a class="c-timestamp" href="https://acme.slack.com/archives/C0BUGS/p1759158000000100"><span class="c-timestamp__label">4:40 PM</span></a></div>
+              <div class="c-message_kit__blocks" data-qa="message_content"><div class="p-rich_text_block"><div class="p-rich_text_section">Closing out the promo code rounding bug from Monday, the fix is in 4.12.0 <span class="emoji">✅</span></div></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="c-virtual_list__item" data-qa="virtual-list-item">
+          <div class="c-message_kit__background">
+            <div class="c-message_kit__gutter__left"><div class="c-avatar" data-av="dana"></div></div>
+            <div class="c-message_kit__gutter__right">
+              <div class="c-message__sender"><button class="c-message__sender_button" data-qa="message_sender_name">Dana Okafor</button>
+                <a class="c-timestamp" href="https://acme.slack.com/archives/C0BUGS/p1759236300000100"><span class="c-timestamp__label">1:05 PM</span></a></div>
+              <div class="c-message_kit__blocks" data-qa="message_content"><div class="p-rich_text_block"><div class="p-rich_text_section">storefront 4.12.0 is live on the EU store <span class="emoji">🚢</span> ping here if anything looks off with checkout</div></div></div>
+              <div class="c-reaction_bar"><span class="c-reaction"><span class="emoji">🎉</span>4</span><span class="c-reaction"><span class="emoji">🙏</span>2</span></div>
+            </div>
+          </div>
+          <div class="c-message_actions__container">
+            <span class="c-message_actions__button"><span class="emoji">✅</span></span><span class="c-message_actions__button"><span class="emoji">👀</span></span><span class="c-message_actions__button"><span class="emoji">🙌</span></span>
+            <span class="c-message_actions__sep"></span>
+            <span class="c-message_actions__button" data-icon="react"></span><span class="c-message_actions__button" data-icon="thread"></span><span class="c-message_actions__button" data-icon="share"></span><span class="c-message_actions__button" data-icon="later"></span><span class="c-message_actions__button" data-icon="more"></span>
+          </div>
+        </div>
+
+        <div class="divider"><span>Today <svg width="10" height="10" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 5 5 5-5"/></svg></span></div>
+
+        <div class="c-virtual_list__item" data-qa="virtual-list-item" id="bug">
+          <div class="c-message_kit__background">
+            <div class="c-message_kit__gutter__left"><div class="c-avatar" data-av="priya"></div></div>
+            <div class="c-message_kit__gutter__right">
+              <div class="c-message__sender"><button class="c-message__sender_button" data-qa="message_sender_name">Priya Shah</button>
+                <a class="c-timestamp" href="https://acme.slack.com/archives/C0BUGS/p1759240800000100"><span class="c-timestamp__label">2:20 PM</span></a></div>
+              <div class="c-message_kit__blocks" data-qa="message_content"><div class="p-rich_text_block">
+                <div class="p-rich_text_section">Checkout totals are wrong when a gift card covers part of an order. We charge VAT on the full cart <b>before</b> the gift card comes off, so customers get overcharged <span class="emoji">😬</span></div>
+                <div class="p-rich_text_section">Repro on the EU store: order #48213, €60 cart with a €50 gift card was charged €22 instead of €12.</div>
+              </div></div>
+              <div class="c-reaction_bar"><span class="c-reaction"><span class="emoji">👀</span>3</span><span class="c-reaction mine"><span class="emoji">🐛</span>1</span><span class="c-reaction c-reaction_add"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="9" cy="10" r="6.5"/><path d="M6.5 12a3 3 0 0 0 5 0"/><circle cx="7" cy="8.5" r=".5" fill="currentColor"/><circle cx="11" cy="8.5" r=".5" fill="currentColor"/><path d="M16 2v4M14 4h4"/></svg></span></div>
+              <div class="c-message__reply_bar"><span class="avs"><span data-av="marcus"></span><span data-av="dana"></span></span><span class="c-message__reply_count">2 replies</span><span class="c-message__reply_bar_description">Last reply today at 2:26 PM</span></div>
+            </div>
+          </div>
+          <div class="c-message_actions__container">
+            <span class="c-message_actions__button"><span class="emoji">✅</span></span><span class="c-message_actions__button"><span class="emoji">👀</span></span><span class="c-message_actions__button"><span class="emoji">🙌</span></span>
+            <span class="c-message_actions__sep"></span>
+            <span class="c-message_actions__button" data-icon="react"></span><span class="c-message_actions__button" data-icon="thread"></span><span class="c-message_actions__button" data-icon="share"></span><span class="c-message_actions__button" data-icon="later"></span><span class="c-message_actions__button" data-icon="more"></span>
+          </div>
+        </div>
+
+        <div class="c-virtual_list__item" data-qa="virtual-list-item">
+          <div class="c-message_kit__background">
+            <div class="c-message_kit__gutter__left"><div class="c-avatar" data-av="marcus"></div></div>
+            <div class="c-message_kit__gutter__right">
+              <div class="c-message__sender"><button class="c-message__sender_button" data-qa="message_sender_name">Marcus Lee</button>
+                <a class="c-timestamp" href="https://acme.slack.com/archives/C0BUGS/p1759241100000300"><span class="c-timestamp__label">2:25 PM</span></a></div>
+              <div class="c-message_kit__blocks" data-qa="message_content"><div class="p-rich_text_block"><div class="p-rich_text_section">Probably the VAT path in <code class="c-mrkdwn__code">src/pricing/totals.ts</code>, it got refactored last sprint. <span class="c-member_slug">@Michelle Mayes</span> can you take a look?</div></div></div>
+              <div class="c-reaction_bar"><span class="c-reaction"><span class="emoji">👍</span>2</span></div>
+            </div>
+          </div>
+          <div class="c-message_actions__container">
+            <span class="c-message_actions__button"><span class="emoji">✅</span></span><span class="c-message_actions__button"><span class="emoji">👀</span></span><span class="c-message_actions__button"><span class="emoji">🙌</span></span>
+            <span class="c-message_actions__sep"></span>
+            <span class="c-message_actions__button" data-icon="react"></span><span class="c-message_actions__button" data-icon="thread"></span><span class="c-message_actions__button" data-icon="share"></span><span class="c-message_actions__button" data-icon="later"></span><span class="c-message_actions__button" data-icon="more"></span>
+          </div>
         </div>
       </div>
-      <div class="row cont" data-qa="virtual-list-item" id="r2">
-        <div class="avatar"></div>
-        <div class="body">
-          <div class="meta"><a class="c-timestamp" href="https://acme.slack.com/archives/C0BUGS/p1759240860000200">2:21 PM</a></div>
-          <div data-qa="message_content"><div class="p-rich_text_section">Only on the EU store as far as I can tell. Order #48213 is a clean repro.</div></div>
+
+      <div class="composer">
+        <div class="fmt">
+          <span data-icon="bold"></span><span data-icon="italic"></span><span data-icon="strike"></span><i class="sep"></i>
+          <span data-icon="link"></span><span data-icon="ol"></span><span data-icon="ul"></span><i class="sep"></i>
+          <span data-icon="code"></span><span data-icon="codeblock"></span>
+        </div>
+        <div class="text">Message #bugs-storefront</div>
+        <div class="bottom">
+          <span class="plus"><svg width="14" height="14" viewBox="0 0 20 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg></span>
+          <span class="b" data-icon="aa"></span><span class="b" data-icon="emoji"></span><span class="b" data-icon="at"></span><i class="sep"></i>
+          <span class="b" data-icon="video"></span><span class="b" data-icon="mic"></span><i class="sep"></i><span class="b" data-icon="slash"></span>
+          <span class="send"><svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path d="M2.5 3.2 17.5 10 2.5 16.8l2-6.8zm2 6.8h7"/></svg><i></i><svg width="10" height="10" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 5 5 5-5"/></svg></span>
         </div>
       </div>
-      <div class="row" data-qa="virtual-list-item" id="r3">
-        <div class="avatar" style="background:#b35c1e">ML</div>
-        <div class="body">
-          <div class="meta"><span data-qa="message_sender_name">Marcus Lee</span>
-            <a class="c-timestamp" href="https://acme.slack.com/archives/C0BUGS/p1759241100000300">2:25 PM</a></div>
-          <div data-qa="message_content"><div class="p-rich_text_section">Probably the VAT path in <code>pricing/totals.ts</code>. It got refactored last sprint.</div></div>
-        </div>
-      </div>
-    </div>
-    <div class="composer">Message #bugs-storefront</div>
-    <div id="list-end"></div>
+    </main>
   </div>
 </div>
-<div id="warp" class="warp" hidden>
-  <div class="warp-bar">
-    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
-    <span class="warp-tab">Fix · storefront</span>
+
+<div id="warp" class="warp off" hidden>
+  <div class="w-top">
+    <div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+    <div class="w-tab"><span class="t">~/code/storefront</span></div>
+    <div class="w-tab on"><span class="t" id="wtitle">Fix · storefront</span><span class="x">×</span></div>
+    <span class="w-plus"><svg width="14" height="14" viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg></span>
+    <div class="w-right">
+      <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M5 8a5 5 0 0 1 10 0v4l1.5 2.5h-13L5 12zM8 16.5a2 2 0 0 0 4 0"/></svg>
+      <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="2.5"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6"/></svg>
+      <span class="av" data-av="michelle" style="width:20px;height:20px;border-radius:50%"></span>
+    </div>
   </div>
-  <div class="warp-body">
-    <div class="warp-cwd"><span class="cwd">~/.sidequest/worktrees/fix-checkout-total-is-wrong-20260930-1426</span> <span class="git">git:(fix/checkout-total-is-wrong-20260930-1426)</span></div>
-    <div id="term" class="term"></div>
+  <div class="w-body">
+    <div class="w-block-head">
+      <span class="w-chip path">~/.sidequest/worktrees/fix-checkout-total-is-wrong-20260930-1426</span>
+      <span class="w-chip git">fix/checkout-total-is-wrong-20260930-1426</span>
+    </div>
+    <div id="screen" class="cc"><div id="term"></div><div id="live"></div></div>
   </div>
 </div>
-<div id="caption" class="caption"><span class="step" id="step">1</span><span id="captext"></span></div>
+
+<div class="caption"><span class="pill"><span class="step" id="step">1</span><span id="captext"></span></span></div>
+
+<script>
+  // Stylised portrait avatars, so the rows read as people rather than initials.
+  const PEOPLE = {
+    priya:    { bg: '#e9b872', skin: '#b0764f', hair: '#1f1512', long: true },
+    marcus:   { bg: '#7fb3d5', skin: '#e2b48f', hair: '#3b2a20', long: false },
+    dana:     { bg: '#9bc59d', skin: '#6b4430', hair: '#16100d', long: false, curly: true },
+    michelle: { bg: '#c9a3d9', skin: '#f0c9a8', hair: '#6b3f22', long: true },
+  };
+  const avatar = ({ bg, skin, hair, long, curly }) => `
+    <svg viewBox="0 0 36 36" width="100%" height="100%" preserveAspectRatio="xMidYMid slice">
+      <rect width="36" height="36" fill="${bg}"/>
+      ${long ? `<path d="M8 36V16a10 10 0 0 1 20 0v20z" fill="${hair}"/>` : ''}
+      <path d="M5 36c1-7 6.5-10.5 13-10.5S30 29 31 36z" fill="${['#34495e','#8e44ad','#c0392b','#2c3e50'][hair.length % 4]}"/>
+      <rect x="15.2" y="20" width="5.6" height="7" rx="2.5" fill="${skin}"/>
+      <ellipse cx="18" cy="15.5" rx="6.3" ry="7.2" fill="${skin}"/>
+      ${curly
+        ? `<circle cx="18" cy="9.2" r="6.6" fill="${hair}"/><circle cx="12.6" cy="11.8" r="3" fill="${hair}"/><circle cx="23.4" cy="11.8" r="3" fill="${hair}"/>`
+        : `<path d="M11.4 15.5c-.6-6.5 3-9.6 6.8-9.6 4.3 0 7.4 3.1 6.4 9.6-1-3.3-3.4-5-6.8-5.2-3 .2-5.6 1.9-6.4 5.2z" fill="${hair}"/>`}
+    </svg>`;
+  document.querySelectorAll('[data-av]').forEach((el) => { el.innerHTML = avatar(PEOPLE[el.dataset.av]); el.style.overflow = 'hidden'; el.style.display = el.style.display || 'block'; });
+
+  // Line icons for Slack's toolbars, drawn the way Slack's own are: 20px, 1.5px strokes.
+  const P = (d, extra = '') => `<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"${extra}>${d}</svg>`;
+  const ICONS = {
+    react: P('<circle cx="9" cy="10.5" r="6.5"/><path d="M6.5 12.5a3 3 0 0 0 5 0"/><path d="M16 2v4M14 4h4"/><circle cx="7" cy="9" r=".6" fill="currentColor"/><circle cx="11" cy="9" r=".6" fill="currentColor"/>'),
+    thread: P('<path d="M3.5 4.5h13v9h-7l-4 3v-3h-2z"/><path d="M7 8h6M7 10.5h4"/>'),
+    share: P('<path d="M11 4.5 17 10l-6 5.5v-3.2C7 12.3 4.5 13.6 3 16c.4-4.6 3-7.8 8-8.3z"/>'),
+    later: P('<path d="M5.5 3h9v14l-4.5-3.5L5.5 17z"/>'),
+    more: '<svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="4.5" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="10" cy="15.5" r="1.5"/></svg>',
+    bold: P('<path d="M6 4h5a3 3 0 0 1 0 6H6zM6 10h6a3 3 0 0 1 0 6H6z" stroke-width="2"/>'),
+    italic: P('<path d="M9 4h6M5 16h6M12 4 8 16"/>'),
+    strike: P('<path d="M3.5 10h13M13.5 6.5c-.5-1.6-2-2.5-3.7-2.5-2.2 0-3.8 1.2-3.8 3 0 1.1.6 2 2 2.6M6.5 13.5c.5 1.6 2 2.5 3.8 2.5 2.2 0 3.9-1.2 3.9-3"/>'),
+    link: P('<path d="M8.5 11.5a3.5 3.5 0 0 0 5 0l2.5-2.5a3.5 3.5 0 0 0-5-5l-1 1M11.5 8.5a3.5 3.5 0 0 0-5 0L4 11a3.5 3.5 0 0 0 5 5l1-1"/>'),
+    ol: P('<path d="M8 5h9M8 10h9M8 15h9M3.5 4l1-.5v3.5M3 14h2l-2 2.5h2"/>'),
+    ul: P('<path d="M8 5h9M8 10h9M8 15h9"/><circle cx="4" cy="5" r=".8" fill="currentColor"/><circle cx="4" cy="10" r=".8" fill="currentColor"/><circle cx="4" cy="15" r=".8" fill="currentColor"/>'),
+    code: P('<path d="m7 6-4 4 4 4M13 6l4 4-4 4"/>'),
+    codeblock: P('<rect x="3" y="3.5" width="14" height="13" rx="2"/><path d="m8 8-2 2 2 2M12 8l2 2-2 2"/>'),
+    aa: P('<path d="m2.5 15 3.5-10 3.5 10M3.8 11.5h4.4M16.5 15v-4.5a2.5 2.5 0 0 0-5 0M16.5 12.5c-3.5-.5-5 .2-5 1.3 0 .8.7 1.4 1.8 1.4 1.7 0 3.2-1 3.2-2.7"/>'),
+    emoji: P('<circle cx="10" cy="10" r="7"/><path d="M7 12a3.5 3.5 0 0 0 6 0"/><circle cx="7.5" cy="8.5" r=".6" fill="currentColor"/><circle cx="12.5" cy="8.5" r=".6" fill="currentColor"/>'),
+    at: P('<circle cx="10" cy="10" r="3"/><path d="M13 10v1.5a2 2 0 0 0 4 0V10a7 7 0 1 0-3 5.7"/>'),
+    video: P('<rect x="2.5" y="5" width="11" height="10" rx="2"/><path d="m13.5 9 4-2.5v7l-4-2.5"/>'),
+    mic: P('<rect x="7.5" y="3" width="5" height="9" rx="2.5"/><path d="M4.5 10a5.5 5.5 0 0 0 11 0M10 15.5V18"/>'),
+    slash: P('<rect x="3" y="3" width="14" height="14" rx="3"/><path d="m12 6-4 8"/>'),
+  };
+  const list = document.getElementById('list');
+  list.scrollTop = list.scrollHeight;
+  document.querySelectorAll('[data-icon]').forEach((el) => { el.innerHTML = ICONS[el.dataset.icon] || ''; });
+</script>
 </body>
 </html>
