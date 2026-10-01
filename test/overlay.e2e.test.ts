@@ -1215,16 +1215,39 @@ describeIfChrome("overlay over CDP", () => {
       const toastAction = await waitFor(session, `${UI}.querySelector('.sq-toast-action')?.textContent || ''`, Boolean);
       expect(toastAction).toBe("Review");
 
-      // The mark opens the reply to read, in Slack's markup, before it posts.
+      // The mark opens the reply to read, in Slack's markup, signed by the agent.
       await evaluate(session, `(() => {
         const mark = ${INLINE}('.sq-mark').find((m) => m.textContent.includes('reply ready'));
         mark.click();
       })()`);
+      const signed = "\n\n_🤖 Written by Claude Code, an AI agent, via Sidequest_";
       const draft = await waitFor(session, `${UI}.querySelector('.sq-reply-input')?.value || ''`, Boolean);
-      expect(draft).toBe("*Cause*\nThe *gift card* is applied twice.");
+      expect(draft).toBe(`*Cause*\nThe *gift card* is applied twice.${signed}`);
+
+      // Closed without posting, it is still a click away from the header.
+      await press(session, "Escape", "Escape", 27);
+      expect(await waitFor(session, `${UI}.querySelector('.sq-reply-input') ? 'open' : 'closed'`, (v) => v === "closed"))
+        .toBe("closed");
+      expect(await waitFor(session, `${UI}.querySelector('.sq-channel .sq-reply-count')?.textContent || ''`, Boolean))
+        .toBe("💬 1");
+
+      // The agent is asked to change it: the rewrite is news again.
+      await writeFile(result, "## Cause\nThe **gift card** is applied twice, in `applyCredits`.\n");
+      const later = (Date.now() - 5_000) / 1000;
+      await utimes(result, later, later);
+      expect(await waitFor(session, `${UI}.querySelector('.sq-toast-title')?.textContent || ''`, (t) => t.includes("updated")))
+        .toBe("Investigate updated its reply for the thread");
+
+      // The badge lists every reply waiting, and opens the one picked.
+      await evaluate(session, `${UI}.querySelector('.sq-channel .sq-reply-count').click()`);
+      expect(await waitFor(session, `${UI}.querySelector('.sq-replies .sq-session-branch')?.textContent || ''`, Boolean))
+        .toContain("investigate/checkout-total");
+      await evaluate(session, `${UI}.querySelector('.sq-reply-row').click()`);
+      const redraft = await waitFor(session, `${UI}.querySelector('.sq-reply-input')?.value || ''`, Boolean);
+      expect(redraft).toBe(`*Cause*\nThe *gift card* is applied twice, in \`applyCredits\`.${signed}`);
       await evaluate(session, `(() => {
         const box = ${UI}.querySelector('.sq-reply-input');
-        box.value = box.value + '\\nFix coming.';
+        box.value = box.value.replace(/\\n\\n_.*_$/, '') + '\\nFix coming.';
         ${UI}.querySelector('.sq-reply .sq-ask-send').click();
       })()`);
 
@@ -1235,7 +1258,7 @@ describeIfChrome("overlay over CDP", () => {
         posts[0]!.match(new RegExp(`name="${name}"\\r\\n\\r\\n([^]*?)\\r\\n--`))?.[1];
       expect(field("thread_ts")).toBe("1757430000.000100");
       // Form encoding sends line breaks as CRLF; Slack reads them the same.
-      expect(field("text")?.replace(/\r\n/g, "\n")).toBe("*Cause*\nThe *gift card* is applied twice.\nFix coming.");
+      expect(field("text")?.replace(/\r\n/g, "\n")).toBe("*Cause*\nThe *gift card* is applied twice, in `applyCredits`.\nFix coming.");
 
       // Posted once: the mark stops offering it, and history remembers.
       expect(await waitFor(session, markOn("row-1"), (t) => !t.includes("reply ready"))).toBe("Investigate · answered");
@@ -1286,6 +1309,7 @@ describeIfChrome("overlay over CDP", () => {
       while (posts.length === 0 && Date.now() < deadline) await sleep(100);
       expect(posts).toHaveLength(1);
       expect(posts[0]).toContain("It is the rounding in `total()`.");
+      expect(posts[0]).toContain("Written by Claude Code, an AI agent");
       // No second post for the same reply, however many passes follow.
       await sleep(1500);
       expect(posts).toHaveLength(1);

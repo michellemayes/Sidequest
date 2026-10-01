@@ -6,14 +6,14 @@ import { log } from "../util/log.js";
 import {
   branchExists,
   ensureSessionDirIgnored,
-  fetchQuietly,
   resolveBaseRef,
-  type RepoInfo,
+  type RepoLocation,
 } from "./repo.js";
+import { fetches } from "./prefetch.js";
 import { SESSION_DIR } from "../warp/autorun.js";
 
 export interface CreateWorktreeOptions {
-  repo: RepoInfo;
+  repo: RepoLocation;
   /** Desired branch name; a numeric suffix is added if it is already taken. */
   branch: string;
   baseBranch: string;
@@ -26,9 +26,10 @@ export interface CreateWorktreeOptions {
    */
   fetchWaitMs?: number;
   /**
-   * Runs alongside `git worktree add` once the names are settled, so work that
-   * only needs the path (writing Warp's tab config) overlaps the checkout. If
-   * the checkout fails, this has still run.
+   * Runs as soon as the names are settled, so work that only needs the path
+   * (writing Warp's tab config) overlaps the wait for the fetch and the
+   * checkout. If either fails, this has still run, and finished, by the time
+   * the error is thrown.
    */
   alongsideCheckout?: (names: { branch: string; path: string }) => Promise<void>;
 }
@@ -51,32 +52,40 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<Wo
   const { repo, baseBranch, worktreesRoot } = options;
 
   // The fetch is the slowest step and needs nothing else, so the local lookups
-  // run while it is in flight.
-  const fetched = options.fetch && repo.hasRemote ? fetchQuietly(repo.root, baseBranch) : null;
+  // run while it is in flight. One the daemon finished a moment ago, or
+  // started when the menu opened, is used as it is rather than run again.
+  const fetched = options.fetch && repo.hasRemote ? fetches.fetch(repo.root, baseBranch) : null;
 
   await mkdir(worktreesRoot, { recursive: true });
   const { branch, path } = await findFreeNames(repo, options.branch, worktreesRoot);
 
-  if (fetched) {
-    const waitMs = options.fetchWaitMs ?? FETCH_WAIT_MS;
-    const inTime = await Promise.race([fetched.then(() => true), sleep(waitMs).then(() => false)]);
-    if (!inTime) log.warn(`fetching origin/${baseBranch} is taking over ${waitMs}ms; cutting from the local ref`);
-  }
+  // Started before the fetch is waited on, so its own wait overlaps that too.
+  const alongside = Promise.resolve(options.alongsideCheckout?.({ branch, path })).catch(() => {});
 
-  const baseRef = await resolveBaseRef(repo.root, baseBranch, repo.hasRemote);
+  let baseRef: string;
+  try {
+    if (fetched) {
+      const waitMs = options.fetchWaitMs ?? FETCH_WAIT_MS;
+      const inTime = await Promise.race([fetched.then(() => true), sleep(waitMs).then(() => false)]);
+      if (!inTime) log.warn(`fetching origin/${baseBranch} is taking over ${waitMs}ms; cutting from the local ref`);
+    }
 
-  const [added] = await Promise.allSettled([
-    run("git", ["worktree", "add", "-b", branch, path, baseRef], {
-      cwd: repo.root,
-      timeoutMs: 180_000,
-    }),
-    options.alongsideCheckout?.({ branch, path }),
-  ]);
-  if (added.status === "rejected") {
-    const err: unknown = added.reason;
-    throw new UserFacingError(
-      `Could not create a worktree in ${repo.root}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    baseRef = await resolveBaseRef(repo.root, baseBranch, repo.hasRemote);
+
+    try {
+      await run("git", ["worktree", "add", "-b", branch, path, baseRef], {
+        cwd: repo.root,
+        timeoutMs: 180_000,
+      });
+    } catch (err) {
+      throw new UserFacingError(
+        `Could not create a worktree in ${repo.root}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  } finally {
+    // Whatever happened, the caller's work is done before this returns, so a
+    // caller cleaning up after a failure finds everything it wrote.
+    await alongside;
   }
 
   // Do this after the worktree exists so a failed creation leaves no trace.
@@ -101,7 +110,7 @@ function sleep(ms: number): Promise<void> {
  * -N suffix to each until they are.
  */
 async function findFreeNames(
-  repo: RepoInfo,
+  repo: RepoLocation,
   desiredBranch: string,
   worktreesRoot: string,
 ): Promise<{ branch: string; path: string }> {

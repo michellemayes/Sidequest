@@ -63,14 +63,21 @@ export async function resultMtime(worktreePath: string): Promise<number | null> 
 
 /**
  * The text to post: converted to Slack's markup, cut to a thread-sized
- * length, and carrying the pull request link when there is one and the agent
- * did not already mention it.
+ * length, carrying the pull request link when there is one and the agent
+ * did not already mention it, and signed with the agent that wrote it, so
+ * nobody in the thread takes it for something typed by hand.
  */
-export function resultReply(markdown: string, extras: { prUrl?: string } = {}): string {
+export function resultReply(markdown: string, extras: { prUrl?: string; agent?: string } = {}): string {
   let text = toSlack(markdown.trim());
   if (text.length > MAX_RESULT_CHARS) text = truncate(text, MAX_RESULT_CHARS);
   if (extras.prUrl && !markdown.includes(extras.prUrl)) text += `\n\nPull request: ${extras.prUrl}`;
+  if (extras.agent) text += `\n\n${attribution(extras.agent)}`;
   return text;
+}
+
+/** The line every agent-written reply ends with. */
+export function attribution(agent: string): string {
+  return `_🤖 Written by ${escapeSlack(agent)}, an AI agent, via Sidequest_`;
 }
 
 /**
