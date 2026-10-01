@@ -1000,28 +1000,47 @@
    * comes back as a sign-in page, is left out rather than failing the session.
    */
   async function fetchFiles(files) {
-    const out = [];
+    // Downloaded side by side, then kept or dropped in the message's order,
+    // so the size limits keep the same files as fetching them one by one.
+    const blobs = await Promise.all(files.map(fetchFile));
+    const kept = [];
     let total = 0;
-    for (const file of files) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), FILE_TIMEOUT_MS);
-      try {
-        const res = await fetch(file.url, { credentials: 'include', signal: controller.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
-        if (/text\/html/i.test(blob.type)) throw new Error('got a page, not the file');
-        if (blob.size === 0 || blob.size > MAX_FILE_BYTES || total + blob.size > MAX_FILES_TOTAL) {
-          throw new Error(`${blob.size} bytes is over the limit`);
-        }
-        total += blob.size;
-        out.push({ name: file.name, type: blob.type, data: await base64Of(blob) });
-      } catch (err) {
-        log('could not fetch', file.url, err.message);
-      } finally {
-        clearTimeout(timer);
+    files.forEach((file, i) => {
+      const blob = blobs[i];
+      if (!blob) return;
+      if (blob.size === 0 || blob.size > MAX_FILE_BYTES || total + blob.size > MAX_FILES_TOTAL) {
+        log('could not fetch', file.url, `${blob.size} bytes is over the limit`);
+        return;
       }
+      total += blob.size;
+      kept.push({ file, blob });
+    });
+    const encoded = await Promise.all(kept.map(({ file, blob }) => base64Of(blob).then(
+      (data) => ({ name: file.name, type: blob.type, data }),
+      (err) => {
+        log('could not fetch', file.url, err.message);
+        return null;
+      },
+    )));
+    return encoded.filter(Boolean);
+  }
+
+  /** One file's contents, or null when it will not come in time or is not a file. */
+  async function fetchFile(file) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FILE_TIMEOUT_MS);
+    try {
+      const res = await fetch(file.url, { credentials: 'include', signal: controller.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      if (/text\/html/i.test(blob.type)) throw new Error('got a page, not the file');
+      return blob;
+    } catch (err) {
+      log('could not fetch', file.url, err.message);
+      return null;
+    } finally {
+      clearTimeout(timer);
     }
-    return out;
   }
 
   function base64Of(blob) {
@@ -1333,6 +1352,7 @@
     } else {
       const repos = reposFor(channel);
       if (repos.length > 1) menu.append(repoSwitcher(channel, repos));
+      prefetch(channel);
 
       // A reply an agent left is the first thing worth doing with its message.
       for (const entry of sessionsFor(sig).filter((e) => e.status && e.status.reply).reverse()) {
@@ -1426,6 +1446,7 @@
 
   function pickRepo(channel, repo) {
     repoPicks.set(channelKey(channel), repo);
+    prefetch(channel);
     if (!menuEl) return;
     menuEl.querySelectorAll('.sq-repo').forEach((chip) => {
       const on = chip.dataset.repo === repo;
@@ -1433,6 +1454,16 @@
       else delete chip.dataset.on;
       chip.setAttribute('aria-checked', on ? 'true' : 'false');
     });
+  }
+
+  /**
+   * Have the daemon start fetching the repo a session from this channel would
+   * be cut from, while the reader is still choosing a prompt. Nothing waits
+   * on it: the daemon skips a fetch it has just done and joins one running.
+   */
+  function prefetch(channel) {
+    const repo = reposFor(channel).length > 1 ? pickedRepo(channel) : '';
+    ask({ op: 'prefetch', channel, repo }).catch(() => {});
   }
 
   /**
