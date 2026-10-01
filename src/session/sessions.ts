@@ -270,7 +270,9 @@ async function aheadOf(repoPath: string, branch: string, base: string): Promise<
  */
 export async function dirtyCount(worktreePath: string): Promise<number | null> {
   try {
-    const { stdout } = await run("git", ["status", "--porcelain", "--untracked-files=normal"], {
+    // Only reading: without --no-optional-locks, status takes index.lock to
+    // refresh the index, and the agent may be committing in this worktree.
+    const { stdout } = await run("git", ["--no-optional-locks", "status", "--porcelain", "--untracked-files=normal"], {
       cwd: worktreePath,
       timeoutMs: PROBE_MS,
     });

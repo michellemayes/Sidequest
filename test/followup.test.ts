@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -270,6 +270,44 @@ describe("StatusWatcher", () => {
     await git(["worktree", "remove", worktree], repoPath);
     await w.refresh();
     expect(w.snapshot().get("fix/thing")!.state).toBe("gone");
+  });
+
+  /*
+   * A plain `git status` refreshes a stale index and writes it back under
+   * index.lock; done every few seconds in the agent's worktree, that is a
+   * lock its own `git commit` can trip over.
+   */
+  it("looks without taking the worktree's index lock", async () => {
+    const later = Math.floor(Date.now() / 1000) + 60;
+    // Same content, newer mtime: the index entry is stale and a locking
+    // status would rewrite it.
+    await utimes(join(worktree, "README.md"), later, later);
+    const index = join(repoPath, ".git", "worktrees", "wt", "index");
+    const before = (await stat(index)).mtimeMs;
+
+    const w = watcher(() => [entry]);
+    await w.refresh();
+    expect(w.snapshot().get("fix/thing")).toMatchObject({ dirty: false });
+    expect((await stat(index)).mtimeMs).toBe(before);
+  });
+
+  it("keeps its loop going after a pass throws", async () => {
+    let looks = 0;
+    const w = new StatusWatcher({
+      intervalMs: 5,
+      pullRequests: false,
+      // A different answer every time, so every pass has a change to report.
+      history: async () => (looks++ % 2 === 0 ? [entry] : []),
+      onChange: () => {
+        throw new Error("boom");
+      },
+    });
+    w.start();
+    try {
+      await vi.waitFor(() => expect(looks).toBeGreaterThanOrEqual(3), { timeout: 5000 });
+    } finally {
+      w.stop();
+    }
   });
 
   it("follows only recent sessions", async () => {
