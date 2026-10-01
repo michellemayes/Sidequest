@@ -20,7 +20,9 @@ import {
 import { loadConfig, updateConfig, expandPath, promptFor } from "../config/store.js";
 import { inspectRepo } from "../git/repo.js";
 import { createSession, type MessageContext } from "../session/create.js";
-import { computeStats, loadHistory, recordSession, updateSession } from "../session/history.js";
+import { computeStats, loadHistory, recordSession, updateSession, type HistoryEntry } from "../session/history.js";
+import { resolveAgent } from "../agents/agents.js";
+import type { Config } from "../config/schema.js";
 import { StatusWatcher, type SessionStatus } from "../session/status.js";
 import { readResult, resultReply } from "../session/result.js";
 import type { IncomingAttachment } from "../session/attachments.js";
@@ -29,6 +31,11 @@ import { findById, listSessions, removeSession, UncommittedWorkError } from "../
 import { discoverRepos } from "../git/discover.js";
 import { describeError } from "../util/errors.js";
 import { log } from "../util/log.js";
+
+/** Who wrote a session's reply: the agent it was started with, or today's for older sessions. */
+function replyAgent(entry: HistoryEntry, config: Config): string {
+  return entry.agentLabel || resolveAgent(config.settings.agent).label;
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // dist/cdp -> dist -> project root. The overlay ships as plain JS, unbuilt,
@@ -295,7 +302,7 @@ export class Attacher {
         resultMs: status.resultMs,
         permalink: entry.permalink,
         label: entry.promptLabel,
-        text: resultReply(result.text, { prUrl: status.pr?.url }),
+        text: resultReply(result.text, { prUrl: status.pr?.url, agent: replyAgent(entry, config) }),
       });
       for (const session of this.sessions.values()) {
         if (!session) continue;
@@ -425,6 +432,7 @@ export class Attacher {
           createdAt: new Date().toISOString(),
           permalink: context.permalink,
           baseBranch: result.baseBranch,
+          agentLabel: result.agentLabel,
         });
         stats = computeStats(history);
       } catch (err) {
@@ -605,6 +613,7 @@ export class Attacher {
       return;
     }
     const status = this.statuses.get(branch);
+    const config = await loadConfig();
     await this.reply(session, contextId, {
       id: request.id,
       ok: true,
@@ -613,7 +622,8 @@ export class Attacher {
       channel: entry.channel,
       permalink: entry.permalink ?? "",
       resultMs: result.mtimeMs,
-      text: resultReply(result.text, { prUrl: status?.pr?.url }),
+      agent: replyAgent(entry, config),
+      text: resultReply(result.text, { prUrl: status?.pr?.url, agent: replyAgent(entry, config) }),
     });
   }
 

@@ -123,6 +123,13 @@ describe("result replies", () => {
     expect(resultReply(`Fixed it in ${pr}.`, { prUrl: pr })).not.toContain("Pull request:");
   });
 
+  it("signs the reply with the agent that wrote it", () => {
+    expect(resultReply("Fixed it.", { agent: "Codex" }))
+      .toBe("Fixed it.\n\n_🤖 Written by Codex, an AI agent, via Sidequest_");
+    expect(resultReply("Fixed it.", { prUrl: "https://github.com/a/b/pull/7", agent: "Claude Code" }))
+      .toMatch(/pull\/7\n\n_🤖 Written by Claude Code/);
+  });
+
   it("asks the agent for a reply unless results are off", () => {
     expect(resultInstructions("off")).toBe("");
     expect(resultInstructions("ask")).toContain(".sidequest/result.md");
