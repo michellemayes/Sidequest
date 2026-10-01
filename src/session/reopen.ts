@@ -1,12 +1,15 @@
 import { stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import type { Config } from "../config/schema.js";
 import { linkedRepoPaths } from "../config/channels.js";
 import { listWorktrees, type WorktreeRecord } from "../git/worktree.js";
-import { colorForPrompt, launchWarp } from "../warp/launcher.js";
+import { colorForPrompt } from "../warp/launcher.js";
+import { headlessPaths } from "../terminals/headless.js";
+import { launchTerminal } from "../terminals/launch.js";
+import { sessionHost, type TerminalId } from "../terminals/registry.js";
 import { resolveAgent } from "../agents/agents.js";
 import { openUri } from "../util/openUri.js";
-import { warpConfigName } from "./naming.js";
+import { tabTitle, warpConfigName } from "./naming.js";
 import { UserFacingError } from "../util/errors.js";
 
 export interface FoundSession {
@@ -41,19 +44,24 @@ export async function findSession(
 }
 
 export interface ReopenResult {
-  /** Where it opened, e.g. "Warp" or "the Claude app". */
+  /** Where it opened, e.g. "Warp", "iTerm2" or "the Claude app". */
   host: string;
-  /** How: the Warp strategy that worked, or the agent's id for an app. */
+  /** The terminal it opened in; absent for an agent in a desktop app. */
+  terminal?: TerminalId;
+  /** How: the Warp strategy that worked, a terminal's tag, or the agent's id for an app. */
   strategy: string;
+  /** Anything worth telling the user, e.g. how to attach to a new tmux session. */
+  note?: string;
   /** Whether the agent claimed a still-pending session; null when there was none. */
   agentStarted: boolean | null;
 }
 
 /**
- * Open a session again. In Warp: if the session's pending marker is still
- * unclaimed, the agent starts on arrival; otherwise it is just a tab there.
- * For an agent in a desktop app: a new session in the app, in the worktree
- * (the links cannot reach back into an earlier one).
+ * Open a session again. In a terminal: if the session's pending marker is
+ * still unclaimed, the agent starts on arrival; otherwise it is just a tab
+ * there (or, headless, the session's answer or log). For an agent in a
+ * desktop app: a new session in the app, in the worktree (the links cannot
+ * reach back into an earlier one), whatever the terminal setting.
  */
 export async function openSession(config: Config, found: FoundSession): Promise<ReopenResult> {
   const { worktree, repoPath } = found;
@@ -72,7 +80,11 @@ export async function openSession(config: Config, found: FoundSession): Promise<
     return { host: agent.host, strategy: agent.id, agentStarted: null };
   }
 
-  const scriptFile = join(worktree.path, ".sidequest", "autorun.sh");
+  const terminal = config.settings.terminal;
+  const scriptFile =
+    terminal === "headless"
+      ? headlessPaths(worktree.path).scriptFile
+      : join(worktree.path, ".sidequest", "autorun.sh");
   let scriptExists = false;
   try {
     await stat(scriptFile);
@@ -82,16 +94,22 @@ export async function openSession(config: Config, found: FoundSession): Promise<
   }
 
   const prefix = worktree.branch.split("/")[0] ?? "";
-  const launch = await launchWarp({
-    strategy: scriptExists ? config.settings.warpStrategy : "new_tab",
-    preview: config.settings.warpPreview,
-    spec: {
+  const launch = await launchTerminal({
+    settings: config.settings,
+    session: {
       name: warpConfigName(worktree.branch),
       color: colorForPrompt(prefix),
+      title: tabTitle(prefix || "sidequest", basename(repoPath)),
       cwd: worktree.path,
-      command: scriptExists ? scriptFile : "true",
+      script: scriptExists ? scriptFile : null,
+      pendingFile: join(worktree.path, ".sidequest", "pending"),
     },
-    pendingFile: join(worktree.path, ".sidequest", "pending"),
   });
-  return { host: "Warp", strategy: launch.strategy, agentStarted: launch.agentStarted };
+  return {
+    host: sessionHost(agent, terminal),
+    terminal: launch.terminal,
+    strategy: launch.strategy,
+    agentStarted: launch.agentStarted,
+    ...(launch.note ? { note: launch.note } : {}),
+  };
 }

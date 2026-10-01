@@ -77,7 +77,7 @@ export async function writeAutorun(options: WriteAutorunOptions): Promise<Autoru
  * placeholders become double-quoted expansions, so the prompt is read from
  * disk at run time and its shell metacharacters stay literal.
  */
-function shellArg(arg: string): string {
+export function shellArg(arg: string): string {
   return arg
     .split(/(\{prompt\}|\{promptFile\})/)
     .filter((part) => part !== "")

@@ -1,14 +1,16 @@
 /**
  * The coding agents Sidequest can launch.
  *
- * Most run in a Warp tab: a terminal opens in the fresh worktree and runs
+ * Most run in a terminal (Warp unless settings.terminal names another, or
+ * headless): it opens in the fresh worktree and runs
  * `<command> [...args] [...promptArgs]`. For most agents `promptArgs` is just
  * the rendered prompt as one trailing argument; agents that take it behind a
  * flag (`gemini --prompt-interactive`, `opencode --prompt`) or from a file say
  * so here. An agent whose CLI can't be driven this way can still be used by
  * pointing `command` at a small wrapper script.
  *
- * The rest are desktop apps, opened with a deep link instead of Warp: the app
+ * The rest are desktop apps, opened with a deep link instead of a terminal,
+ * whatever settings.terminal says: the app
  * starts a new session in the worktree with the prompt in its composer, ready
  * for you to send.
  */
@@ -53,8 +55,32 @@ export interface AgentDefinition {
   resumeArgs?: string[];
   /** Shown by `sidequest doctor` when the agent is not usable. */
   installHint: string;
+  /**
+   * How to run the agent with no terminal (settings.terminal "headless"),
+   * or absent when it has no non-interactive mode.
+   */
+  headless?: HeadlessInvocation;
   /** Set for an agent that lives in a desktop app rather than a terminal. */
   app?: DesktopApp;
+}
+
+/**
+ * A non-interactive run: `<command> [...args] [...user args] [...promptArgs]`
+ * in the worktree, with nobody there to approve anything. The flags keep what
+ * the agent may do to the worktree, since the prompt carries Slack text.
+ */
+export interface HeadlessInvocation {
+  /** Placed before the user's own args and the prompt. */
+  args: string[];
+  /** How the prompt is handed over, as for an agent's own `promptArgs`. Defaults to `["{prompt}"]`. */
+  promptArgs?: string[];
+  /**
+   * Where the final answer comes out. `stdout`: the agent prints only its
+   * answer, and the runner saves it to .sidequest/result.md. `file`: `args`
+   * already make the agent write .sidequest/result.md itself, and all of its
+   * output is progress for the log.
+   */
+  result: "stdout" | "file";
 }
 
 /**
@@ -87,6 +113,9 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     host: "Warp",
     command: "claude",
     defaultArgs: [],
+    // Print mode answers on stdout. acceptEdits lets it change files in the
+    // worktree; anything else it would need a person to approve is refused.
+    headless: { args: ["-p", "--permission-mode", "acceptEdits"], result: "stdout" },
     installHint:
       "Install Claude Code (https://claude.com/claude-code), or point settings.agent.command at its executable.",
   },
@@ -96,6 +125,12 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     host: "Warp",
     command: "codex",
     defaultArgs: [],
+    // exec streams progress on stdout; --full-auto is its workspace-write
+    // sandbox, and the last message is the answer.
+    headless: {
+      args: ["exec", "--full-auto", "--output-last-message", ".sidequest/result.md"],
+      result: "file",
+    },
     installHint:
       "Install the Codex CLI (npm install -g @openai/codex), or point settings.agent.command at its executable.",
   },
@@ -107,6 +142,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     command: "gemini",
     defaultArgs: [],
     promptArgs: ["--prompt-interactive", PROMPT_TOKEN],
+    // -p answers once on stdout; without approval, tools that change things are off.
+    headless: { args: [], promptArgs: ["-p", PROMPT_TOKEN], result: "stdout" },
     installHint:
       "Install Gemini CLI (npm install -g @google/gemini-cli), or point settings.agent.command at its executable.",
   },
@@ -132,6 +169,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     host: "Warp",
     command: "cursor-agent",
     defaultArgs: [],
+    // Print mode answers once on stdout; without --force it changes nothing.
+    headless: { args: [], promptArgs: ["-p", PROMPT_TOKEN], result: "stdout" },
     installHint:
       "Install the Cursor CLI (curl https://cursor.com/install -fsS | bash), or point settings.agent.command at its executable.",
   },
@@ -165,6 +204,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     command: "qwen",
     defaultArgs: [],
     promptArgs: ["--prompt-interactive", PROMPT_TOKEN],
+    // Same as Gemini CLI, which it forks.
+    headless: { args: [], promptArgs: ["-p", PROMPT_TOKEN], result: "stdout" },
     installHint:
       "Install Qwen Code (npm install -g @qwen-code/qwen-code), or point settings.agent.command at its executable.",
   },
@@ -228,6 +269,8 @@ export interface ResolvedAgent {
   args: string[];
   promptArgs: string[];
   resumeArgs?: string[];
+  /** The agent's non-interactive mode, if it has one. */
+  headless?: HeadlessInvocation;
   app?: DesktopApp;
 }
 
@@ -245,6 +288,7 @@ export function resolveAgent(config: AgentConfig): ResolvedAgent {
     args: config.args.length > 0 ? config.args : def.defaultArgs,
     promptArgs: def.promptArgs ?? [PROMPT_TOKEN],
     ...(def.resumeArgs ? { resumeArgs: def.resumeArgs } : {}),
+    ...(def.headless ? { headless: def.headless } : {}),
     ...(def.app ? { app: def.app } : {}),
   };
 }
@@ -284,4 +328,14 @@ export function describeAgent(
   const first = agentArgv(agent).join(" ");
   if (!agent.resumeArgs) return first;
   return `${first}, then ${[agent.command, ...agent.args, ...agent.resumeArgs].join(" ")}`;
+}
+
+/** The command line a headless run uses, or "" for an agent with no headless mode. */
+export function describeHeadless(agent: Pick<ResolvedAgent, "command" | "args" | "headless">): string {
+  if (!agent.headless) return "";
+  return agentArgv({
+    command: agent.command,
+    args: [...agent.headless.args, ...agent.args],
+    promptArgs: agent.headless.promptArgs ?? [PROMPT_TOKEN],
+  }).join(" ");
 }

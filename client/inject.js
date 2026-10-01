@@ -45,6 +45,7 @@
     agentLabel: 'Claude Code',
     agentHost: 'Warp',
     agentInApp: false,
+    headless: false,
     sessions: {},
     stats: { total: 0, today: 0, streak: 0 },
     postResults: 'ask',
@@ -52,6 +53,11 @@
     fileHosts: '(^|\\.)files\\.slack\\.com$|(^|\\.)slack-files\\.com$',
     verbose: false,
   }, window.__SIDEQUEST_CONFIG || {});
+
+  /* What clicking a past session does, for tooltips: headless has no window to reopen. */
+  const reopenHint = (what) => CONFIG.headless
+    ? `see ${what === 'it' ? 'its' : `${what}'s`} result`
+    : `open ${what} in ${CONFIG.agentHost} again`;
 
   const ASK = '__sidequestAsk';
   const LAYER_ID = 'sidequest-layer';
@@ -1333,7 +1339,7 @@
           reopen(entry.branch, sig);
           schedule();
         });
-        again.title = `Open ${entry.branch} in ${CONFIG.agentHost} again`;
+        again.title = reopenHint(entry.branch).replace(/^./, (c) => c.toUpperCase());
         spans(again, [['sq-glyph', '↩'], ['', `Back to ${entry.label || 'session'}`], ['sq-sub', shortBranch(entry.branch)]]);
         menu.append(again);
       }
@@ -1805,10 +1811,12 @@
   function celebrate(prompt, res) {
     const s = res.stats;
     const where = res.warning
-      ? `Worktree ready — ${CONFIG.agentHost} did not open`
+      ? (CONFIG.headless ? 'Worktree ready — the agent did not start' : `Worktree ready — ${CONFIG.agentHost} did not open`)
       : CONFIG.agentInApp
         ? `Prompt ready in ${CONFIG.agentHost} — press Enter there to start`
-        : `${CONFIG.agentLabel} is starting in ${CONFIG.agentHost}`;
+        : CONFIG.headless
+          ? `${CONFIG.agentLabel} is working in the background`
+          : `${CONFIG.agentLabel} is starting in ${CONFIG.agentHost}`;
     if (!s) {
       toast({ title: `${prompt.label} is underway`, sub: where, burst: true });
       return;
@@ -2729,7 +2737,7 @@
     open.className = 'sq-session-open';
     open.title = s.state === 'gone'
       ? `${s.branch}'s worktree was deleted — × drops what git still keeps of it`
-      : `Open ${s.branch} in ${CONFIG.agentHost} again`;
+      : reopenHint(s.branch).replace(/^./, (c) => c.toUpperCase());
 
     const top = document.createElement('span');
     top.className = 'sq-session-top';
@@ -2846,7 +2854,7 @@
     });
   }
 
-  /** Into the agent: the panel has done its job, so it gets out of the way. */
+  /** Into the session's terminal or app: the panel has done its job, so it gets out of the way. */
   function reopenFromPanel(s) {
     closeSessions();
     schedule();
@@ -2855,7 +2863,7 @@
         toast({ title: 'Could not reopen that session', sub: res.hint ? `${res.error} ${res.hint}` : res.error, kind: 'error' });
         return;
       }
-      toast({ title: `Back in ${res.branch || s.branch}`, sub: `Opening it in ${CONFIG.agentHost}.` });
+      toast({ title: `Back in ${res.branch || s.branch}`, sub: CONFIG.headless ? 'Opening its result.' : `Opening it in ${CONFIG.agentHost}.` });
     }).catch((err) => {
       toast({ title: 'Could not reopen that session', sub: err.message, kind: 'error' });
     });
@@ -3029,7 +3037,7 @@
         text.textContent = entry.text;
         // The line is one line wide; the tooltip is where all of it lives.
         el.title = entry.branch
-          ? `${entry.text}\n\nClick to open ${entry.branch} in ${CONFIG.agentHost} again.`
+          ? `${entry.text}\n\nClick to ${reopenHint(entry.branch)}.`
           : entry.text;
       }
       if (el.dataset.kind !== entry.kind) el.dataset.kind = entry.kind;
@@ -3078,7 +3086,7 @@
         el.title = `Sidequested → ${last.branch}` +
           (list.length > 1 ? ` (and ${list.length - 1} more)` : '') +
           (detail ? `\n${detail}` : '') +
-          (last.status && last.status.reply ? '\nClick to review the reply.' : `\nClick to open it in ${CONFIG.agentHost} again.`);
+          (last.status && last.status.reply ? '\nClick to review the reply.' : `\nClick to ${reopenHint('it')}.`);
         const state = (last.status && last.status.state) || '';
         if (state) el.dataset.state = state;
         else delete el.dataset.state;
