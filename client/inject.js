@@ -1875,6 +1875,7 @@
     form.append('channel', target.channel);
     form.append('thread_ts', target.threadTs);
     form.append('text', text);
+    form.append('client_msg_id', newClientMsgId());
     let res;
     let body;
     try {
@@ -1887,6 +1888,15 @@
     }
     if (!body || !body.ok) throw new Error(`Slack said ${(body && body.error) || `HTTP ${res.status}`}.`);
     log('replied in thread', target);
+  }
+
+  function newClientMsgId() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
   }
 
   /** Back into a session started earlier. */
