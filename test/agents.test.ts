@@ -123,6 +123,15 @@ describe("agent invocations", () => {
     expect(resumed.map((d) => d.id)).toEqual(["aider"]);
   });
 
+  it("every terminal agent can carry on its last conversation", () => {
+    const terminalAgents = AGENT_DEFINITIONS.filter((d) => !d.app);
+    for (const d of terminalAgents) {
+      expect(resolveAgent({ id: d.id, command: "", args: [] }).continueArgs, d.id).toBeTruthy();
+    }
+    expect(resolveAgent({ id: "claude", command: "", args: [] }).continueArgs).toEqual(["--continue"]);
+    expect(resolveAgent({ id: "codex", command: "", args: [] }).continueArgs).toEqual(["resume", "--last"]);
+  });
+
   it("describes a plain agent by its first run", () => {
     expect(describeAgent(resolveAgent({ id: "opencode", command: "", args: [] }))).toBe(
       "opencode --prompt <prompt>",

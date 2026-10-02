@@ -53,6 +53,12 @@ export interface AgentDefinition {
    * same conversation interactively.
    */
   resumeArgs?: string[];
+  /**
+   * How to pick up the worktree's latest conversation when a session that
+   * has already run is opened again. Placed straight after the command (some
+   * are subcommands), before the user's args. Absent when the CLI can't.
+   */
+  continueArgs?: string[];
   /** Shown by `sidequest doctor` when the agent is not usable. */
   installHint: string;
   /**
@@ -113,6 +119,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     host: "Warp",
     command: "claude",
     defaultArgs: [],
+    continueArgs: ["--continue"],
     // Print mode answers on stdout. acceptEdits lets it change files in the
     // worktree; anything else it would need a person to approve is refused.
     headless: { args: ["-p", "--permission-mode", "acceptEdits"], result: "stdout" },
@@ -125,6 +132,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     host: "Warp",
     command: "codex",
     defaultArgs: [],
+    continueArgs: ["resume", "--last"],
     // exec streams progress on stdout; --full-auto is its workspace-write
     // sandbox, and the last message is the answer.
     headless: {
@@ -141,6 +149,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     host: "Warp",
     command: "gemini",
     defaultArgs: [],
+    continueArgs: ["--resume", "latest"],
     promptArgs: ["--prompt-interactive", PROMPT_TOKEN],
     // -p answers once on stdout; without approval, tools that change things are off.
     headless: { args: [], promptArgs: ["-p", PROMPT_TOKEN], result: "stdout" },
@@ -156,6 +165,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     host: "Warp",
     command: "aider",
     defaultArgs: [],
+    continueArgs: ["--restore-chat-history"],
     promptArgs: ["--message-file", PROMPT_FILE_TOKEN],
     resumeArgs: ["--restore-chat-history"],
     installHint:
@@ -169,6 +179,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     host: "Warp",
     command: "cursor-agent",
     defaultArgs: [],
+    continueArgs: ["resume"],
     // Print mode answers once on stdout; without --force it changes nothing.
     headless: { args: [], promptArgs: ["-p", PROMPT_TOKEN], result: "stdout" },
     installHint:
@@ -181,6 +192,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     host: "Warp",
     command: "opencode",
     defaultArgs: [],
+    continueArgs: ["--continue"],
     promptArgs: ["--prompt", PROMPT_TOKEN],
     installHint:
       "Install opencode (npm install -g opencode-ai), or point settings.agent.command at its executable.",
@@ -192,6 +204,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     host: "Warp",
     command: "copilot",
     defaultArgs: [],
+    continueArgs: ["--continue"],
     promptArgs: ["--interactive", PROMPT_TOKEN],
     installHint:
       "Install GitHub Copilot CLI (npm install -g @github/copilot), or point settings.agent.command at its executable.",
@@ -203,6 +216,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     host: "Warp",
     command: "qwen",
     defaultArgs: [],
+    continueArgs: ["--continue"],
     promptArgs: ["--prompt-interactive", PROMPT_TOKEN],
     // Same as Gemini CLI, which it forks.
     headless: { args: [], promptArgs: ["-p", PROMPT_TOKEN], result: "stdout" },
@@ -217,6 +231,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     host: "Warp",
     command: "goose",
     defaultArgs: [],
+    continueArgs: ["session", "--resume"],
     promptArgs: ["run", "--interactive", "--instructions", PROMPT_FILE_TOKEN],
     installHint:
       "Install the Goose CLI (brew install block-goose-cli), or point settings.agent.command at its executable.",
@@ -269,6 +284,7 @@ export interface ResolvedAgent {
   args: string[];
   promptArgs: string[];
   resumeArgs?: string[];
+  continueArgs?: string[];
   /** The agent's non-interactive mode, if it has one. */
   headless?: HeadlessInvocation;
   app?: DesktopApp;
@@ -288,6 +304,7 @@ export function resolveAgent(config: AgentConfig): ResolvedAgent {
     args: config.args.length > 0 ? config.args : def.defaultArgs,
     promptArgs: def.promptArgs ?? [PROMPT_TOKEN],
     ...(def.resumeArgs ? { resumeArgs: def.resumeArgs } : {}),
+    ...(def.continueArgs ? { continueArgs: def.continueArgs } : {}),
     ...(def.headless ? { headless: def.headless } : {}),
     ...(def.app ? { app: def.app } : {}),
   };

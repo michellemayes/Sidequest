@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { inspectRepo } from "../src/git/repo.js";
 import { createWorktree, listWorktrees, removeWorktree } from "../src/git/worktree.js";
-import { writeAutorun, autorunPaths } from "../src/warp/autorun.js";
+import { writeAutorun, autorunPaths, armContinue } from "../src/warp/autorun.js";
 import { writeLaunchConfig, writeTabConfig } from "../src/warp/configFiles.js";
 import { parse as parseYaml } from "yaml";
 
@@ -394,6 +394,61 @@ describe("autorun script", () => {
       `\n--model\nx\n--message-file\n${await realpath(files.promptFile)}\n`,
       "\n--model\nx\n--restore-chat-history\n",
     ]);
+  });
+
+  it("carries on the last conversation when a session that already ran is reopened", async () => {
+    const repo = await inspectRepo(repoPath);
+    const worktree = await createWorktree({
+      repo,
+      branch: "fix/continue",
+      baseBranch: "main",
+      worktreesRoot: join(root, "worktrees"),
+      fetch: false,
+    });
+
+    const receipt = join(root, "receipt-continue.txt");
+    const files = await writeAutorun({
+      worktreePath: worktree.path,
+      prompt: "Fix it.",
+      agentCommand: await writeStubClaude(root, receipt),
+      agentArgs: ["--model", "x"],
+      continueArgs: ["--continue"],
+    });
+
+    // Still waiting for its first run: the reopen leaves that alone.
+    expect(await armContinue(worktree.path)).toBe(false);
+    await exec("bash", [files.scriptFile]);
+    // Already ran, nothing pending: a plain second run stays a no-op.
+    await exec("bash", [files.scriptFile]);
+    expect(await armContinue(worktree.path)).toBe(true);
+    await exec("bash", [files.scriptFile]);
+    // The marker was claimed, so another launcher firing does nothing.
+    await exec("bash", [files.scriptFile]);
+
+    const runs = (await readFile(receipt, "utf8")).split("---RUN---").filter((s) => s.trim().length > 0);
+    expect(runs).toEqual(["\n--model\nx\nFix it.\n", "\n--continue\n--model\nx\n"]);
+  });
+
+  it("leaves a session alone on reopen when its agent can't continue", async () => {
+    const repo = await inspectRepo(repoPath);
+    const worktree = await createWorktree({
+      repo,
+      branch: "fix/no-continue",
+      baseBranch: "main",
+      worktreesRoot: join(root, "worktrees"),
+      fetch: false,
+    });
+
+    const files = await writeAutorun({
+      worktreePath: worktree.path,
+      prompt: "hi",
+      agentCommand: await writeStubClaude(root, join(root, "r-nc.txt")),
+      agentArgs: [],
+    });
+    await exec("bash", [files.scriptFile]);
+
+    expect(await armContinue(worktree.path)).toBe(false);
+    await expect(stat(files.pendingFile)).rejects.toThrow();
   });
 
   it("claims the pending marker so a second run is a no-op", async () => {

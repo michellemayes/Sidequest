@@ -4,6 +4,7 @@ import type { Config } from "../config/schema.js";
 import { linkedRepoPaths } from "../config/channels.js";
 import { listWorktrees, type WorktreeRecord } from "../git/worktree.js";
 import { colorForPrompt } from "../warp/launcher.js";
+import { armContinue } from "../warp/autorun.js";
 import { headlessPaths } from "../terminals/headless.js";
 import { launchTerminal } from "../terminals/launch.js";
 import { sessionHost, type TerminalId } from "../terminals/registry.js";
@@ -58,8 +59,9 @@ export interface ReopenResult {
 
 /**
  * Open a session again. In a terminal: if the session's pending marker is
- * still unclaimed, the agent starts on arrival; otherwise it is just a tab
- * there (or, headless, the session's answer or log). For an agent in a
+ * still unclaimed, the agent starts on arrival; if it has already run, the
+ * agent picks up its last conversation there, where the agent can (otherwise
+ * it is just a tab). Headless opens the session's answer or log. For an agent in a
  * desktop app: a new session in the app, in the worktree (the links cannot
  * reach back into an earlier one), whatever the terminal setting.
  */
@@ -92,6 +94,9 @@ export async function openSession(config: Config, found: FoundSession): Promise<
   } catch {
     // No launcher script; just open the directory.
   }
+  // A session that already ran carries on its conversation. Headless has
+  // nothing to carry on: it opens the answer instead.
+  if (scriptExists && terminal !== "headless") await armContinue(worktree.path);
 
   const prefix = worktree.branch.split("/")[0] ?? "";
   const launch = await launchTerminal({
