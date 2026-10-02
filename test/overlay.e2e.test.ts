@@ -73,6 +73,9 @@ describeIfChrome("overlay over CDP", () => {
   beforeAll(async () => {
     const fixture = await readFile(join(HERE, "fixture.html"), "utf8");
     server = createServer((req, res) => {
+      // As Slack's API does: a wildcard, which a browser does not honour for
+      // a request sent with cookies from another origin.
+      if (req.url?.startsWith("/api/")) res.setHeader("access-control-allow-origin", "*");
       if (req.method === "POST" && req.url === "/api/chat.postMessage") {
         let body = "";
         req.on("data", (chunk) => (body += chunk));
@@ -1312,8 +1315,10 @@ describeIfChrome("overlay over CDP", () => {
     try {
       await sleep(600);
       await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
+      // The workspace's own host is another origin than the page, as
+      // acme.slack.com is to app.slack.com.
       await evaluate(session, `localStorage.setItem('localConfig_v2', JSON.stringify({
-        teams: { T0SMOKE: { url: location.origin + '/', token: 'xoxc-test' } },
+        teams: { T0SMOKE: { url: 'http://localhost:' + location.port + '/', token: 'xoxc-test' } },
       }))`);
 
       await hover(session, "row-1");

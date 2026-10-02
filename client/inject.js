@@ -844,11 +844,7 @@
     const form = new FormData();
     form.append('token', team.token);
     form.append('channel', id);
-    const lookup = fetch(new URL('api/conversations.info', team.url).href, {
-      method: 'POST',
-      body: form,
-      credentials: 'include',
-    })
+    const lookup = slackApi('conversations.info', form)
       .then((res) => res.json())
       .then((body) => {
         const name = body && body.ok && body.channel && body.channel.name ? String(body.channel.name) : '';
@@ -1840,6 +1836,22 @@
     return team && team.token && team.url ? team : null;
   }
 
+  /**
+   * Call Slack's web API on this page's own origin. The workspace hosts
+   * (team.url) answer with "Access-Control-Allow-Origin: *", which a browser
+   * refuses for a request that carries cookies: the post still goes out, but
+   * its answer is withheld and fetch says "Failed to fetch". Same-origin, the
+   * session cookie rides along and the answer can be read. The token in the
+   * form says which workspace.
+   */
+  function slackApi(method, form) {
+    return fetch(new URL(`/api/${method}`, location.origin).href, {
+      method: 'POST',
+      body: form,
+      credentials: 'include',
+    });
+  }
+
   function hostOf(url) {
     try {
       return new URL(url).host.toLowerCase();
@@ -1871,11 +1883,7 @@
     let res;
     let body;
     try {
-      res = await fetch(new URL('api/chat.postMessage', team.url).href, {
-        method: 'POST',
-        body: form,
-        credentials: 'include',
-      });
+      res = await slackApi('chat.postMessage', form);
       body = await res.json();
     } catch (err) {
       // The request can reach Slack and post while its answer never makes it
@@ -1918,11 +1926,7 @@
         form.append('oldest', since.toFixed(6));
         form.append('inclusive', 'true');
         form.append('limit', '50');
-        const res = await fetch(new URL('api/conversations.replies', team.url).href, {
-          method: 'POST',
-          body: form,
-          credentials: 'include',
-        });
+        const res = await slackApi('conversations.replies', form);
         const body = await res.json();
         const messages = (body && body.ok && body.messages) || [];
         if (messages.some((m) => (clientMsgId && m.client_msg_id === clientMsgId) ||
