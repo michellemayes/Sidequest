@@ -205,7 +205,7 @@ It picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest update` | Pull the latest and rebuild, reinstalling dependencies only if they changed; restarts a running daemon (`--no-restart` to skip) |
 | `sidequest doctor` | Check git, your terminal, the agent, Slack.app, the debug port, and whether the build is current |
 | `sidequest sessions` | List every worktree Sidequest created (in Slack, **⌃⇧S** shows your recent ones) |
-| `sidequest reopen [ref]` | Reopen a session's terminal (the latest if you name none). Headless, it opens the answer, or the log while it's still running |
+| `sidequest reopen [ref]` | Reopen a session's terminal (the latest if you name none). A terminal agent that has already run picks up its last conversation there (`claude --continue`, `codex resume --last`, …). Headless, it opens the answer, or the log while it's still running |
 | `sidequest stats` | Your total, today's count, current and best streak |
 | `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force`, or anything touched in the last hour unless you pass `--recent`. Turn on `autoClean` and the daemon does this for you |
 | `sidequest link <path> -c <channel>` | Link a repo to a channel from the terminal. Linking a second repo adds it; the first stays the default |
