@@ -199,6 +199,19 @@ describeIfChrome("overlay over CDP: thread replies", () => {
       const worktree = await worktreeFor("investigate-checkout");
       const prompt = await readFile(join(worktree, ".sidequest", "prompt.md"), "utf8");
       expect(prompt).toContain("as soon as you write it");
+      // Lose the first word back to the daemon that the reply went out: the
+      // post itself landed, so nothing should call it a failure.
+      await evaluate(session, `(() => {
+        const real = window.__sidequestAsk;
+        let dropped = false;
+        window.__sidequestAsk = (json) => {
+          if (!dropped && JSON.parse(json).op === 'result-posted') {
+            dropped = true;
+            throw new Error('binding went away');
+          }
+          return real(json);
+        };
+      })()`);
       const result = join(worktree, ".sidequest", "result.md");
       await writeFile(result, "It is the rounding in `total()`.\n");
       const past = (Date.now() - 10_000) / 1000;
@@ -210,8 +223,12 @@ describeIfChrome("overlay over CDP: thread replies", () => {
       expect(posts[0]).toContain("It is the rounding in `total()`.");
       expect(posts[0]).toContain("Written by Claude Code, an AI agent");
       // No second post for the same reply, however many passes follow.
-      await sleep(1500);
+      await sleep(3000);
       expect(posts).toHaveLength(1);
+      const toasts = String(await evaluate(session,
+        `Array.from(${UI}.querySelectorAll('.sq-toast-title'), (el) => el.textContent).join('|')`));
+      expect(toasts).toContain("Replied in the thread");
+      expect(toasts).not.toContain("Could not");
       const history = JSON.parse(await readFile(join(configHome, "history.json"), "utf8"));
       expect(history.sessions.at(-1).resultPostedMs).toBeGreaterThan(0);
     } finally {

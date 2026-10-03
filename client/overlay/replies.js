@@ -113,8 +113,8 @@ function openReplyPanel(branch) {
       postReply(res.permalink, text).then(() => {
         if (panelEl === panel) closePanel();
         toast({ title: 'Replied in the thread', sub: `${res.label || 'Session'} · ${branch}` });
-        return ask({ op: 'result-posted', branch, resultMs: res.resultMs });
-      }).catch((err) => {
+        markPosted({ branch, resultMs: res.resultMs });
+      }, (err) => {
         if (panelEl !== panel) return;
         delete panel.dataset.busy;
         note.textContent = err.message;
