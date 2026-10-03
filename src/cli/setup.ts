@@ -1,5 +1,5 @@
 import { configFile, shellHookFile } from "../config/paths.js";
-import { ensureConfigRoot, loadConfig, saveConfig } from "../config/store.js";
+import { ensureConfigRoot, updateConfig } from "../config/store.js";
 import { start } from "./daemon.js";
 import { doctor } from "./doctor.js";
 import { installHook } from "./hook.js";
@@ -29,7 +29,7 @@ export async function setup(options: { force: boolean }): Promise<void> {
 export async function init(options: { quiet?: boolean } = {}): Promise<void> {
   const root = await ensureConfigRoot();
   // Round-trips defaults into the file so it is there to edit.
-  await saveConfig(await loadConfig());
+  await updateConfig(() => undefined);
 
   console.log(`${options.quiet ? "     " : ""}Wrote ${configFile()}`);
   if (options.quiet) return;

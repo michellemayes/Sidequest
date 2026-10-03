@@ -9,22 +9,20 @@ import {
   type Config,
   type PromptConfig,
   type PromptKey,
-  type Settings,
 } from "./schema.js";
 import { UserFacingError } from "../util/errors.js";
 import { log } from "../util/log.js";
 import { acquireLock, pidExists, releaseLock } from "../util/lockfile.js";
 
-/**
- * Migrate pre-agent configs: settings.claudeCommand/claudeArgs become
- * settings.agent. Unknown keys would be stripped by the schema anyway; this
- * preserves the user's values instead of dropping them.
- */
-function migrateAgentSettings(raw: unknown): unknown {
+/** Bring a config written by an older version up to the current schema, in place. */
+function migrate(raw: unknown): unknown {
   if (typeof raw !== "object" || raw === null) return raw;
   const settings = (raw as Record<string, unknown>).settings;
   if (typeof settings !== "object" || settings === null) return raw;
   const s = settings as Record<string, unknown>;
+
+  // settings.claudeCommand/claudeArgs became settings.agent. The schema would
+  // strip the old keys anyway; this keeps the user's values.
   if (s.agent === undefined && (s.claudeCommand !== undefined || s.claudeArgs !== undefined)) {
     s.agent = {
       id: "claude",
@@ -34,20 +32,11 @@ function migrateAgentSettings(raw: unknown): unknown {
   }
   delete s.claudeCommand;
   delete s.claudeArgs;
-  return raw;
-}
 
-/**
- * `init` used to write the old default, `launch_config`, into every config.
- * On its own it cannot start a session while Warp is running (Warp reads
- * launch configs only at startup), so move those configs to `auto`, which
- * still tries a launch config after a tab config.
- */
-function migrateWarpStrategy(raw: unknown): unknown {
-  if (typeof raw !== "object" || raw === null) return raw;
-  const settings = (raw as Record<string, unknown>).settings;
-  if (typeof settings !== "object" || settings === null) return raw;
-  const s = settings as Record<string, unknown>;
+  // `init` used to write the old default, `launch_config`, into every config.
+  // On its own it cannot start a session while Warp is running (Warp reads
+  // launch configs only at startup), so `auto`, which still tries a launch
+  // config after a tab config.
   if (s.warpStrategy === "launch_config") s.warpStrategy = "auto";
   return raw;
 }
@@ -84,7 +73,7 @@ export async function loadConfig(): Promise<Config> {
     );
   }
 
-  const result = configSchema.safeParse(migrateWarpStrategy(migrateAgentSettings(parsed)));
+  const result = configSchema.safeParse(migrate(parsed));
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `  ${i.path.join(".") || "(root)"}: ${i.message}`)
@@ -166,10 +155,6 @@ export async function ensureConfigRoot(): Promise<string> {
   const root = configRoot();
   await mkdir(root, { recursive: true, mode: 0o700 });
   return root;
-}
-
-export function settingsOf(config: Config): Settings {
-  return config.settings;
 }
 
 const isBuiltIn = (key: string): key is PromptKey => Object.hasOwn(DEFAULT_PROMPTS, key);
