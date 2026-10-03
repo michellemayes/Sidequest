@@ -182,6 +182,25 @@ export interface PromptContext {
   attachments: string;
 }
 
+/** Every token a template may use, in the order `sidequest prompts` lists them. */
+const TOKEN_NAMES: Record<keyof PromptContext, true> = {
+  author: true,
+  channel: true,
+  message: true,
+  thread: true,
+  permalink: true,
+  date: true,
+  branch: true,
+  baseBranch: true,
+  repo: true,
+  worktree: true,
+  ticket: true,
+  ticketId: true,
+  question: true,
+  attachments: true,
+};
+export const PROMPT_TOKENS = Object.keys(TOKEN_NAMES) as Array<keyof PromptContext>;
+
 const TOKEN = /\{\{\s*([a-zA-Z]+)\s*\}\}/g;
 
 /**

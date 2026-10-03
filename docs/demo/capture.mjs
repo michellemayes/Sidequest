@@ -12,7 +12,7 @@
 // Chromium comes from CHROME_PATH, else Playwright's own install. It also
 // rewrites menu.png, the still of the open menu used further down the README.
 import { chromium } from 'playwright-core';
-import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
+import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
