@@ -152,7 +152,7 @@ any repo's.
 
 Slack's desktop app is built on Electron. `sidequest start` launches it with
 `--remote-debugging-port` and injects a small overlay
-([`client/inject.js`](client/inject.js)) over the Chrome DevTools Protocol. The
+([`client/overlay/`](client/overlay)) over the Chrome DevTools Protocol. The
 overlay reads the message, its thread, the sender and the permalink from the page,
 and a local daemon then:
 
