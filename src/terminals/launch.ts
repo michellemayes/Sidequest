@@ -4,9 +4,9 @@ import { UserFacingError } from "../util/errors.js";
 import { log } from "../util/log.js";
 import type { Settings } from "../config/schema.js";
 import type { WarpColor } from "../warp/configFiles.js";
+import { exists } from "../util/fs.js";
 import {
   CLAIM_TIMEOUT_MS,
-  exists,
   launchWarp,
   waitForClaim,
   type PreparedTabConfig,

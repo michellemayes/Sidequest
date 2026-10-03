@@ -11,6 +11,7 @@ import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { PostResults } from "../config/schema.js";
 import { SESSION_DIR } from "../warp/autorun.js";
+import { escapeSlack } from "../util/slack.js";
 
 export const RESULT_FILE = "result.md";
 
@@ -116,11 +117,6 @@ function convertProse(text: string): string {
     .replaceAll(BOLD, "*");
 
   return out.replace(/\u0000(\d+)\u0000/g, (_, i: string) => code[Number(i)] ?? "");
-}
-
-/** chat.postMessage reads &, < and > as markup; the agent's text should post as written. */
-function escapeSlack(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 /** Cut at a line break near the limit, and close a code block the cut left open. */

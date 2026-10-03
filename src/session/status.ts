@@ -16,6 +16,8 @@ import { run, CommandError } from "../util/exec.js";
 import { log } from "../util/log.js";
 import { resultMtime } from "./result.js";
 import type { HistoryEntry } from "./history.js";
+import { mapLimit } from "../util/async.js";
+import { isDirectory } from "../util/fs.js";
 
 export type SessionState =
   /** Started, nothing to show for it yet. */
@@ -435,7 +437,7 @@ export function parsePullRequestList(json: string): Map<string, PullRequest> | n
     if (typeof item.headRefName !== "string" || typeof item.number !== "number" || typeof item.url !== "string") {
       continue;
     }
-    const state = item.state === "MERGED" || item.state === "CLOSED" ? item.state : "OPEN";
+    const state = prState(item.state);
     const existing = out.get(item.headRefName);
     if (existing && !(state === "OPEN" && existing.state !== "OPEN")) continue;
     out.set(item.headRefName, { number: item.number, url: item.url, state });
@@ -447,11 +449,15 @@ export function parsePullRequest(json: string): PullRequest | null {
   try {
     const value = JSON.parse(json) as Partial<PullRequest>;
     if (typeof value.number !== "number" || typeof value.url !== "string") return null;
-    const state = value.state === "MERGED" || value.state === "CLOSED" ? value.state : "OPEN";
-    return { number: value.number, url: value.url, state };
+    return { number: value.number, url: value.url, state: prState(value.state) };
   } catch {
     return null;
   }
+}
+
+/** gh's state for a pull request; anything it may add later reads as open. */
+function prState(state: unknown): PullRequest["state"] {
+  return state === "MERGED" || state === "CLOSED" ? state : "OPEN";
 }
 
 function stateOf(commits: number, pr: PullRequest | null, resultMs: number | null): SessionState {
@@ -461,20 +467,6 @@ function stateOf(commits: number, pr: PullRequest | null, resultMs: number | nul
   if (commits > 0) return "committed";
   if (resultMs !== null) return "answered";
   return "working";
-}
-
-/** Run `fn` over `items`, at most `limit` at a time, keeping their order. */
-async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const index = next++;
-      out[index] = await fn(items[index]!);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
 }
 
 /**
@@ -502,12 +494,4 @@ function sameStatus(a: SessionStatus, b: SessionStatus): boolean {
     a.resultPending === b.resultPending &&
     a.pr?.url === b.pr?.url &&
     a.pr?.state === b.pr?.state;
-}
-
-async function isDirectory(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isDirectory();
-  } catch {
-    return false;
-  }
 }

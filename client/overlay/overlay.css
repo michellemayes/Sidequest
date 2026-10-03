@@ -1,0 +1,308 @@
+.sq-off { display: none !important; }
+
+.sq-pill {
+  position: fixed; left: 0; top: 0;
+  box-sizing: border-box;
+  display: inline-flex; align-items: center; gap: 6px;
+  max-width: 40vw; height: 22px; padding: 0 8px;
+  font-family: inherit; font-size: 12px; line-height: 20px; font-weight: 500;
+  color: inherit; white-space: nowrap;
+  background: var(--sq-bg, #fff);
+  border: 1px solid var(--sq-line); border-radius: 6px;
+  box-shadow: 0 1px 3px var(--sq-shade);
+  cursor: pointer; user-select: none; pointer-events: auto;
+}
+/* The chrome stays crisp and only the label is quiet, so the pill reads as
+   one of Slack's own buttons instead of a faded sticker over the message. */
+.sq-pill > .sq-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: .72; }
+.sq-pill:hover { border-color: var(--sq-line-hover); background: var(--sq-wash); }
+.sq-pill:hover > .sq-label { opacity: 1; }
+/* Nowhere near enough room beside the channel name for a label: the dot
+   alone, with the whole sentence still in the tooltip. */
+.sq-pill[data-compact="1"] { width: 22px; padding: 0; justify-content: center; }
+.sq-pill[data-compact="1"] > .sq-label { display: none; }
+
+.sq-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--sq-ok); flex: 0 0 auto; }
+.sq-pill[data-linked="0"] .sq-dot { background: color-mix(in srgb, currentColor 45%, transparent); }
+.sq-icon { width: 14px; height: 14px; flex: 0 0 auto; display: inline-flex; }
+.sq-icon svg { display: block; }
+/* In compact mode the pill is a 22px dot-only button; the icon would not fit. */
+.sq-pill[data-compact="1"] > .sq-icon { display: none; }
+/* Replies waiting to be read, on the pill that is always in the header,
+   so one that scrolled away or outlived its toast is a click away. */
+.sq-reply-count {
+  flex: 0 0 auto; padding: 0 6px; margin-right: -4px;
+  font-size: 11px; line-height: 16px; font-weight: 600;
+  color: #fff; background: #8b5cf6; border-radius: 8px;
+}
+.sq-reply-count:hover { background: #7c3aed; }
+.sq-pill[data-compact="1"] > .sq-reply-count { display: none; }
+
+.sq-menu {
+  position: fixed; left: 0; top: 0;
+  box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 1px;
+  min-width: 180px; max-width: 264px; padding: 5px;
+  font-family: inherit; color: inherit;
+  background: var(--sq-bg, #fff);
+  border: 1px solid var(--sq-line); border-radius: 8px;
+  box-shadow: 0 8px 24px var(--sq-shade);
+  pointer-events: auto;
+}
+.sq-menu button {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 6px 8px; margin: 0;
+  font-family: inherit; font-size: 13px; line-height: 18px; font-weight: 400;
+  color: inherit; text-align: left;
+  background: transparent; border: 0; border-radius: 5px; cursor: pointer;
+}
+.sq-menu button:hover, .sq-menu button[data-active="1"] { background: var(--sq-wash); }
+.sq-menu-link { font-weight: 500; }
+/* The glyph and the key are drawn by CSS, so an entry's text is its label
+   and nothing else. */
+.sq-menu-prompt::before {
+  content: attr(data-glyph); flex: 0 0 18px; text-align: center;
+}
+.sq-menu-prompt::after {
+  content: attr(data-key); margin-left: auto; min-width: 8px; padding: 0 4px;
+  font-size: 10px; line-height: 15px; text-align: center; opacity: .5;
+  border: 1px solid var(--sq-line); border-radius: 4px;
+}
+.sq-menu-reopen, .sq-menu-suggest, .sq-menu-reply { font-size: 12px !important; }
+.sq-menu-reopen > span, .sq-menu-suggest > span, .sq-menu-reply > span {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sq-menu-reopen > .sq-glyph, .sq-menu-suggest > .sq-glyph, .sq-menu-reply > .sq-glyph { flex: 0 0 18px; text-align: center; }
+.sq-menu-reply { font-weight: 600; }
+.sq-sub { margin-left: auto; padding-left: 6px; font-size: 11px; opacity: .55; }
+.sq-menu-sep { height: 1px; margin: 4px 2px; background: var(--sq-line); }
+/* A channel with several repos: which one the prompts below run in. */
+.sq-repos { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px 3px 5px; }
+.sq-menu .sq-repo {
+  width: auto; padding: 1px 8px;
+  font-size: 11px; line-height: 16px; font-weight: 500;
+  border: 1px solid var(--sq-line); border-radius: 9px; opacity: .7;
+}
+.sq-menu .sq-repo:hover { opacity: 1; }
+.sq-menu .sq-repo[data-on="1"] {
+  opacity: 1; color: #fff; background: #7c3aed; border-color: #7c3aed;
+}
+/* Ask trades the menu's entries for a box to type the question into. */
+.sq-menu[data-asking="1"] { width: 264px; gap: 6px; padding: 8px; }
+.sq-ask-title { font-size: 13px; line-height: 18px; font-weight: 700; }
+.sq-ask-input {
+  box-sizing: border-box; width: 100%; min-height: 58px; max-height: 180px;
+  padding: 6px 8px; resize: vertical;
+  font-family: inherit; font-size: 12px; line-height: 17px;
+  color: inherit; background: transparent;
+  border: 1px solid var(--sq-line-hover); border-radius: 5px;
+}
+.sq-ask-input:focus { border-color: currentColor; outline: none; }
+.sq-ask-foot { display: flex; align-items: center; gap: 8px; }
+.sq-ask-hint { font-size: 11px; line-height: 15px; opacity: .6; }
+.sq-menu .sq-ask-send {
+  width: auto; margin-left: auto; padding: 4px 12px;
+  font-size: 12px; line-height: 16px; font-weight: 500;
+  color: #fff; background: #007a5a;
+}
+.sq-menu .sq-ask-send:hover { background: #148567; }
+/* A reply to read before it goes out: wider than the path panel, and
+   with room for a few paragraphs. */
+.sq-panel.sq-reply { width: min(520px, calc(100vw - 32px)); }
+.sq-reply .sq-reply-input { min-height: 140px; max-height: 50vh; font-size: 13px; line-height: 18px; }
+.sq-reply .sq-note[data-kind="error"] { color: var(--sq-bad); opacity: 1; }
+.sq-reply-skip, .sq-reply .sq-ask-send {
+  padding: 4px 12px; margin: 0;
+  font-family: inherit; font-size: 12px; line-height: 16px; font-weight: 500;
+  color: inherit; background: transparent;
+  border: 1px solid var(--sq-line-hover); border-radius: 5px; cursor: pointer;
+}
+.sq-reply-skip { margin-left: auto; }
+.sq-reply-skip:hover { background: var(--sq-wash); }
+.sq-reply .sq-ask-send { color: #fff; background: #007a5a; border-color: #007a5a; }
+.sq-reply .sq-ask-send:hover { background: #148567; }
+/* A sentence, not a menu item. It wraps inside the menu rather than
+   stretching it into a bar across the message underneath. */
+.sq-note {
+  padding: 6px 8px 4px; font-size: 12px; line-height: 16px; opacity: .7;
+  white-space: normal; overflow-wrap: break-word;
+}
+
+.sq-toast {
+  position: fixed; left: 0; top: 0;
+  box-sizing: border-box;
+  display: flex; align-items: center; gap: 12px;
+  max-width: 440px; padding: 10px 14px 10px 12px;
+  font-family: inherit; color: inherit;
+  background: var(--sq-bg, #fff);
+  border: 1px solid var(--sq-line); border-radius: 10px;
+  box-shadow: 0 12px 32px var(--sq-shade);
+  cursor: pointer; pointer-events: auto;
+  animation: sq-pop .34s cubic-bezier(.2, 1.5, .4, 1) both;
+}
+.sq-toast[data-leaving="1"] { animation: sq-fade .25s ease-in both; }
+.sq-toast-icon { position: relative; flex: 0 0 28px; width: 28px; height: 28px; display: inline-flex; }
+.sq-toast-icon svg { width: 28px; height: 28px; display: block; }
+.sq-toast-body { min-width: 0; display: flex; flex-direction: column; }
+.sq-toast-title { font-size: 13px; line-height: 18px; font-weight: 700; }
+.sq-toast-action {
+  flex: 0 0 auto; margin-left: 4px; padding: 4px 10px;
+  font-family: inherit; font-size: 12px; line-height: 16px; font-weight: 600;
+  color: #fff; background: #7c3aed; border: 0; border-radius: 5px; cursor: pointer;
+}
+.sq-toast-action:hover { background: #6d28d9; }
+.sq-toast-sub {
+  font-size: 12px; line-height: 16px; opacity: .72;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sq-spark {
+  position: absolute; left: 50%; top: 50%;
+  width: 5px; height: 5px; margin: -2.5px; border-radius: 50%;
+  background: var(--c, #a78bfa);
+  animation: sq-burst .75s ease-out forwards;
+}
+@keyframes sq-burst {
+  from { transform: rotate(var(--a)) translateX(4px) scale(1); opacity: 1; }
+  to { transform: rotate(var(--a)) translateX(30px) scale(.2); opacity: 0; }
+}
+@keyframes sq-pop {
+  from { transform: translateY(-8px) scale(.96); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes sq-fade { to { transform: translateY(-4px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .sq-toast, .sq-toast[data-leaving="1"] { animation: none !important; }
+  .sq-spark { display: none; }
+}
+
+.sq-panel {
+  position: fixed; left: 0; top: 0;
+  box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 7px;
+  width: 340px; padding: 12px;
+  font-family: inherit; color: inherit;
+  background: var(--sq-bg, #fff);
+  border: 1px solid var(--sq-line); border-radius: 8px;
+  box-shadow: 0 10px 28px var(--sq-shade);
+  pointer-events: auto;
+}
+.sq-panel-title { font-size: 13px; line-height: 18px; font-weight: 700; }
+.sq-panel input {
+  box-sizing: border-box; padding: 6px 8px;
+  font-family: inherit; font-size: 12px; line-height: 18px;
+  color: inherit; background: transparent;
+  border: 1px solid var(--sq-line-hover); border-radius: 5px;
+}
+.sq-panel input:focus { border-color: currentColor; outline: none; }
+.sq-panel-note { font-size: 11px; line-height: 15px; opacity: .7; }
+.sq-panel-error { font-size: 11px; line-height: 15px; color: var(--sq-bad); }
+.sq-panel-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 1px; }
+.sq-panel-actions button {
+  padding: 5px 12px; margin: 0;
+  font-family: inherit; font-size: 12px; line-height: 16px; font-weight: 500;
+  color: inherit; background: transparent;
+  border: 1px solid var(--sq-line-hover); border-radius: 5px; cursor: pointer;
+}
+.sq-panel-actions button:hover { background: var(--sq-wash); }
+.sq-panel-actions button[data-primary="1"] {
+  color: #fff; background: #007a5a; border-color: #007a5a;
+}
+.sq-panel-actions button[data-primary="1"]:hover { background: #148567; }
+.sq-panel[data-busy="1"] { opacity: .5; pointer-events: none; }
+.sq-suggest-list { display: flex; flex-direction: column; gap: 1px; max-height: 204px; overflow-y: auto; }
+.sq-suggest {
+  display: flex; align-items: baseline; gap: 8px;
+  width: 100%; padding: 5px 8px; margin: 0;
+  font-family: inherit; font-size: 12px; line-height: 16px;
+  color: inherit; text-align: left;
+  background: transparent; border: 0; border-radius: 5px; cursor: pointer;
+}
+.sq-suggest:hover, .sq-suggest[data-active="1"] { background: var(--sq-wash); }
+.sq-suggest-name { font-weight: 600; flex: 0 0 auto; }
+.sq-suggest-path { min-width: 0; opacity: .55; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sq-suggest[data-match="1"] .sq-suggest-name::after { content: ' ★'; color: #8b5cf6; }
+.sq-linked { display: flex; flex-direction: column; gap: 1px; }
+.sq-linked-row {
+  display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 8px;
+  font-size: 12px; line-height: 16px; border-radius: 5px;
+}
+.sq-linked-row:hover { background: var(--sq-wash); }
+.sq-linked-row::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--sq-ok); flex: 0 0 auto; }
+.sq-linked-name { min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sq-linked-x {
+  margin: 0 0 0 auto; padding: 0 5px;
+  font: inherit; color: inherit; opacity: .45;
+  background: transparent; border: 0; border-radius: 3px; cursor: pointer;
+}
+.sq-linked-x:hover { opacity: 1; background: var(--sq-wash); }
+/* A panel's title with a quiet way elsewhere beside it: from a channel's
+   repos to every session, and back. */
+.sq-panel-head { display: flex; align-items: baseline; gap: 8px; }
+.sq-panel-head .sq-panel-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sq-panel-aside {
+  flex: 0 0 auto; margin: 0 0 0 auto; padding: 0 6px;
+  font-family: inherit; font-size: 11px; line-height: 18px;
+  color: inherit; opacity: .6;
+  background: transparent; border: 0; border-radius: 4px; cursor: pointer;
+}
+.sq-panel-aside:hover { opacity: 1; background: var(--sq-wash); }
+
+/* The sessions panel: the panel's frame, a list in it. */
+.sq-sessions { width: 360px; }
+.sq-sessions-list {
+  display: flex; flex-direction: column; gap: 1px;
+  max-height: min(360px, 60vh); overflow-y: auto; margin: 0 -4px;
+}
+.sq-session { display: flex; align-items: flex-start; gap: 2px; border-radius: 5px; }
+.sq-session:hover, .sq-session[data-active="1"] { background: var(--sq-wash); }
+.sq-session[data-busy="1"] { opacity: .5; pointer-events: none; }
+.sq-session-open {
+  display: flex; flex-direction: column; gap: 1px;
+  flex: 1 1 auto; min-width: 0; padding: 5px 4px 5px 8px; margin: 0;
+  font-family: inherit; font-size: 12px; line-height: 16px;
+  color: inherit; text-align: left;
+  background: transparent; border: 0; border-radius: 5px; cursor: pointer;
+}
+.sq-session-top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.sq-session-branch { min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sq-session-meta { font-size: 11px; opacity: .65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sq-session-state { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.sq-session-state:empty { display: none; }
+.sq-chip {
+  padding: 0 6px; font-size: 10px; line-height: 15px;
+  border: 1px solid var(--sq-line); border-radius: 8px; opacity: .8;
+}
+.sq-chip[data-tone="ok"] { color: var(--sq-ok); border-color: color-mix(in srgb, var(--sq-ok) 45%, transparent); opacity: 1; }
+.sq-chip[data-tone="warn"] { color: #e8912d; border-color: color-mix(in srgb, #e8912d 45%, transparent); opacity: 1; }
+.sq-chip[data-tone="bad"] { color: var(--sq-bad); border-color: color-mix(in srgb, var(--sq-bad) 45%, transparent); opacity: 1; }
+.sq-session-x {
+  flex: 0 0 auto; margin: 4px 4px 0 0; padding: 0 6px;
+  font: inherit; font-size: 13px; line-height: 20px; color: inherit; opacity: .4;
+  background: transparent; border: 0; border-radius: 3px; cursor: pointer;
+}
+.sq-session-x:hover { opacity: 1; background: var(--sq-wash); }
+.sq-chip[data-tone="reply"] { color: #8b5cf6; border-color: color-mix(in srgb, #8b5cf6 45%, transparent); opacity: 1; }
+.sq-chip[data-action] { cursor: pointer; }
+.sq-chip[data-action]:hover { background: color-mix(in srgb, #8b5cf6 14%, transparent); }
+/* Replies an agent left that have not been posted or dropped: first in
+   the panel, since they are the thing waiting on you. */
+.sq-replies { display: flex; flex-direction: column; gap: 1px; margin: 0 -4px 6px; padding-bottom: 6px; border-bottom: 1px solid var(--sq-line); }
+.sq-replies-head { padding: 0 8px 2px; font-size: 11px; font-weight: 600; opacity: .65; }
+.sq-reply-row {
+  display: flex; align-items: baseline; gap: 6px; padding: 5px 8px; margin: 0;
+  font-family: inherit; font-size: 12px; line-height: 16px; color: inherit; text-align: left;
+  background: transparent; border: 0; border-radius: 5px; cursor: pointer;
+}
+.sq-reply-row:hover { background: var(--sq-wash); }
+.sq-reply-row > .sq-session-branch { flex: 1 1 auto; }
+/* Asking before removing, in the row itself, so what is being removed
+   stays in view while the question is asked. */
+.sq-session-confirm {
+  display: flex; flex-direction: column; gap: 6px;
+  flex: 1 1 auto; min-width: 0; padding: 6px 8px;
+  font-size: 12px; line-height: 16px;
+}
+.sq-session[data-confirm="force"] { box-shadow: inset 2px 0 0 var(--sq-bad); }
+.sq-session-confirm .sq-panel-actions { margin: 0; }
+.sq-panel-actions button[data-danger="1"] { color: #fff; background: var(--sq-bad); border-color: var(--sq-bad); }
+.sq-panel-actions button[data-danger="1"]:hover { background: color-mix(in srgb, var(--sq-bad) 85%, #000); }

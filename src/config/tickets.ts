@@ -4,7 +4,7 @@ import type { PromptKey } from "./schema.js";
  * Issue trackers a Slack message can link, each with its own prompt that only
  * shows up on a message linking one of its tickets. Adding a tracker is a
  * provider here, a prompt in DEFAULT_PROMPTS under the same key, and a line
- * in the overlay's TICKET_PATTERNS (client/inject.js), which mirrors these
+ * in the overlay's TICKET_PROMPTS (client/overlay/slack.js), which mirrors these
  * patterns to decide what to offer; this side reads the link again on the way in.
  */
 export interface Ticket {
