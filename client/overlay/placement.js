@@ -38,8 +38,7 @@ function place() {
 
   const activeRow = menuRow || hoverRow;
   const activeRect = activeRow ? activeRow.getBoundingClientRect() : null;
-  // Read once per frame per row: the pill, the line and the mark can all
-  // want the same row's text.
+  // What cornerSpot has measured and claimed per row, this frame.
   const ink = new Map();
   const taken = new Map();
 

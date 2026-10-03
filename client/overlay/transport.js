@@ -63,7 +63,7 @@ function ask(payload) {
       pending.delete(id);
       reject(new Error('sidequest did not answer'));
     }, OP_TIMEOUT_MS[payload.op] || REQUEST_TIMEOUT_MS);
-    pending.set(id, { resolve, reject, timer });
+    pending.set(id, { resolve, timer });
     try {
       window[ASK](JSON.stringify(Object.assign({ id }, payload)));
     } catch (err) {

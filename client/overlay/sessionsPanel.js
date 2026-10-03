@@ -372,8 +372,9 @@ function reopenFromPanel(s) {
 /**
  * ↑ and ↓ move, Enter opens, Delete or Backspace asks to remove, Escape
  * backs out of the question (and, with none asked, closes the panel through
- * the document-level Escape like every other piece of the overlay). Enter
- * answers a plain removal, never a discard: that takes the button.
+ * the document-level Escape in triggers.js like every other piece of the
+ * overlay). Enter answers a plain removal, never a discard: that takes the
+ * button.
  */
 function sessionsKeys(event) {
   if (!sessionsEl || event.metaKey || event.ctrlKey || event.altKey) return false;

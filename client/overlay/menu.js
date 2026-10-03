@@ -15,8 +15,7 @@ function buildLaunchButton() {
   button.title = `Start a ${CONFIG.agentLabel} session from this message`;
 
   button.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
+    stop(event);
     const row = menuRow || hoverRow;
     if (menuEl) {
       closeMenu();
@@ -294,8 +293,8 @@ function openAskBox(prompt) {
     schedule();
   }
 
-  // Like the path box, reached from the window-level claim in the triggers
-  // section: Slack would otherwise take these keys for its composer.
+  // Like the path box, reached from the window-level claim in triggers.js:
+  // Slack would otherwise take these keys for its composer.
   boxKeys = (event) => {
     if (event.key === 'Escape') {
       event.preventDefault();

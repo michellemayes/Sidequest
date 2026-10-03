@@ -8,7 +8,7 @@ let menuSig = '';
 let menuIndex = -1;
 let panelEl = null;
 let sessionsEl = null;
-/** Keys for whichever text box holds the keyboard: the path box or the Ask box. */
+/** Keys for whichever text box holds the keyboard: the path box, the Ask box or the reply box. */
 let boxKeys = null;
 let toastEl = null;
 let toastTimer = 0;

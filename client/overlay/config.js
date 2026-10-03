@@ -3,9 +3,10 @@
  *
  * Injected over CDP by src/cdp/attacher.ts, which also installs the
  * __sidequestAsk binding this talks to. Every request goes down to the local
- * daemon and comes back through __sidequestResult. The one exception is the
- * thread reply a session can post when settings.autoReply is on, which goes
- * to Slack's own API as you (see postReply).
+ * daemon and comes back through __sidequestResult. The exceptions are thread
+ * replies, which go to Slack's own API as you (see postReply in start.js):
+ * the one a session posts when settings.autoReply is on, and the agent's
+ * reply under settings.postResults.
  *
  * Two pieces of UI:
  *   1. A button on the message under the pointer, opening the prompts —
@@ -24,7 +25,7 @@
  * and their rows are measured and recycled, so the rest of Slack's DOM is never
  * written to — no attributes, no styles, and no rule in here can match a Slack
  * element. The chip is the one exception, and it is a single element of its own
- * after a message's content, holding its own shadow root (see inline): it grows
+ * after a message's content, holding its own shadow root (see inline.js): it grows
  * the message the way a reaction does, which is the point of it, and touches
  * nothing else. `[data-qa="virtual-list-item"]` is also not just messages:
  * the sidebar, the DM list and search results are virtual lists too, so

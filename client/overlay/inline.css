@@ -53,3 +53,7 @@
 .sq-mark[data-state="merged"]::before { color: var(--sq-ok); }
 .sq-mark[data-state="pr-closed"], .sq-mark[data-state="gone"] { opacity: .6; }
 .sq-mark[data-reply="1"] { border-color: #8b5cf6; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sq-result[data-kind="busy"] .sq-result-text { animation: none; }
+}

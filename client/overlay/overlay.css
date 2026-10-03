@@ -17,7 +17,6 @@
 .sq-pill > .sq-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: .72; }
 .sq-pill:hover { border-color: var(--sq-line-hover); background: var(--sq-wash); }
 .sq-pill:hover > .sq-label { opacity: 1; }
-.sq-pill[data-busy="1"] { opacity: .45; pointer-events: none; }
 /* Nowhere near enough room beside the channel name for a label: the dot
    alone, with the whole sentence still in the tooltip. */
 .sq-pill[data-compact="1"] { width: 22px; padding: 0; justify-content: center; }
@@ -171,17 +170,9 @@
   to { transform: none; opacity: 1; }
 }
 @keyframes sq-fade { to { transform: translateY(-4px); opacity: 0; } }
-@keyframes sq-shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .sq-toast, .sq-toast[data-leaving="1"], .sq-result-text { animation: none !important; }
+  .sq-toast, .sq-toast[data-leaving="1"] { animation: none !important; }
   .sq-spark { display: none; }
-}
-/* An error is the one line worth interrupting for, so it gets an edge as
-   well as a colour — a red-on-dark word alone is easy to scroll past. */
-.sq-result[data-kind="error"] {
-  color: var(--sq-bad); opacity: 1;
-  border-color: color-mix(in srgb, var(--sq-bad) 40%, transparent);
-  border-left: 2px solid var(--sq-bad);
 }
 
 .sq-panel {

@@ -16,8 +16,7 @@ function buildChannelButton() {
   button.append(dot, icon, label, count);
 
   button.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
+    stop(event);
     if (count.contains(event.target)) {
       toggleSessions();
       schedule();
@@ -43,7 +42,7 @@ function closePanel() {
 }
 
 /**
- * The panel's path box or the menu's Ask box, while it holds the keyboard.
+ * A panel's text box or the menu's Ask box, while it holds the keyboard.
  * Focus inside a shadow root reads as the host from the outside, so this is
  * the only way to tell an event meant for the box from one meant for Slack.
  */
@@ -254,7 +253,7 @@ function openPanel(returnRow = null) {
     stop(event);
     send();
   });
-  // Reached from the window-level claim in the triggers section rather than
+  // Reached from the window-level claim in triggers.js rather than
   // from a listener here: that claim has to stop the event before Slack's
   // own document listeners see it, which is early enough that it never
   // reaches this input at all.

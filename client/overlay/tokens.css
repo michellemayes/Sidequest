@@ -3,8 +3,8 @@
  * by accident. Colours and font come from Slack through inheritance on the
  * host, which is how the overlay follows the workspace theme without reading
  * anything about it: --sq-bg is measured off Slack's own message list in
- * refreshTheme, because the host is transparent and a background cannot be
- * inherited.
+ * refreshTheme (layer.js), because the host is transparent and a background
+ * cannot be inherited.
  */
 :host {
   --sq-line: color-mix(in srgb, currentColor 16%, transparent);
