@@ -1,0 +1,177 @@
+import { AGENT_DEFINITIONS, describeAgent, describeHeadless, resolveAgent } from "../agents/agents.js";
+import { linkLabel } from "../config/channels.js";
+import { configFile } from "../config/paths.js";
+import { PROMPT_TOKENS } from "../config/prompts.js";
+import { PROMPT_KEYS } from "../config/schema.js";
+import { allPrompts, loadConfig, updateConfig } from "../config/store.js";
+import { sessionHost, TERMINAL_DEFINITIONS } from "../terminals/registry.js";
+import { UserFacingError } from "../util/errors.js";
+import { runsAs, terminalSummary } from "./shared.js";
+
+export async function agents(id?: string): Promise<void> {
+  const wanted = id?.trim().toLowerCase();
+  if (wanted) {
+    const def = AGENT_DEFINITIONS.find((d) => d.id === wanted);
+    if (!def) {
+      throw new UserFacingError(
+        `Unknown agent "${id}".`,
+        `Pick one of: ${AGENT_DEFINITIONS.map((d) => d.id).join(", ")}.`,
+      );
+    }
+    await updateConfig((config) => {
+      // A custom command belongs to the previous agent; don't carry it over.
+      if (config.settings.agent.id !== def.id) config.settings.agent = { id: def.id, command: "", args: [] };
+    });
+    const { terminal } = (await loadConfig()).settings;
+    console.log(`New sessions will use ${def.label} in ${sessionHost(def, terminal)}. A running daemon picks this up on the next click.`);
+    if (!def.app && terminal === "headless" && !def.headless) {
+      console.log(`${def.label} has no headless mode, so sessions will fail until you pick a terminal: \`sidequest terminal\`.`);
+    }
+    return;
+  }
+
+  const config = await loadConfig();
+  const activeId = resolveAgent(config.settings.agent).id;
+  console.log("Agents Sidequest can launch:\n");
+  for (const def of AGENT_DEFINITIONS) {
+    const marker = def.id === activeId ? "  (active)" : "";
+    const where = sessionHost(def, config.settings.terminal);
+    const agent = resolveAgent({ id: def.id, command: "", args: [] });
+    const description = describeAgent(agent);
+    console.log(`  ${def.id}${marker}`);
+    console.log(`    ${def.label} — ${def.app ? description : `${description}, in ${where}`}`);
+    if (!def.app) console.log(`      headless: ${describeHeadless(agent) || "no"}`);
+  }
+  console.log("\nSwitch with `sidequest agents <id>`, or in " + `${configFile()}:`);
+  console.log(`  { "settings": { "agent": { "id": "gemini" } } }`);
+  console.log(
+    "`command` and `args` override a terminal agent's executable and flags; the prompt still goes last. " +
+      "`sidequest terminal` picks the terminal.",
+  );
+  console.log("An app agent opens a new session in the worktree with the prompt ready; press Enter there to start it.");
+}
+
+export async function terminal(name?: string): Promise<void> {
+  const wanted = name?.trim().toLowerCase();
+  if (wanted) {
+    const def = TERMINAL_DEFINITIONS.find((d) => d.id === wanted);
+    if (!def) {
+      throw new UserFacingError(
+        `Unknown terminal "${name}".`,
+        `Pick one of: ${TERMINAL_DEFINITIONS.map((d) => d.id).join(", ")}.`,
+      );
+    }
+    const config = await loadConfig();
+    const agent = resolveAgent(config.settings.agent);
+    // Refused here rather than on the next click, which would fail in Slack.
+    if (def.id === "headless" && !agent.app && !agent.headless) {
+      throw new UserFacingError(
+        `${agent.label} has no headless mode.`,
+        "Switch agents with `sidequest agents` first.",
+      );
+    }
+    await updateConfig((c) => {
+      c.settings.terminal = def.id;
+    });
+    console.log(
+      def.id === "headless"
+        ? "New sessions will run in the background, with no terminal. A running daemon picks this up on the next click."
+        : `New sessions will open in ${def.label}. A running daemon picks this up on the next click.`,
+    );
+    console.log(
+      agent.app
+        ? `${agent.label} opens in ${agent.host} whatever this says; it applies once you switch to a terminal agent.`
+        : "`sidequest doctor` checks it's usable.",
+    );
+    return;
+  }
+
+  const config = await loadConfig();
+  console.log("Terminals sessions can open in:\n");
+  for (const def of TERMINAL_DEFINITIONS) {
+    const marker = def.id === config.settings.terminal ? "  (active)" : "";
+    console.log(`  ${def.id}${marker}`);
+    console.log(`    ${def.label} — ${def.summary}`);
+  }
+  console.log("\nSwitch with `sidequest terminal <name>`, or in " + `${configFile()}:`);
+  console.log(`  { "settings": { "terminal": "iterm2" } }`);
+}
+
+export async function replies(state?: string): Promise<void> {
+  const wanted = state?.trim().toLowerCase();
+  if (wanted) {
+    if (wanted !== "on" && wanted !== "off") {
+      throw new UserFacingError(`Unknown state "${state}".`, "Use `sidequest replies on` or `sidequest replies off`.");
+    }
+    await updateConfig((config) => {
+      config.settings.autoReply = wanted === "on";
+    });
+    console.log(
+      wanted === "on"
+        ? "New sessions will reply in the message's thread, as you. A running daemon picks this up on the next click."
+        : "New sessions will not reply in Slack.",
+    );
+    return;
+  }
+
+  const config = await loadConfig();
+  console.log(`Thread replies are ${config.settings.autoReply ? "on" : "off"}.\n`);
+  for (const { prompt } of allPrompts(config)) {
+    console.log(`  ${prompt.label.padEnd(12)} ${prompt.reply.trim() || "(no reply)"}`);
+  }
+  console.log(`\nTurn them ${config.settings.autoReply ? "off" : "on"} with \`sidequest replies ${config.settings.autoReply ? "off" : "on"}\`.`);
+  console.log(`Change one in ${configFile()}:`);
+  console.log(`  { "prompts": { "fix": { "reply": "On it, fixing this now." } } }`);
+  console.log('An empty "reply" turns it off for that prompt.');
+}
+
+export async function prompts(): Promise<void> {
+  const config = await loadConfig();
+  for (const { key, prompt } of allPrompts(config)) {
+    const builtIn = (PROMPT_KEYS as readonly string[]).includes(key);
+    const overridden = config.prompts[key] !== undefined;
+    console.log(`\n${"=".repeat(70)}`);
+    console.log(`${prompt.label}  (key: ${key}, branch prefix: ${prompt.branchPrefix}/)`);
+    console.log(!builtIn ? "your own, from config.json" : overridden ? "customised in config.json" : "built-in default");
+    console.log("=".repeat(70));
+    console.log(prompt.template);
+  }
+  const hidden = Object.entries(config.prompts).filter(([, p]) => p.hidden).map(([key]) => key);
+  console.log(`\n${"=".repeat(70)}`);
+  if (hidden.length > 0) console.log(`Hidden from the menu: ${hidden.join(", ")}`);
+  console.log(`Override any of these under "prompts" in ${configFile()}, or add your own:`);
+  console.log(`  { "prompts": { "write-test": { "label": "Write a test", "template": "..." } } }`);
+  console.log(`Tokens: ${PROMPT_TOKENS.map((t) => `{{${t}}}`).join(", ")}`);
+}
+
+export async function list(): Promise<void> {
+  const config = await loadConfig();
+  const entries = Object.entries(config.channels);
+  const agent = resolveAgent(config.settings.agent);
+
+  console.log(`config: ${configFile()}\n`);
+  console.log("settings");
+  console.log(`  worktreesRoot:  ${config.settings.worktreesRoot}`);
+  console.log(`  terminal:       ${terminalSummary(config.settings.terminal, agent)}`);
+  if (config.settings.terminal === "warp" && !agent.app) {
+    console.log(`  warpStrategy:   ${config.settings.warpStrategy}${config.settings.warpPreview ? " (preview)" : ""}`);
+  }
+  console.log(`  agent:          ${agent.label} (${runsAs(config, agent)})`);
+  console.log(`  threadContext:  ${config.settings.threadContextLimit} messages`);
+  console.log(
+    `  autoClean:      ${config.settings.autoClean ? `on, after ${config.settings.autoCleanAfterDays} idle days` : "off"}`,
+  );
+
+  console.log("\nlinked channels");
+  if (entries.length === 0) {
+    console.log("  (none yet — hover a message in Slack, click Sidequest, and pick a repo)");
+    return;
+  }
+  for (const [id, links] of entries) {
+    for (const [i, l] of links.entries()) {
+      const tag = links.length > 1 && i === 0 ? "   (default)" : "";
+      console.log(`  #${id} → ${l.repoPath}${tag}`);
+      console.log(`      base: ${l.baseBranch || "(detected)"}   label: ${linkLabel(l)}`);
+    }
+  }
+}

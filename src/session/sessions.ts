@@ -15,7 +15,6 @@
  * paths. A session is named to the daemon by its worktree's directory name,
  * which is unique under worktreesRoot and says nothing the branch does not.
  */
-import { stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Config } from "../config/schema.js";
 import { detectDefaultBranch, refExists } from "../git/repo.js";
@@ -27,6 +26,7 @@ import { autorunPaths } from "../warp/autorun.js";
 import { baseBranchFor } from "./cleanup.js";
 import type { HistoryEntry } from "./history.js";
 import { findSession, type FoundSession } from "./reopen.js";
+import { exists } from "../util/fs.js";
 
 /** How many sessions the panel lists, newest first. */
 export const PANEL_LIMIT = 15;
@@ -282,12 +282,4 @@ export async function dirtyCount(worktreePath: string): Promise<number | null> {
   }
 }
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 

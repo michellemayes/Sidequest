@@ -1,67 +1,23 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import {
-  CdpSession,
-  CLOSE_EVENT,
-  isAttachableTarget,
-  listTargets,
-  type CdpTarget,
-} from "./client.js";
+import { CdpSession, CLOSE_EVENT, isAttachableTarget, listTargets, type CdpTarget } from "./client.js";
+import { overlaySource } from "./overlay.js";
+import { answer, sessionReply, type AskRequest, type AttacherEvent, type RequestHost } from "./requests.js";
 import { pageConfig } from "../config/pageConfig.js";
-import {
-  addLink,
-  channelKey,
-  linkLabel,
-  linkedRepoPaths,
-  linksForChannel,
-  removeLink,
-} from "../config/channels.js";
-import { loadConfig, updateConfig, expandPath, promptFor } from "../config/store.js";
-import { forgetRepos, inspectRepo } from "../git/repo.js";
-import { prefetchForChannel } from "../git/prefetch.js";
-import { createSession, type MessageContext } from "../session/create.js";
-import { computeStats, loadHistory, recordSession, updateSession, type HistoryEntry } from "../session/history.js";
-import { resolveAgent } from "../agents/agents.js";
-import type { Config } from "../config/schema.js";
+import { loadConfig } from "../config/store.js";
+import { loadHistory } from "../session/history.js";
+import { readResult } from "../session/result.js";
 import { StatusWatcher, type SessionStatus } from "../session/status.js";
-import { readResult, resultReply } from "../session/result.js";
-import type { IncomingAttachment } from "../session/attachments.js";
-import { findSession, openSession } from "../session/reopen.js";
-import { findById, listSessions, removeSession, UncommittedWorkError } from "../session/sessions.js";
-import { discoverRepos } from "../git/discover.js";
 import { describeError } from "../util/errors.js";
-import { log } from "../util/log.js";
 
-/** Who wrote a session's reply: the agent it was started with, or today's for older sessions. */
-function replyAgent(entry: HistoryEntry, config: Config): string {
-  return entry.agentLabel || resolveAgent(config.settings.agent).label;
-}
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-// dist/cdp -> dist -> project root. The overlay ships as plain JS, unbuilt,
-// so it lives outside src/ and is read at inject time.
-const INJECT_PATH = join(HERE, "..", "..", "client", "inject.js");
+export type { AttacherEvent } from "./requests.js";
 
 const BINDING = "__sidequestAsk";
 const RESULT_FN = "__sidequestResult";
 const POST_RESULT_FN = "__sidequestPostResult";
 const POLL_MS = 4000;
-/** As long as the overlay keeps a message's line (RESULT_TTL_MS in inject.js). */
+/** As long as the overlay keeps a message's line (RESULT_TTL_MS in client/overlay/config.js). */
 const LAUNCH_ERROR_TTL_MS = 10 * 60 * 1000;
 /** How long a window gets to say whether it will post a reply; see autoPostResults. */
 const AUTO_POST_TIMEOUT_MS = 3_000;
-/** Plenty for a question; a paste of a whole log belongs in the terminal. */
-const MAX_QUESTION = 4000;
-
-export interface AttacherEvent {
-  type: string;
-  message?: string;
-  target?: string;
-  channel?: string;
-  prompt?: string;
-  branch?: string;
-}
 
 /** What the most recent sweep saw on the DevTools endpoint. */
 export interface SweepSummary {
@@ -69,38 +25,6 @@ export interface SweepSummary {
   targets: number;
   /** Those that look like a Slack window. */
   matched: number;
-}
-
-/** A request coming up from the injected overlay. */
-interface AskRequest {
-  id: string;
-  op: string;
-  channel?: string;
-  promptKey?: string;
-  text?: string;
-  sender?: string;
-  ts?: string;
-  permalink?: string;
-  thread?: Array<{ author: string; text: string }>;
-  /** Linear, GitHub or Jira issue URL the message links, for that prompt. */
-  ticket?: string;
-  /** What the user typed into the Ask box. */
-  question?: string;
-  /** A path to link, for link-repo. */
-  repoPath?: string;
-  /** Which of the channel's repos: the one to start in, or the one to unlink. */
-  repo?: string;
-  branch?: string;
-  /** Files attached to the message, fetched by the overlay. */
-  attachments?: IncomingAttachment[];
-  /** For result-posted: which write of result.md was posted, and whether it failed or was dismissed. */
-  resultMs?: number;
-  error?: string;
-  dismissed?: boolean;
-  /** A session in the sessions panel, by its worktree's directory name. */
-  session?: string;
-  /** Remove a session even though it has uncommitted changes. */
-  force?: boolean;
 }
 
 export class Attacher {
@@ -143,14 +67,20 @@ export class Attacher {
     this.options.onEvent?.(event);
   }
 
-  /**
-   * Read the overlay on every injection, so editing client/inject.js needs a
-   * Slack reload rather than a daemon restart.
-   */
+  private readonly host: RequestHost = {
+    emit: (event) => this.emit(event),
+    broadcastConfig: () => this.broadcastConfig(),
+    refreshStatuses: () => this.refreshStatuses(),
+    followAgentCheck: (branch, channel, check) => this.followAgentCheck(branch, channel, check),
+    status: (branch) => this.statuses.get(branch),
+  };
+
+  private async pageConfig(): Promise<ReturnType<typeof pageConfig>> {
+    return pageConfig(await loadConfig(), await loadHistory(), this.statuses, this.currentLaunchErrors());
+  }
+
   private async source(): Promise<string> {
-    const script = readFileSync(INJECT_PATH, "utf8");
-    const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses, this.currentLaunchErrors());
-    return `window.__SIDEQUEST_CONFIG = ${JSON.stringify(config)};\n${script}`;
+    return `window.__SIDEQUEST_CONFIG = ${JSON.stringify(await this.pageConfig())};\n${overlaySource()}`;
   }
 
   async start(): Promise<void> {
@@ -335,13 +265,6 @@ export class Attacher {
     await this.watcher?.refresh();
   }
 
-  /** The same, without waiting: for after a reply, where nobody is left to hear a failure. */
-  private refreshStatusesSoon(): void {
-    void this.refreshStatuses().catch((err) => {
-      this.emit({ type: "status-error", message: describeError(err).message });
-    });
-  }
-
   /**
    * With postResults on auto, hand each new reply to one Slack window to
    * post. Only the page can post (it holds the Slack session), and only one
@@ -365,7 +288,7 @@ export class Attacher {
         resultMs: status.resultMs,
         permalink: entry.permalink,
         label: entry.promptLabel,
-        text: resultReply(result.text, { prUrl: status.pr?.url, agent: replyAgent(entry, config) }),
+        text: sessionReply(entry, result.text, status.pr?.url, config),
       });
       // One window at a time, unlike the broadcast: the first that takes it
       // on posts it, and asking them all at once could post it twice. The
@@ -425,8 +348,7 @@ export class Attacher {
   private async pushConfig(sessions: Array<CdpSession | null>): Promise<void> {
     let payload: string;
     try {
-      const config = pageConfig(await loadConfig(), await loadHistory(), this.statuses, this.currentLaunchErrors());
-      payload = JSON.stringify(JSON.stringify(config));
+      payload = JSON.stringify(JSON.stringify(await this.pageConfig()));
     } catch (err) {
       this.emit({ type: "config-error", message: describeError(err).message });
       return;
@@ -442,433 +364,42 @@ export class Attacher {
     );
   }
 
-  private async handleAsk(
-    session: CdpSession,
-    params: Record<string, unknown>,
-  ): Promise<void> {
+  private async handleAsk(session: CdpSession, params: Record<string, unknown>): Promise<void> {
     let request: AskRequest;
     try {
       request = JSON.parse(String(params.payload)) as AskRequest;
     } catch {
       return;
     }
-
     const contextId = params.executionContextId as number | undefined;
 
-    switch (request.op) {
-      case "start-session":
-        if (this.draining) {
-          await this.reply(session, contextId, {
-            id: request.id,
-            error: "Sidequest is stopping.",
-            hint: "Run `sidequest start` and try again.",
-          });
-          return;
-        }
-        this.startsInFlight += 1;
-        try {
-          await this.handleStartSession(session, contextId, request);
-        } finally {
-          this.startsInFlight -= 1;
-        }
-        return;
-      case "link-repo":
-        await this.handleLinkRepo(session, contextId, request);
-        return;
-      case "channel-status":
-        await this.handleChannelStatus(session, contextId, request);
-        return;
-      case "prefetch":
-        await this.handlePrefetch(session, contextId, request);
-        return;
-      case "suggest-repos":
-        await this.handleSuggestRepos(session, contextId, request);
-        return;
-      case "reopen":
-        await this.handleReopen(session, contextId, request);
-        return;
-      case "get-result":
-        await this.handleGetResult(session, contextId, request);
-        return;
-      case "result-posted":
-        await this.handleResultPosted(session, contextId, request);
-        return;
-      case "list-sessions":
-        await this.handleListSessions(session, contextId, request);
-        return;
-      case "remove-session":
-        await this.handleRemoveSession(session, contextId, request);
-        return;
-      default:
-        await this.reply(session, contextId, { id: request.id, error: `unknown op ${request.op}` });
-    }
-  }
-
-  private async handleStartSession(
-    session: CdpSession,
-    contextId: number | undefined,
-    request: AskRequest,
-  ): Promise<void> {
-    const promptKey = String(request.promptKey ?? "");
-    // Read once and handed on, so the session is cut from the config checked here.
-    const config = await loadConfig();
-    if (!promptFor(config, promptKey)) {
-      await this.reply(session, contextId, { id: request.id, error: "unknown prompt" });
+    if (request.op !== "start-session") {
+      const { reply, after } = await answer(request, this.host);
+      await this.reply(session, contextId, { id: request.id, ...reply });
+      await after?.();
       return;
     }
 
-    const context: MessageContext = {
-      channelName: request.channel ?? "",
-      authorName: request.sender ?? "unknown",
-      text: request.text ?? "",
-      ts: request.ts ?? "",
-      permalink: request.permalink ?? "",
-      threadMessages: request.thread ?? [],
-      ticket: request.ticket ?? "",
-      question: typeof request.question === "string" ? request.question.slice(0, MAX_QUESTION) : "",
-      repo: typeof request.repo === "string" ? request.repo : "",
-      attachments: Array.isArray(request.attachments) ? request.attachments : [],
-    };
-
-    try {
-      const result = await createSession(promptKey, context, config);
-      this.emit({
-        type: "session",
-        channel: context.channelName,
-        prompt: promptKey,
-        branch: result.branch,
-      });
-      // The session exists whatever happens next; a history that cannot be
-      // written costs the streak, not the session.
-      let stats = null;
-      try {
-        const history = await recordSession({
-          ts: context.ts,
-          channel: channelKey(context.channelName),
-          promptKey,
-          promptLabel: result.promptLabel,
-          branch: result.branch,
-          worktreePath: result.worktreePath,
-          repoPath: result.repoPath,
-          repoLabel: result.repoLabel,
-          createdAt: new Date().toISOString(),
-          permalink: context.permalink,
-          baseBranch: result.baseBranch,
-          agentLabel: result.agentLabel,
-        });
-        stats = computeStats(history);
-      } catch (err) {
-        this.emit({ type: "history-error", message: describeError(err).message });
-      }
+    if (this.draining) {
       await this.reply(session, contextId, {
         id: request.id,
-        ok: true,
-        branch: result.branch,
-        worktree: result.worktreePath,
-        repo: result.repoLabel,
-        stats,
-        // Posted by the overlay, which is signed in to Slack; empty means don't.
-        reply: result.reply,
-        // The overlay says so on the message rather than failing silently.
-        warning: result.launchError,
-        attachments: result.attachments,
+        error: "Sidequest is stopping.",
+        hint: "Run `sidequest start` and try again.",
       });
-      if (result.agentCheck) this.followAgentCheck(result.branch, context.channelName, result.agentCheck);
-      await this.broadcastConfig();
-      this.refreshStatusesSoon();
-    } catch (err) {
-      const { message, hint } = describeError(err);
-      this.emit({ type: "session-error", channel: context.channelName, message });
-      await this.reply(session, contextId, { id: request.id, error: message, hint });
-    }
-  }
-
-  /**
-   * Link the channel the reader is looking at to a repo. The page knows the
-   * channel; the daemon owns the mapping and the filesystem, so it validates
-   * the path and answers with what it actually stored.
-   *
-   * A path adds that repo to the channel's list (a channel can have several).
-   * Otherwise `repo` names the one to unlink, and neither unlinks them all.
-   */
-  private async handleLinkRepo(
-    session: CdpSession,
-    contextId: number | undefined,
-    request: AskRequest,
-  ): Promise<void> {
-    const key = channelKey(request.channel ?? "");
-    if (!key) {
-      await this.reply(session, contextId, { id: request.id, error: "no channel to link" });
       return;
     }
-
-    const raw = (request.repoPath ?? "").trim();
-
+    // Counted until the page has its answer, so a shutdown does not cut a
+    // session off between its worktree and its reply.
+    this.startsInFlight += 1;
+    let after: (() => Promise<void>) | undefined;
     try {
-      if (raw.length === 0) {
-        const which = (request.repo ?? "").trim();
-        const { removed, left } = await updateConfig((config) => {
-          const removed = removeLink(config, key, which);
-          return { removed, left: linksForChannel(config, key).map(linkLabel) };
-        });
-        forgetRepos();
-        if (which && removed.length === 0) {
-          await this.reply(session, contextId, {
-            id: request.id,
-            error: `${which} is not linked to #${key}.`,
-            repos: left,
-          });
-          await this.broadcastConfig();
-          return;
-        }
-        for (const link of removed) this.emit({ type: "unlink", channel: key, message: link.repoPath });
-        await this.reply(session, contextId, {
-          id: request.id,
-          ok: true,
-          linked: left.length > 0,
-          removed: removed.map(linkLabel),
-          repos: left,
-        });
-      } else {
-        const repo = await inspectRepo(expandPath(raw));
-        const { stored, labels } = await updateConfig((config) => {
-          const stored = addLink(config, key, {
-            repoPath: repo.root,
-            channel: key,
-            baseBranch: "",
-            label: "",
-            linkedBy: "overlay",
-            linkedAt: new Date().toISOString(),
-          });
-          return { stored, labels: linksForChannel(config, key).map(linkLabel) };
-        });
-        forgetRepos();
-        this.emit({ type: "link", channel: key, message: repo.root });
-        await this.reply(session, contextId, {
-          id: request.id,
-          ok: true,
-          linked: true,
-          repo: linkLabel(stored),
-          repoPath: repo.root,
-          repos: labels,
-        });
-      }
-      await this.broadcastConfig();
-    } catch (err) {
-      const { message, hint } = describeError(err);
-      await this.reply(session, contextId, { id: request.id, error: message, hint });
+      const answered = await answer(request, this.host);
+      after = answered.after;
+      await this.reply(session, contextId, { id: request.id, ...answered.reply });
+    } finally {
+      this.startsInFlight -= 1;
     }
-  }
-
-  /** Repos worth offering for this channel, best match first. */
-  private async handleSuggestRepos(
-    session: CdpSession,
-    contextId: number | undefined,
-    request: AskRequest,
-  ): Promise<void> {
-    try {
-      const config = await loadConfig();
-      const channel = channelKey(request.channel ?? "");
-      // Already on this channel is not a suggestion for it.
-      const own = new Set(linksForChannel(config, channel).map((l) => l.repoPath));
-      const found = await discoverRepos({
-        channel,
-        linkedRepos: linkedRepoPaths(config),
-        worktreesRoot: config.settings.worktreesRoot,
-        roots: config.settings.repoSearchRoots.length > 0
-          ? config.settings.repoSearchRoots.map(expandPath)
-          : undefined,
-      });
-      const repos = found.filter((r) => !own.has(r.path));
-      await this.reply(session, contextId, { id: request.id, ok: true, repos });
-    } catch (err) {
-      const { message, hint } = describeError(err);
-      await this.reply(session, contextId, { id: request.id, error: message, hint, repos: [] });
-    }
-  }
-
-  /**
-   * Back into a session started earlier, from the mark on its message — by
-   * branch — or from the sessions panel, by its worktree's name, which cannot
-   * be mistaken for a same-named branch in another repo.
-   */
-  private async handleReopen(
-    session: CdpSession,
-    contextId: number | undefined,
-    request: AskRequest,
-  ): Promise<void> {
-    try {
-      const id = typeof request.session === "string" ? request.session.trim() : "";
-      let branch = (request.branch ?? "").trim();
-      const config = await loadConfig();
-      const history = await loadHistory();
-      const known = history.filter((h) => h.branch === branch).map((h) => h.repoPath);
-      const found = id
-        ? await findById(config, history, id)
-        : branch ? await findSession(config, branch, known) : null;
-      if (found) branch = found.worktree.branch;
-      if (!found) {
-        await this.reply(session, contextId, {
-          id: request.id,
-          error: `${branch || "That session"} is gone.`,
-          hint: "It was probably cleaned up — start a new one from the menu.",
-        });
-        return;
-      }
-      await openSession(config, found);
-      this.emit({ type: "reopen", branch });
-      await this.reply(session, contextId, { id: request.id, ok: true, branch });
-    } catch (err) {
-      const { message, hint } = describeError(err);
-      await this.reply(session, contextId, { id: request.id, error: message, hint });
-    }
-  }
-
-  /** A session's reply for the thread, ready to read, edit and post. */
-  private async handleGetResult(
-    session: CdpSession,
-    contextId: number | undefined,
-    request: AskRequest,
-  ): Promise<void> {
-    const branch = (request.branch ?? "").trim();
-    try {
-      const entry = (await loadHistory()).reverse().find((h) => h.branch === branch);
-      const result = entry ? await readResult(entry.worktreePath) : null;
-      if (!entry || !result) {
-        await this.reply(session, contextId, { id: request.id, error: `${branch || "That session"} has no reply to post.` });
-        return;
-      }
-      const status = this.statuses.get(branch);
-      const config = await loadConfig();
-      await this.reply(session, contextId, {
-        id: request.id,
-        ok: true,
-        branch,
-        label: entry.promptLabel,
-        channel: entry.channel,
-        permalink: entry.permalink ?? "",
-        resultMs: result.mtimeMs,
-        agent: replyAgent(entry, config),
-        text: resultReply(result.text, { prUrl: status?.pr?.url, agent: replyAgent(entry, config) }),
-      });
-    } catch (err) {
-      // Unanswered, the overlay would sit on its spinner until it gives up.
-      const { message, hint } = describeError(err);
-      await this.reply(session, contextId, { id: request.id, error: message, hint });
-    }
-  }
-
-  /**
-   * The page posted a reply (or was told not to): remember which write of
-   * result.md that was, so it is not offered again unless the agent rewrites it.
-   */
-  private async handleResultPosted(
-    session: CdpSession,
-    contextId: number | undefined,
-    request: AskRequest,
-  ): Promise<void> {
-    const branch = (request.branch ?? "").trim();
-    if (request.error) {
-      this.emit({ type: "result-error", branch, message: request.error });
-      await this.reply(session, contextId, { id: request.id, ok: true });
-      return;
-    }
-    try {
-      const resultMs = typeof request.resultMs === "number" ? request.resultMs : Date.now();
-      await updateSession(branch, { resultPostedMs: resultMs });
-      this.emit({ type: request.dismissed ? "result-dismissed" : "result-posted", branch });
-      await this.reply(session, contextId, { id: request.id, ok: true });
-      await this.refreshStatuses();
-      await this.broadcastConfig();
-    } catch (err) {
-      const { message, hint } = describeError(err);
-      await this.reply(session, contextId, { id: request.id, error: message, hint });
-    }
-  }
-
-  /**
-   * The sessions panel's list. Asked for each time the panel opens, so it
-   * says what git says now rather than what the config said at inject time.
-   */
-  private async handleListSessions(
-    session: CdpSession,
-    contextId: number | undefined,
-    request: AskRequest,
-  ): Promise<void> {
-    try {
-      const sessions = await listSessions(await loadConfig(), await loadHistory());
-      await this.reply(session, contextId, { id: request.id, ok: true, sessions });
-    } catch (err) {
-      const { message, hint } = describeError(err);
-      await this.reply(session, contextId, { id: request.id, error: message, hint, sessions: [] });
-    }
-  }
-
-  /**
-   * Remove a finished session from the panel. Uncommitted work is refused
-   * with how much of it there is, so the page can ask before sending `force`.
-   */
-  private async handleRemoveSession(
-    session: CdpSession,
-    contextId: number | undefined,
-    request: AskRequest,
-  ): Promise<void> {
-    try {
-      const result = await removeSession(await loadConfig(), await loadHistory(), request.session ?? "", {
-        force: request.force === true,
-      });
-      this.emit({ type: "remove-session", branch: result.branch });
-      await this.reply(session, contextId, { id: request.id, ok: true, ...result });
-      // Its mark now says it was cleaned up.
-      this.refreshStatusesSoon();
-    } catch (err) {
-      const { message, hint } = describeError(err);
-      const dirty = err instanceof UncommittedWorkError ? err.dirty : undefined;
-      await this.reply(session, contextId, { id: request.id, error: message, hint, dirty });
-    }
-  }
-
-  /**
-   * The menu opened on a message in a linked channel: start fetching the base
-   * its session would be cut from, so a click finds it already fetched. The
-   * overlay does not wait on this, so it is answered before the fetch starts.
-   */
-  private async handlePrefetch(
-    session: CdpSession,
-    contextId: number | undefined,
-    request: AskRequest,
-  ): Promise<void> {
-    await this.reply(session, contextId, { id: request.id, ok: true });
-    try {
-      await prefetchForChannel(await loadConfig(), request.channel ?? "", request.repo ?? "");
-    } catch (err) {
-      // A click will run into the same problem and say so; this one is quiet.
-      log.debug(`could not prefetch for #${request.channel ?? ""}: ${describeError(err).message}`);
-    }
-  }
-
-  private async handleChannelStatus(
-    session: CdpSession,
-    contextId: number | undefined,
-    request: AskRequest,
-  ): Promise<void> {
-    try {
-      const config = await loadConfig();
-      const links = linksForChannel(config, request.channel ?? "");
-
-      await this.reply(session, contextId, {
-        id: request.id,
-        linked: links.length > 0,
-        repo: links[0] ? linkLabel(links[0]) : "",
-        repoPath: links[0]?.repoPath ?? "",
-        repos: links.map(linkLabel),
-      });
-    } catch (err) {
-      // A config that does not parse lands here; the overlay should hear why
-      // now rather than wait out its timeout.
-      const { message, hint } = describeError(err);
-      await this.reply(session, contextId, { id: request.id, error: message, hint, repos: [] });
-    }
+    await after?.();
   }
 
   private async reply(

@@ -1,0 +1,16 @@
+/*
+ * Scoped to the shadow roots, so none of this can reach a Slack element even
+ * by accident. Colours and font come from Slack through inheritance on the
+ * host, which is how the overlay follows the workspace theme without reading
+ * anything about it: --sq-bg is measured off Slack's own message list in
+ * refreshTheme (layer.js), because the host is transparent and a background
+ * cannot be inherited.
+ */
+:host {
+  --sq-line: color-mix(in srgb, currentColor 16%, transparent);
+  --sq-line-hover: color-mix(in srgb, currentColor 34%, transparent);
+  --sq-wash: color-mix(in srgb, currentColor 8%, transparent);
+  --sq-shade: color-mix(in srgb, currentColor 20%, transparent);
+  --sq-ok: #2eb67d;
+  --sq-bad: #e01e5a;
+}

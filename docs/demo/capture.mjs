@@ -1,4 +1,4 @@
-// Records the README demo end to end: the real client/inject.js running over
+// Records the README demo end to end: the real overlay (client/overlay) running over
 // page.html (a mock of the Slack desktop app, keeping the DOM hooks the overlay
 // reads), then the Warp tab it opens with Claude Code working in the new
 // worktree, then back to Slack with the branch linked under the message.
@@ -6,17 +6,18 @@
 // scripted (Claude Code's own layout, glyphs and colours, replayed line by
 // line), so no worktree, Warp or agent is involved.
 //
-//   npm i --no-save playwright-core && node docs/demo/capture.mjs
+//   npm run build && npm i --no-save playwright-core && node docs/demo/capture.mjs
 //   python3 docs/demo/make_gif.py      # frames/ -> demo.gif (needs ffmpeg; see make_gif.py)
 //
 // Chromium comes from CHROME_PATH, else Playwright's own install. It also
 // rewrites menu.png, the still of the open menu used further down the README.
 import { chromium } from 'playwright-core';
-import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
+import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { overlaySource } from '../../dist/cdp/overlay.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FRAMES = join(HERE, 'frames');
@@ -71,7 +72,7 @@ await page.evaluate((branch) => {
   document.documentElement.appendChild(cursor);
   addEventListener('mousemove', (e) => { cursor.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`; }, true);
 }, BRANCH);
-await page.addScriptTag({ content: await readFile(join(HERE, '../../client/inject.js'), 'utf8') });
+await page.addScriptTag({ content: overlaySource() });
 
 // Every frame carries its own duration, so a hold is one long frame.
 const manifest = [];

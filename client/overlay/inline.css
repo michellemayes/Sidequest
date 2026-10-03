@@ -1,0 +1,59 @@
+/*
+ * The chip that sits inside a message, under its text (see inline.js). It is
+ * in the message's own flow, so it inherits the message's font and colour and
+ * needs no background: it scrolls with the words and moves for nothing.
+ */
+:host { display: block; margin: 4px 0 2px; }
+.sq-off { display: none !important; }
+
+/* While a session starts, or when it could not: one chip, wrapped to as
+   many lines as an error needs, with an × to clear it. */
+.sq-result {
+  box-sizing: border-box;
+  display: inline-flex; align-items: flex-start; gap: 6px;
+  max-width: 100%; padding: 1px 4px 1px 8px;
+  font-family: inherit; font-size: 12px; line-height: 16px;
+  color: inherit;
+  border: 1px solid var(--sq-line); border-radius: 6px;
+  cursor: pointer;
+}
+.sq-result:hover { border-color: var(--sq-line-hover); background: var(--sq-wash); }
+.sq-result[data-kind="error"] { border-color: color-mix(in srgb, var(--sq-bad) 55%, transparent); }
+.sq-result-text { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.sq-result-x {
+  flex: 0 0 auto; padding: 0 3px; margin: 0;
+  font: inherit; color: inherit; opacity: .45;
+  background: transparent; border: 0; border-radius: 3px; cursor: pointer;
+}
+.sq-result-x:hover { opacity: 1; background: var(--sq-wash); }
+/* Working on it: the words shimmer rather than sit there looking done. */
+.sq-result[data-kind="busy"] .sq-result-text {
+  background: linear-gradient(90deg, currentColor 35%, #a78bfa 50%, currentColor 65%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: sq-shimmer 1.3s linear infinite;
+}
+@keyframes sq-shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+
+/* A message that already has a session: a quiet chip, like a reaction,
+   one click from being back in it. */
+.sq-mark {
+  box-sizing: border-box;
+  display: inline-flex; align-items: center; gap: 4px;
+  max-width: 100%; height: 20px; padding: 0 8px;
+  font-family: inherit; font-size: 12px; line-height: 18px;
+  color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border: 1px solid var(--sq-line); border-radius: 10px;
+  cursor: pointer;
+}
+.sq-mark:hover { border-color: var(--sq-line-hover); background: var(--sq-wash); }
+.sq-mark::before { content: '✦'; color: #8b5cf6; }
+/* Progress shows in the words; the few states worth a glance get colour too. */
+.sq-mark[data-state="merged"]::before { color: var(--sq-ok); }
+.sq-mark[data-state="pr-closed"], .sq-mark[data-state="gone"] { opacity: .6; }
+.sq-mark[data-reply="1"] { border-color: #8b5cf6; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sq-result[data-kind="busy"] .sq-result-text { animation: none; }
+}

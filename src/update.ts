@@ -14,11 +14,12 @@
  *     on an older build by an earlier `--no-restart` or a manual rebuild.
  */
 import { createHash } from "node:crypto";
-import { chmod, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { run, CommandError } from "./util/exec.js";
 import { UserFacingError } from "./util/errors.js";
+import { exists } from "./util/fs.js";
 
 /** The checkout this code runs from: the parent of `dist/` (or `src/` under tsx). */
 export function installRoot(): string {
@@ -176,13 +177,4 @@ export async function fastForward(root: string, to: string): Promise<void> {
 /** Put the checkout back where it was; `--keep` refuses rather than lose local edits. */
 export async function rollBack(root: string, to: string): Promise<void> {
   await run("git", ["reset", "--keep", "--quiet", to], { cwd: root });
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
 }

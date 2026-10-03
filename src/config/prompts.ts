@@ -1,4 +1,5 @@
 import type { PromptConfig, PromptKey } from "./schema.js";
+import { escapeSlack } from "../util/slack.js";
 
 /**
  * The prompts on a Slack message: the first four on every one, and Linear,
@@ -182,6 +183,25 @@ export interface PromptContext {
   attachments: string;
 }
 
+/** Every token a template may use, in the order `sidequest prompts` lists them. */
+const TOKEN_NAMES: Record<keyof PromptContext, true> = {
+  author: true,
+  channel: true,
+  message: true,
+  thread: true,
+  permalink: true,
+  date: true,
+  branch: true,
+  baseBranch: true,
+  repo: true,
+  worktree: true,
+  ticket: true,
+  ticketId: true,
+  question: true,
+  attachments: true,
+};
+export const PROMPT_TOKENS = Object.keys(TOKEN_NAMES) as Array<keyof PromptContext>;
+
 const TOKEN = /\{\{\s*([a-zA-Z]+)\s*\}\}/g;
 
 /**
@@ -209,9 +229,4 @@ export function renderReply(template: string, context: PromptContext, repoLabel:
     question: escapeSlack(question.trim()),
   }).trim();
   return question.trim() ? rendered : rendered.replace(/\s*:$/, ".");
-}
-
-/** chat.postMessage reads &, < and > as markup; typed text should post as typed. */
-function escapeSlack(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

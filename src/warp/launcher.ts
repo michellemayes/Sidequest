@@ -1,9 +1,10 @@
-import { access } from "node:fs/promises";
 import { warpScheme } from "../util/platform.js";
 import { openUri } from "../util/openUri.js";
 import { log } from "../util/log.js";
 import type { WarpStrategy } from "../config/schema.js";
 import { writeLaunchConfig, writeTabConfig, type WarpColor, type WarpSessionSpec } from "./configFiles.js";
+import { sleep } from "../util/async.js";
+import { exists } from "../util/fs.js";
 
 export interface LaunchOptions {
   spec: WarpSessionSpec;
@@ -142,10 +143,6 @@ export const CLAIM_TIMEOUT_MS = 6_000;
 const CLAIM_POLL_MS = 50;
 const TAB_CONFIG_SETTLE_MS = 750;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 /** True once the pending marker is gone, i.e. autorun.sh has claimed it. */
 export async function waitForClaim(pendingFile: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -153,15 +150,6 @@ export async function waitForClaim(pendingFile: string, timeoutMs: number): Prom
     if (!(await exists(pendingFile))) return true;
     if (Date.now() >= deadline) return false;
     await sleep(CLAIM_POLL_MS);
-  }
-}
-
-export async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
   }
 }
 

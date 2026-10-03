@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspectDebugPort } from "../src/cdp/launch.js";
-import { sleep } from "../src/cdp/launch.js";
+import { sleep } from "../src/util/async.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TSX = join(HERE, "..", "node_modules", ".bin", "tsx");

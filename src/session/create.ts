@@ -1,7 +1,7 @@
 import { loadConfig, promptFor } from "../config/store.js";
 import { linksForChannel, repoForChannelName } from "../config/channels.js";
-import { renderPrompt, renderReply, type PromptContext } from "../config/prompts.js";
-import { firstTicket, isTicketPrompt, keepsBranchCase, ticketFor, type Ticket } from "../config/tickets.js";
+import { renderPrompt, renderReply } from "../config/prompts.js";
+import { firstTicket, isTicketPrompt, keepsBranchCase, ticketFor } from "../config/tickets.js";
 import { linkPrompt, resolveAgent, type DesktopApp, type ResolvedAgent } from "../agents/agents.js";
 import type { Config } from "../config/schema.js";
 import { defaultBranchCached, forgetRepos, locateRepoCached } from "../git/repo.js";
@@ -10,14 +10,14 @@ import { autorunPaths, writeAutorun } from "../warp/autorun.js";
 import { colorForPrompt, prepareTabConfig, strategyOrder, type PreparedTabConfig } from "../warp/launcher.js";
 import { removeTabConfig, type WarpSessionSpec } from "../warp/configFiles.js";
 import { writeHeadlessRunner } from "../terminals/headless.js";
-import { agentDidNotStart, launchTerminal } from "../terminals/launch.js";
+import { agentDidNotStart, launchTerminal, type TerminalLaunchOptions } from "../terminals/launch.js";
 import { sessionHost } from "../terminals/registry.js";
 import { branchNameFor, tabTitle, warpConfigName } from "./naming.js";
 import { formatAttachments, saveAttachments, type IncomingAttachment } from "./attachments.js";
+import { buildContext } from "./context.js";
 import { resultInstructions } from "./result.js";
 import { describeError, UserFacingError } from "../util/errors.js";
 import { openUri } from "../util/openUri.js";
-import { stripSlackMarkup } from "../util/slug.js";
 import { log } from "../util/log.js";
 
 /** Everything the overlay could read off the message that was clicked. */
@@ -119,7 +119,7 @@ export async function createSession(
   const agent = resolveAgent(config.settings.agent);
   const terminal = config.settings.terminal;
 
-  // Checked before anything is cut, like the Linear ticket above. An agent
+  // Checked before anything is cut, like the ticket above. An agent
   // in a desktop app ignores the terminal setting, headless included.
   if (!agent.app && terminal === "headless" && !agent.headless) {
     throw new UserFacingError(
@@ -229,7 +229,7 @@ export async function createSession(
       : null;
   const host = sessionHost(agent, terminal);
 
-  const base = {
+  const base: SessionBase = {
     branch: worktree.branch,
     worktreePath: worktree.path,
     repoPath: repo.root,
@@ -246,20 +246,9 @@ export async function createSession(
   // An agent in a desktop app opens there; the terminal setting doesn't apply.
   if (agent.app) return openInApp(agent, agent.app, worktree.path, body, base, startedAt);
 
-  // The worktree and prompt are already on disk and usable. If the terminal
-  // will not open, say so and hand back the path rather than throwing away
-  // the work.
-  try {
-    const spec = specFor(worktree);
-    // Hand the session back the moment the terminal is open, rather than
-    // after the agent has claimed it, which takes seconds when it works and,
-    // through Warp's fallbacks, the better part of twenty when it does not.
-    // Whether it started follows in agentCheck.
-    let markOpened!: (opened: { strategy: string; fellBack: boolean }) => void;
-    const opened = new Promise<{ strategy: string; fellBack: boolean }>((resolve) => {
-      markOpened = resolve;
-    });
-    const launching = launchTerminal({
+  const spec = specFor(worktree);
+  return openInTerminal(
+    {
       settings: config.settings,
       session: {
         name: spec.name,
@@ -270,19 +259,48 @@ export async function createSession(
         pendingFile: files.pendingFile,
       },
       preparedTabConfig,
-      onOpened: markOpened,
+    },
+    base,
+    startedAt,
+  );
+}
+
+type SessionBase = Omit<SessionResult, "launchStrategy" | "fellBackToNewTab">;
+
+/**
+ * Open the configured terminal on the worktree. The worktree and prompt are
+ * already on disk and usable, so a terminal that will not open is reported
+ * with the path rather than thrown, which would throw away the work.
+ */
+async function openInTerminal(
+  options: Omit<TerminalLaunchOptions, "onOpened">,
+  base: SessionBase,
+  startedAt: number,
+): Promise<SessionResult> {
+  const { settings } = options;
+  const { terminal } = settings;
+  const { host, worktreePath } = base;
+  try {
+    // Hand the session back the moment the terminal is open, rather than
+    // after the agent has claimed it, which takes seconds when it works and,
+    // through Warp's fallbacks, the better part of twenty when it does not.
+    // Whether it started follows in agentCheck.
+    let markOpened!: (opened: { strategy: string; fellBack: boolean }) => void;
+    const opened = new Promise<{ strategy: string; fellBack: boolean }>((resolve) => {
+      markOpened = resolve;
     });
+    const launching = launchTerminal({ ...options, onOpened: markOpened });
     const first = await Promise.race([
       launching.then((launch) => ({ launch, opened: null })),
       opened.then((info) => ({ launch: null, opened: info })),
     ]);
 
     if (first.opened) {
-      log.info(`session ready in ${Date.now() - startedAt}ms: ${worktree.path} (${first.opened.strategy})`);
+      log.info(`session ready in ${Date.now() - startedAt}ms: ${worktreePath} (${first.opened.strategy})`);
       const agentCheck = launching.then(
         (launch) => {
           if (launch.agentStarted !== false) return null;
-          log.warn(`${host} opened on ${worktree.path} but the agent did not start`);
+          log.warn(`${host} opened on ${worktreePath} but the agent did not start`);
           return agentDidNotStart(terminal);
         },
         (err: unknown) => describeError(err).message,
@@ -296,7 +314,7 @@ export async function createSession(
     }
 
     const launch = first.launch!;
-    log.info(`session ready in ${Date.now() - startedAt}ms: ${worktree.path} (${launch.strategy})`);
+    log.info(`session ready in ${Date.now() - startedAt}ms: ${worktreePath} (${launch.strategy})`);
     return {
       ...base,
       launchStrategy: launch.strategy,
@@ -305,10 +323,10 @@ export async function createSession(
     };
   } catch (err) {
     const { message } = describeError(err);
-    log.error(`worktree ready at ${worktree.path} but ${host} did not open: ${message}`);
+    log.error(`worktree ready at ${worktreePath} but ${host} did not open: ${message}`);
     return {
       ...base,
-      launchStrategy: terminal === "warp" ? config.settings.warpStrategy : terminal,
+      launchStrategy: terminal === "warp" ? settings.warpStrategy : terminal,
       fellBackToNewTab: false,
       launchError: message,
     };
@@ -325,7 +343,7 @@ async function openInApp(
   app: DesktopApp,
   worktreePath: string,
   prompt: string,
-  base: Omit<SessionResult, "launchStrategy" | "fellBackToNewTab">,
+  base: SessionBase,
   startedAt: number,
 ): Promise<SessionResult> {
   const uri = app.newSessionUri(worktreePath, linkPrompt(prompt));
@@ -342,72 +360,3 @@ async function openInApp(
 
 /** For the error when a ticket prompt arrives without its link. */
 const TRACKER_NAMES = { linear: "Linear", github: "GitHub", jira: "Jira" } as const;
-
-interface ContextExtras {
-  branch: string;
-  baseBranch: string;
-  repo: string;
-  worktree: string;
-  threadLimit: number;
-  ticket: Ticket | null;
-  attachments: string;
-}
-
-function buildContext(message: MessageContext, extras: ContextExtras): PromptContext {
-  return {
-    author: message.authorName,
-    channel: message.channelName,
-    message: quote(stripSlackMarkup(message.text)),
-    thread: formatThread(message.threadMessages, extras.threadLimit),
-    permalink: message.permalink,
-    date: messageDate(message.ts).toISOString(),
-    branch: extras.branch,
-    baseBranch: extras.baseBranch,
-    repo: extras.repo,
-    worktree: extras.worktree,
-    ticket: extras.ticket?.url ?? "",
-    ticketId: extras.ticket?.id ?? "",
-    question: formatQuestion(message.question ?? ""),
-    attachments: extras.attachments,
-  };
-}
-
-/**
- * Slack renders a message's timestamp as epoch seconds with a sub-second
- * suffix. The overlay reads it off the DOM when it can; when it cannot, the
- * message is still worth a session, so fall back to now rather than to 1970.
- */
-function messageDate(ts: string): Date {
-  const seconds = Number.parseInt(ts.split(".")[0] ?? "", 10);
-  if (!Number.isFinite(seconds) || seconds <= 0) return new Date();
-  return new Date(seconds * 1000);
-}
-
-/** Markdown blockquote, so the report is visually separate from instructions. */
-function quote(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed.length === 0) return "> (the message had no text)";
-  return trimmed
-    .split("\n")
-    .map((line) => `> ${line}`)
-    .join("\n");
-}
-
-function formatThread(
-  messages: Array<{ author: string; text: string }>,
-  limit: number,
-): string {
-  if (limit <= 0 || messages.length === 0) return "";
-  const slice = messages.slice(-limit);
-  const body = slice
-    .map((m) => `**@${m.author}:** ${stripSlackMarkup(m.text).trim()}`)
-    .join("\n\n");
-  return `\n### Thread replies\n${body}\n`;
-}
-
-/** The Ask box's text, set apart like the thread so it reads as mine, not the report's. */
-function formatQuestion(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed.length === 0) return "";
-  return `\n## My question\n${trimmed}\n`;
-}

@@ -7,6 +7,6 @@ import { envFile } from "./config/paths.js";
 loadDotenv({ path: envFile() });
 loadDotenv();
 
-const { runCli } = await import("./cli.js");
+const { runCli } = await import("./cli/index.js");
 
 await runCli(process.argv);

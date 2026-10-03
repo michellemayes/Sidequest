@@ -16,6 +16,7 @@ import { existsSync } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { isDirectory } from "../util/fs.js";
 
 export interface RepoCandidate {
   name: string;
@@ -120,14 +121,6 @@ function claim(seen: Set<string>, ids: string[]): boolean {
 
 let cache: { key: string; at: number; found: Found[] } | null = null;
 
-async function isDir(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 /** Every checkout under the roots, two levels deep. */
 async function scan(roots: string[], exclude: string[]): Promise<Found[]> {
   // Keyed by the `.git` directory's identity, not its path.
@@ -168,7 +161,7 @@ async function scan(roots: string[], exclude: string[]): Promise<Found[]> {
   const seenRoots = new Set<string>();
   const distinct: string[] = [];
   for (const root of roots) {
-    if (!(await isDir(root))) continue;
+    if (!(await isDirectory(root))) continue;
     const ids = await identities(root);
     if (ids.length > 0 && claim(seenRoots, ids)) distinct.push(root);
   }
@@ -200,7 +193,7 @@ export async function discoverRepos(options: DiscoverOptions): Promise<RepoCandi
   } else {
     found = await scan(uniqueRoots, [options.worktreesRoot]);
     for (const repo of options.linkedRepos) {
-      if (!(await isDir(repo))) continue;
+      if (!(await isDirectory(repo))) continue;
       const ids = await identities(join(repo, ".git"));
       if (ids.length === 0) ids.push(`path:${repo}`);
       // A linked repo keeps the spelling it was linked under, so it still

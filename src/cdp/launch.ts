@@ -6,6 +6,7 @@ import { devtoolsVersion, isAttachableTarget, listTargets } from "./client.js";
 import { run, succeeds } from "../util/exec.js";
 import { UserFacingError } from "../util/errors.js";
 import { platform } from "../util/platform.js";
+import { sleep } from "../util/async.js";
 
 const APP_CANDIDATES = [
   "/Applications/Slack.app",
@@ -189,8 +190,4 @@ export async function launchSlack(options: {
     `Slack started but nothing is listening on 127.0.0.1:${options.cdpPort}.`,
     "Slack may have refused the flag, or another Slack instance was already running.",
   );
-}
-
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
