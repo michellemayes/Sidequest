@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { resolveAgent } from "../agents/agents.js";
-import { launchSlack, sleep } from "../cdp/launch.js";
+import { launchSlack } from "../cdp/launch.js";
 import { daemonLogFile, shellHookFile } from "../config/paths.js";
 import type { Config } from "../config/schema.js";
 import { ensureConfigRoot, loadConfig } from "../config/store.js";
@@ -13,7 +13,9 @@ import { UserFacingError } from "../util/errors.js";
 import { pidExists } from "../util/lockfile.js";
 import { runAttacherLoop } from "./attachLoop.js";
 import { refreshShellHook } from "./hook.js";
-import { fileExists, pileUpNudge, runsAs, terminalSummary } from "./shared.js";
+import { pileUpNudge, runsAs, terminalSummary } from "./shared.js";
+import { sleep } from "../util/async.js";
+import { exists } from "../util/fs.js";
 
 export async function start(options: { force: boolean; foreground: boolean }): Promise<void> {
   await assertGitAvailable();
@@ -109,7 +111,7 @@ async function startTips(config: Config): Promise<string[]> {
     );
   }
   const usesWarp = config.settings.terminal === "warp" && !resolveAgent(config.settings.agent).app;
-  if (usesWarp && !(await fileExists(shellHookFile()))) {
+  if (usesWarp && !(await exists(shellHookFile()))) {
     tips.push("run `sidequest install-hook` so the agent starts even when Warp ignores the launch config.");
   }
   const pile = await pileUpNudge(config);

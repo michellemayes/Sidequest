@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import { createServer, type Server } from "node:http";
 import { CdpSession, listTargets, devtoolsVersion } from "../src/cdp/client.js";
 import { Attacher } from "../src/cdp/attacher.js";
-import { sleep } from "../src/cdp/launch.js";
+import { sleep } from "../src/util/async.js";
 import { inspectRepo } from "../src/git/repo.js";
 import { createWorktree } from "../src/git/worktree.js";
 import { recordSession } from "../src/session/history.js";

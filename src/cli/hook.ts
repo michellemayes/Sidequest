@@ -5,7 +5,7 @@ import { configRoot, shellHookFile } from "../config/paths.js";
 import { expandPath } from "../config/store.js";
 import { UserFacingError } from "../util/errors.js";
 import { shellHookSource } from "../warp/autorun.js";
-import { fileExists, readFileOrEmpty } from "./shared.js";
+import { exists, readFileOrEmpty } from "../util/fs.js";
 
 export async function installHook(options: { rc?: string; print: boolean }): Promise<void> {
   const snippet = shellHookSource();
@@ -40,7 +40,7 @@ export async function installHook(options: { rc?: string; print: boolean }): Pro
  */
 export async function refreshShellHook(): Promise<void> {
   const hookPath = shellHookFile();
-  if (!(await fileExists(hookPath))) return;
+  if (!(await exists(hookPath))) return;
   const snippet = shellHookSource();
   if ((await readFileOrEmpty(hookPath)) === snippet) return;
   await writeFile(hookPath, snippet, "utf8");

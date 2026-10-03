@@ -1,4 +1,3 @@
-import { readFile, stat } from "node:fs/promises";
 import { describeAgent, describeHeadless, type ResolvedAgent } from "../agents/agents.js";
 import type { Config, TerminalId } from "../config/schema.js";
 import { finishedWorktrees, PILE_UP_AT } from "../session/cleanup.js";
@@ -34,17 +33,6 @@ export function runsAs(config: Config, agent: ResolvedAgent): string {
 export function terminalSummary(id: TerminalId, agent: ResolvedAgent): string {
   const label = terminalDefinition(id).label;
   return agent.app ? `${label}, unused: ${agent.label} opens in ${agent.host}` : label;
-}
-
-export async function fileExists(path: string): Promise<boolean> {
-  return stat(path).then(
-    () => true,
-    () => false,
-  );
-}
-
-export async function readFileOrEmpty(path: string): Promise<string> {
-  return readFile(path, "utf8").catch(() => "");
 }
 
 export const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;

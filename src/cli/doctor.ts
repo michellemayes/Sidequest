@@ -11,7 +11,8 @@ import { describeError } from "../util/errors.js";
 import { run, succeeds } from "../util/exec.js";
 import { platform, uriOpener, warpLaunchConfigDir, warpTabConfigDir } from "../util/platform.js";
 import { strategyOrder } from "../warp/launcher.js";
-import { fileExists, pileUpNudge, plural, terminalSummary } from "./shared.js";
+import { pileUpNudge, plural, terminalSummary } from "./shared.js";
+import { exists } from "../util/fs.js";
 
 /**
  * Whether one of these apps is installed; null where there is no way to ask.
@@ -89,7 +90,7 @@ export async function doctor(): Promise<void> {
     if (order.includes("tab_config")) console.log(`       tab configs in ${warpTabConfigDir(config.settings.warpPreview)}`);
     if (order.includes("launch_config")) console.log(`       launch configs in ${warpLaunchConfigDir(config.settings.warpPreview)}`);
 
-    const hookInstalled = await fileExists(shellHookFile());
+    const hookInstalled = await exists(shellHookFile());
     console.log(`  ${hookInstalled ? "ok " : "-- "}  shell hook`);
     console.log(
       hookInstalled

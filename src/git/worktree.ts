@@ -11,6 +11,8 @@ import {
 } from "./repo.js";
 import { fetches } from "./prefetch.js";
 import { SESSION_DIR } from "../warp/autorun.js";
+import { sleep } from "../util/async.js";
+import { exists } from "../util/fs.js";
 
 export interface CreateWorktreeOptions {
   repo: RepoLocation;
@@ -66,7 +68,7 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<Wo
   try {
     if (fetched) {
       const waitMs = options.fetchWaitMs ?? FETCH_WAIT_MS;
-      const inTime = await Promise.race([fetched.then(() => true), sleep(waitMs).then(() => false)]);
+      const inTime = await Promise.race([fetched.then(() => true), sleep(waitMs, { unref: true }).then(() => false)]);
       if (!inTime) log.warn(`fetching origin/${baseBranch} is taking over ${waitMs}ms; cutting from the local ref`);
     }
 
@@ -101,10 +103,6 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<Wo
  */
 const FETCH_WAIT_MS = 3_000;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms).unref());
-}
-
 /**
  * Find a branch name and directory path that are both free, appending the same
  * -N suffix to each until they are.
@@ -121,7 +119,7 @@ async function findFreeNames(
     const branch = `${desiredBranch}${suffix}`;
     const path = join(worktreesRoot, `${dirName}${suffix}`);
 
-    const [branchTaken, pathTaken] = await Promise.all([branchExists(repo.root, branch), pathExists(path)]);
+    const [branchTaken, pathTaken] = await Promise.all([branchExists(repo.root, branch), exists(path)]);
     const taken = branchTaken || pathTaken;
     if (!taken) return { branch, path };
   }
@@ -132,15 +130,6 @@ async function findFreeNames(
   );
 }
 
-async function pathExists(path: string): Promise<boolean> {
-  const { stat } = await import("node:fs/promises");
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export interface WorktreeRecord {
   path: string;

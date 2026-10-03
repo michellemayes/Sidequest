@@ -1,4 +1,5 @@
 import type { PromptConfig, PromptKey } from "./schema.js";
+import { escapeSlack } from "../util/slack.js";
 
 /**
  * The prompts on a Slack message: the first four on every one, and Linear,
@@ -228,9 +229,4 @@ export function renderReply(template: string, context: PromptContext, repoLabel:
     question: escapeSlack(question.trim()),
   }).trim();
   return question.trim() ? rendered : rendered.replace(/\s*:$/, ".");
-}
-
-/** chat.postMessage reads &, < and > as markup; typed text should post as typed. */
-function escapeSlack(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

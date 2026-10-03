@@ -3,7 +3,7 @@ import { ensureConfigRoot, loadConfig, saveConfig } from "../config/store.js";
 import { start } from "./daemon.js";
 import { doctor } from "./doctor.js";
 import { installHook } from "./hook.js";
-import { fileExists } from "./shared.js";
+import { exists } from "../util/fs.js";
 
 /**
  * First run, start to finish: a config to edit, the shell hook, a doctor
@@ -14,7 +14,7 @@ export async function setup(options: { force: boolean }): Promise<void> {
   console.log("1/4  config");
   await init({ quiet: true });
   console.log("2/4  shell hook");
-  if (await fileExists(shellHookFile())) console.log(`     already installed at ${shellHookFile()}`);
+  if (await exists(shellHookFile())) console.log(`     already installed at ${shellHookFile()}`);
   else await installHook({ print: false });
   console.log("3/4  checks");
   await doctor();
