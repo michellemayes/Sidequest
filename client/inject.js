@@ -740,15 +740,35 @@
       return false;
     }
     if (!job || !job.permalink || !slackTeam(job.permalink)) return false;
+    // Only the post itself can fail the reply: once Slack has it, a slow or
+    // lost word back to the daemon is not a failed post.
     postReply(job.permalink, job.text).then(() => {
       toast({ title: `Replied in the thread for ${job.label || 'a session'}`, sub: job.branch });
-      return ask({ op: 'result-posted', branch: job.branch, resultMs: job.resultMs });
-    }).catch((err) => {
+      markPosted({ branch: job.branch, resultMs: job.resultMs });
+    }, (err) => {
       toast({ title: 'Could not post the reply', sub: err.message, kind: 'error' });
-      return ask({ op: 'result-posted', branch: job.branch, resultMs: job.resultMs, error: err.message });
-    }).catch(() => {});
+      ask({ op: 'result-posted', branch: job.branch, resultMs: job.resultMs, error: err.message }).catch(() => {});
+    });
     return true;
   };
+
+  /**
+   * Tell the daemon a reply went out, so it is not offered or posted again.
+   * Tried a few times, since a reply it never hears about comes back; never
+   * throws, because the reply is out either way.
+   */
+  async function markPosted(fields) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+      try {
+        const res = await ask(Object.assign({ op: 'result-posted' }, fields));
+        if (!res.error) return;
+      } catch {
+        // The daemon is busy or the binding is reconnecting; try again.
+      }
+    }
+    log('posted a reply but could not tell sidequest', fields.branch);
+  }
 
   function ask(payload) {
     if (typeof window[ASK] !== 'function') {
@@ -2388,8 +2408,8 @@
         postReply(res.permalink, text).then(() => {
           if (panelEl === panel) closePanel();
           toast({ title: 'Replied in the thread', sub: `${res.label || 'Session'} · ${branch}` });
-          return ask({ op: 'result-posted', branch, resultMs: res.resultMs });
-        }).catch((err) => {
+          markPosted({ branch, resultMs: res.resultMs });
+        }, (err) => {
           if (panelEl !== panel) return;
           delete panel.dataset.busy;
           note.textContent = err.message;
