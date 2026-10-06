@@ -310,6 +310,17 @@ export function resolveAgent(config: AgentConfig): ResolvedAgent {
   };
 }
 
+/**
+ * The agent config a session runs with: settings.agent, unless its prompt
+ * names another agent, which then runs with that agent's own defaults —
+ * settings.agent's command and args are for settings.agent's CLI.
+ */
+export function agentConfigFor(settingsAgent: AgentConfig, agentId = ""): AgentConfig {
+  const id = agentId.trim();
+  if (!id || id === settingsAgent.id) return settingsAgent;
+  return { id, command: "", args: [] };
+}
+
 /** Swap the prompt placeholders in one arg for real values. */
 export function fillPromptArg(arg: string, prompt: string, promptFile: string): string {
   return arg

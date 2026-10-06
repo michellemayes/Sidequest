@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defaultWorktreesRoot } from "./paths.js";
+import { AGENT_DEFINITIONS } from "../agents/agents.js";
 
 /** The built-in prompts. Config can add prompts of its own under any other key. */
 export const PROMPT_KEYS = ["investigate", "fix", "review", "ask", "linear", "github", "jira"] as const;
@@ -25,6 +26,13 @@ export const promptSchema = z.object({
    * Empty means this prompt never replies.
    */
   reply: z.string().default(""),
+  /**
+   * The agent this prompt runs with, by id (say "codex" for Review while Fix
+   * stays on Claude Code). Empty means settings.agent. A different agent
+   * than settings.agent runs with its own defaults, not settings.agent's
+   * command and args, which belong to that one.
+   */
+  agent: z.string().default(""),
 });
 
 export type PromptConfig = z.infer<typeof promptSchema>;
@@ -186,6 +194,8 @@ export const promptOverrideSchema = z.object({
   reply: z.string().optional(),
   /** Leave the prompt out of the menu, e.g. a built-in you never use. */
   hidden: z.boolean().optional(),
+  /** Run this prompt with another agent than settings.agent; empty for that one. */
+  agent: z.string().optional(),
 });
 
 export type PromptOverride = z.infer<typeof promptOverrideSchema>;
@@ -216,6 +226,13 @@ export const configSchema = z.object({
     .record(z.string(), promptOverrideSchema)
     .superRefine((prompts, ctx) => {
       for (const [key, prompt] of Object.entries(prompts)) {
+        if (prompt.agent && !AGENT_DEFINITIONS.some((d) => d.id === prompt.agent)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key, "agent"],
+            message: `no agent is called "${prompt.agent}"; \`sidequest agents\` lists them`,
+          });
+        }
         if ((PROMPT_KEYS as readonly string[]).includes(key)) continue;
         if (!PROMPT_KEY_PATTERN.test(key)) {
           ctx.addIssue({

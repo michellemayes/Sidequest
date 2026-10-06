@@ -8,7 +8,7 @@ import { armContinue } from "../warp/autorun.js";
 import { headlessPaths } from "../terminals/headless.js";
 import { launchTerminal } from "../terminals/launch.js";
 import { sessionHost, type TerminalId } from "../terminals/registry.js";
-import { resolveAgent } from "../agents/agents.js";
+import { agentConfigFor, resolveAgent } from "../agents/agents.js";
 import { openUri } from "../util/openUri.js";
 import { tabTitle, warpConfigName } from "./naming.js";
 import { UserFacingError } from "../util/errors.js";
@@ -64,8 +64,9 @@ export interface ReopenResult {
  * it is just a tab). Headless opens the session's answer or log. For an agent in a
  * desktop app: a new session in the app, in the worktree (the links cannot
  * reach back into an earlier one), whatever the terminal setting.
+ * `agentId` is the agent the session was started with; empty means settings.agent.
  */
-export async function openSession(config: Config, found: FoundSession): Promise<ReopenResult> {
+export async function openSession(config: Config, found: FoundSession, agentId = ""): Promise<ReopenResult> {
   const { worktree, repoPath } = found;
   try {
     await stat(worktree.path);
@@ -76,7 +77,8 @@ export async function openSession(config: Config, found: FoundSession): Promise<
     );
   }
 
-  const agent = resolveAgent(config.settings.agent);
+  // The agent the session was started with, which its prompt may have picked.
+  const agent = resolveAgent(agentConfigFor(config.settings.agent, agentId));
   if (agent.app) {
     await openUri(agent.app.newSessionUri(worktree.path), agent.host, `Is ${agent.host} installed? \`sidequest doctor\` checks.`);
     return { host: agent.host, strategy: agent.id, agentStarted: null };

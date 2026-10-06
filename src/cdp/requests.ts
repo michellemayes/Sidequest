@@ -176,6 +176,7 @@ async function startSession(request: AskRequest, host: RequestHost): Promise<Ans
       permalink: context.permalink,
       baseBranch: result.baseBranch,
       agentLabel: result.agentLabel,
+      agentId: result.agentId,
     });
     stats = computeStats(history);
   } catch (err) {
@@ -327,7 +328,8 @@ async function reopen(request: AskRequest, host: RequestHost): Promise<Answer> {
     };
   }
   const branch = found.worktree.branch;
-  await openSession(config, found);
+  const entry = history.filter((h) => h.worktreePath === found.worktree.path).pop();
+  await openSession(config, found, entry?.agentId);
   host.emit({ type: "reopen", branch });
   return { reply: { ok: true, branch } };
 }

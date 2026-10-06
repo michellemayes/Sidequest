@@ -1,6 +1,6 @@
 import { allPrompts } from "./store.js";
 import { linkLabel } from "./channels.js";
-import { resolveAgent } from "../agents/agents.js";
+import { agentConfigFor, resolveAgent } from "../agents/agents.js";
 import { sessionHost } from "../terminals/registry.js";
 import type { Config } from "./schema.js";
 import { computeStats, type HistoryEntry } from "../session/history.js";
@@ -50,7 +50,8 @@ export interface PageStatus {
  * one can offer to reopen it.
  */
 export interface PageConfig {
-  prompts: Array<{ key: string; label: string; emoji: string }>;
+  /** `agentLabel` only on a prompt that runs with another agent than settings.agent. */
+  prompts: Array<{ key: string; label: string; emoji: string; agentLabel?: string }>;
   /** Channel keys that have a repo, so the overlay can show its state offline. */
   linkedChannels: string[];
   /** Repo labels per channel key, the default first. A label is how the page names a repo. */
@@ -89,11 +90,15 @@ export function pageConfig(
 
   const agent = resolveAgent(config.settings.agent);
   return {
-    prompts: allPrompts(config).map(({ key, prompt }) => ({
-      key,
-      label: prompt.label,
-      emoji: prompt.emoji,
-    })),
+    prompts: allPrompts(config).map(({ key, prompt }) => {
+      const own = resolveAgent(agentConfigFor(config.settings.agent, prompt.agent));
+      return {
+        key,
+        label: prompt.label,
+        emoji: prompt.emoji,
+        ...(own.id !== agent.id ? { agentLabel: own.label } : {}),
+      };
+    }),
     linkedChannels: Object.keys(repoLabels),
     repoLabels,
     lastRepos: lastRepos(config, history),

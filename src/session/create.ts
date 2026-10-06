@@ -2,7 +2,7 @@ import { loadConfig, promptFor } from "../config/store.js";
 import { linksForChannel, repoForChannelName } from "../config/channels.js";
 import { renderPrompt, renderReply } from "../config/prompts.js";
 import { firstTicket, isTicketPrompt, keepsBranchCase, ticketFor } from "../config/tickets.js";
-import { linkPrompt, resolveAgent, type DesktopApp, type ResolvedAgent } from "../agents/agents.js";
+import { agentConfigFor, linkPrompt, resolveAgent, type DesktopApp, type ResolvedAgent } from "../agents/agents.js";
 import type { Config } from "../config/schema.js";
 import { defaultBranchCached, forgetRepos, locateRepoCached } from "../git/repo.js";
 import { createWorktree } from "../git/worktree.js";
@@ -47,6 +47,8 @@ export interface SessionResult {
   baseBranch: string;
   promptLabel: string;
   agentLabel: string;
+  /** The agent's id, so reopening it later runs the same one. */
+  agentId: string;
   /** Where the session opened, e.g. "iTerm2", "the background" or "the Claude app". */
   host: string;
   launchStrategy: string;
@@ -116,7 +118,8 @@ export async function createSession(
   // A link that names its base needs no guessing at the default branch.
   const baseBranch = link.baseBranch.trim() || (await defaultBranchCached(repo));
   const repoLabel = link.label.trim() || repo.name;
-  const agent = resolveAgent(config.settings.agent);
+  const agentConfig = agentConfigFor(config.settings.agent, prompt.agent);
+  const agent = resolveAgent(agentConfig);
   const terminal = config.settings.terminal;
 
   // Checked before anything is cut, like the ticket above. An agent
@@ -222,7 +225,7 @@ export async function createSession(
       ? await writeHeadlessRunner({
           worktreePath: worktree.path,
           agentCommand: agent.command,
-          agentArgs: config.settings.agent.args,
+          agentArgs: agentConfig.args,
           headless: agent.headless,
           agentLabel: agent.label,
         })
@@ -238,6 +241,7 @@ export async function createSession(
     promptLabel: prompt.label,
     promptFile: files.promptFile,
     agentLabel: agent.label,
+    agentId: agent.id,
     host,
     reply,
     attachments: attachments.length,

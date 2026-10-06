@@ -191,7 +191,8 @@ function openMenu(row) {
       if (index < 9) entry.dataset.key = String(index + 1);
       const letter = letterFor(prompt.label);
       if (letter) entry.dataset.letter = letter;
-      entry.title = `${ticket ? `Work ${prompt.label} ${ticket.name}` : prompt.label}${repos.length > 1 ? ' in the picked repo' : ''} with ${CONFIG.agentLabel} — press ${index + 1}${letter ? ` or ${letter.toUpperCase()}` : ''}`;
+      entry.title = `${ticket ? `Work ${prompt.label} ${ticket.name}` : prompt.label}${repos.length > 1 ? ' in the picked repo' : ''} with ${prompt.agentLabel || CONFIG.agentLabel} — press ${index + 1}${letter ? ` or ${letter.toUpperCase()}` : ''}`;
+      if (prompt.agentLabel) spans(entry, [['sq-agent', prompt.agentLabel]]);
       menu.append(entry);
     });
   }
@@ -280,7 +281,7 @@ function openAskBox(prompt) {
   const repos = reposFor(channel);
   const where = repos.length > 1 ? ` in ${pickedRepo(channel)}` : '';
   if (where) title.textContent += where;
-  submit.title = `Start ${prompt.label}${where} with ${CONFIG.agentLabel} — Enter`;
+  submit.title = `Start ${prompt.label}${where} with ${prompt.agentLabel || CONFIG.agentLabel} — Enter`;
   foot.append(hint, submit);
 
   menu.replaceChildren(title, box, foot);

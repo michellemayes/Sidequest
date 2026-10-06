@@ -38,7 +38,8 @@ export async function reopen(ref: string | undefined): Promise<void> {
       "Pass a branch name or worktree path from `sidequest sessions`.",
     );
   }
-  const launch = await openSession(config, found);
+  const entry = history.filter((h) => h.worktreePath === found.worktree.path).pop();
+  const launch = await openSession(config, found, entry?.agentId);
   if (launch.terminal === "headless") {
     console.log(
       launch.agentStarted === null
