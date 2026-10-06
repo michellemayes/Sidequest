@@ -109,7 +109,9 @@ describe("listSessions", () => {
   it("leaves out cleaned-up sessions, shows deleted ones as gone, and caps the list", async () => {
     const cleaned = await session("fix/cleaned", 30);
     const deleted = await session("fix/deleted", 20);
-    const live = await Promise.all([1, 2, 3].map((n) => session(`fix/live-${n}`, 10 - n)));
+    // One at a time: git races on .git/worktrees when two `worktree add`s overlap.
+    const live = [];
+    for (const n of [1, 2, 3]) live.push(await session(`fix/live-${n}`, 10 - n));
 
     await git(["worktree", "remove", cleaned.worktreePath], repoPath);
     await rm(deleted.worktreePath, { recursive: true, force: true });

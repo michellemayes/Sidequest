@@ -52,6 +52,7 @@ export class Attacher {
   private readonly autoPosted = new Set<string>();
   /** The outcome reaction each session's message has been handed, so each is asked for once. */
   private readonly reacted = new Map<string, string>();
+  private reacting: Promise<void> = Promise.resolve();
   /**
    * Agents that did not start in a terminal that did open, by branch: found
    * after the overlay was told the session started, so it hears through the
@@ -375,7 +376,15 @@ export class Attacher {
    * headless run failed. A reply posted from Slack gets its ✅ from the page
    * that posted it.
    */
-  private async reactToOutcomes(): Promise<void> {
+  private reactToOutcomes(): Promise<void> {
+    // One at a time: a window attaching while the watcher calls back would
+    // otherwise have both react before either had noted it.
+    const next = this.reacting.then(() => this.reactToOutcomesNow());
+    this.reacting = next.catch(() => undefined);
+    return next;
+  }
+
+  private async reactToOutcomesNow(): Promise<void> {
     const config = await loadConfig();
     if (!config.settings.reactions) return;
     let history: HistoryEntry[] | null = null;

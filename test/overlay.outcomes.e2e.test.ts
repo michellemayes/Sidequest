@@ -151,6 +151,8 @@ describeIfChrome("overlay over CDP: how a session is going, on its message", () 
     const { attacher, session } = await attachAndEval({ watchIntervalMs: 300 });
     try {
       await sleep(600);
+      // The page outlives a test: clear the lines an earlier one left.
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
       const deadline = Date.now() + 10_000;
       let entries = "";
       while (Date.now() < deadline) {
