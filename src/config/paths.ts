@@ -44,3 +44,8 @@ export function daemonLogFile(): string {
 export function historyFile(): string {
   return join(configRoot(), "history.json");
 }
+
+/** What settings sync last agreed with Slack, and the links it could not place here yet. */
+export function syncStateFile(): string {
+  return join(configRoot(), "sync.json");
+}

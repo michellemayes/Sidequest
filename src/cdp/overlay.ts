@@ -23,6 +23,7 @@ const PARTS = [
   "results.js",
   "inline.js",
   "replies.js",
+  "sync.js",
   "channel.js",
   "sessionsPanel.js",
   "placement.js",

@@ -40,6 +40,13 @@ export const repoLinkSchema = z.object({
   label: z.string().default(""),
   linkedBy: z.string().default(""),
   linkedAt: z.string().default(""),
+  /**
+   * The repo's origin, as normalizeRemote spells it (github.com/owner/repo),
+   * so settings sync can find the same repo on another computer, wherever it
+   * is checked out there. Filled in by sync; empty until then, or for a repo
+   * with no remote.
+   */
+  remote: z.string().default(""),
 });
 
 export type RepoLink = z.infer<typeof repoLinkSchema>;
@@ -152,6 +159,13 @@ export const settingsSchema = z.object({
   trackStatus: z.boolean().default(true),
   /** Log what the injected overlay is doing to the Slack devtools console. */
   verbose: z.boolean().default(false),
+  /**
+   * Keep channel links, prompts and the portable settings in step with your
+   * other computers, through a pinned note in your own DM with yourself in
+   * Slack. Off by default: it is the one thing Sidequest stores in Slack
+   * that you did not post yourself. See src/config/sync.ts.
+   */
+  sync: z.boolean().default(false),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;

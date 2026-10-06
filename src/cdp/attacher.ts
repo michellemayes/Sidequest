@@ -1,6 +1,7 @@
 import { CdpSession, CLOSE_EVENT, isAttachableTarget, listTargets, type CdpTarget } from "./client.js";
 import { overlaySource } from "./overlay.js";
 import { answer, sessionReply, type AskRequest, type AttacherEvent, type RequestHost } from "./requests.js";
+import { SettingsSyncer } from "./syncer.js";
 import { pageConfig } from "../config/pageConfig.js";
 import { loadConfig } from "../config/store.js";
 import { loadHistory } from "../session/history.js";
@@ -32,6 +33,8 @@ export class Attacher {
   private readonly targetUrl: RegExp;
   private pollTimer: NodeJS.Timeout | null = null;
   private stopped = false;
+  /** Settings sync through Slack, when settings.sync is on. */
+  private readonly syncer: SettingsSyncer;
   private sweepSummary: SweepSummary = { targets: 0, matched: 0 };
   /** So a window that never appears is said once, not every four seconds. */
   private reportedEmpty = false;
@@ -58,9 +61,17 @@ export class Attacher {
       onEvent?: (event: AttacherEvent) => void;
       /** How often to look in on sessions; false to not follow them at all. */
       watchIntervalMs?: number | false;
+      /** How often settings sync looks for changes from other computers. */
+      syncIntervalMs?: number;
     },
   ) {
     this.targetUrl = new RegExp(options.targetUrlPattern, "i");
+    this.syncer = new SettingsSyncer({
+      sessions: () => [...this.sessions.values()].filter((s): s is CdpSession => s !== null),
+      emit: (event) => this.emit(event),
+      onPulled: () => this.broadcastConfig(),
+      intervalMs: options.syncIntervalMs,
+    });
   }
 
   private emit(event: AttacherEvent): void {
@@ -94,6 +105,8 @@ export class Attacher {
       } catch (err) {
         this.emit({ type: "poll-error", message: describeError(err).message });
       }
+      // Not awaited: a round goes to Slack and back, and the poll should not wait on it.
+      if (!this.stopped) void this.syncer.tick();
       if (!this.stopped) {
         // Deliberately not unref'd: this timer is what keeps `sidequest start`
         // alive. An attached window holds the event loop open through its

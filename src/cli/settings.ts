@@ -4,6 +4,7 @@ import { configFile } from "../config/paths.js";
 import { PROMPT_TOKENS } from "../config/prompts.js";
 import { PROMPT_KEYS } from "../config/schema.js";
 import { allPrompts, loadConfig, updateConfig } from "../config/store.js";
+import { loadSyncState, SYNCED_SETTINGS } from "../config/sync.js";
 import { sessionHost, TERMINAL_DEFINITIONS } from "../terminals/registry.js";
 import { UserFacingError } from "../util/errors.js";
 import { runsAs, terminalSummary } from "./shared.js";
@@ -125,6 +126,45 @@ export async function replies(state?: string): Promise<void> {
   console.log('An empty "reply" turns it off for that prompt.');
 }
 
+export async function sync(state?: string): Promise<void> {
+  const wanted = state?.trim().toLowerCase();
+  if (wanted) {
+    if (wanted !== "on" && wanted !== "off") {
+      throw new UserFacingError(`Unknown state "${state}".`, "Use `sidequest sync on` or `sidequest sync off`.");
+    }
+    await updateConfig((config) => {
+      config.settings.sync = wanted === "on";
+    });
+    if (wanted === "off") {
+      console.log("Settings sync is off. The note stays in your DM with yourself in Slack; delete it there if you like.");
+      return;
+    }
+    console.log("Settings sync is on. While Sidequest is running, your channel links, prompts and settings are kept");
+    console.log("in a pinned note in your DM with yourself in Slack, and every computer with sync on shares them.");
+    console.log("Run `sidequest sync on` on your other computers too. Each one finds its own checkout of a linked repo");
+    console.log("by its git remote, wherever it is cloned there.");
+    return;
+  }
+
+  const config = await loadConfig();
+  const synced = await loadSyncState();
+  console.log(`Settings sync is ${config.settings.sync ? "on" : "off"}.`);
+  if (synced.syncedAt) {
+    console.log(`Last in step with Slack at ${synced.syncedAt}${synced.from ? `, as changed on ${synced.from}` : ""}.`);
+  }
+  const waiting = Object.entries(synced.pending).flatMap(([channel, links]) =>
+    links.map(({ link }) => `  #${channel} → ${link.remote || link.name}`),
+  );
+  if (waiting.length > 0) {
+    console.log("\nLinked on another computer, but not cloned on this one (looked for in your usual code folders):");
+    for (const line of waiting) console.log(line);
+    console.log("Clone them, or add the folder they are in to settings.repoSearchRoots, and they link themselves.");
+  }
+  console.log(`\nWhat syncs: channel links, prompts, and ${SYNCED_SETTINGS.join(", ")}.`);
+  console.log("What stays on this computer: repo paths, worktreesRoot, the terminal, repoSearchRoots, and Slack's DevTools port.");
+  console.log(`Turn it ${config.settings.sync ? "off" : "on"} with \`sidequest sync ${config.settings.sync ? "off" : "on"}\`.`);
+}
+
 export async function prompts(): Promise<void> {
   const config = await loadConfig();
   for (const { key, prompt } of allPrompts(config)) {
@@ -161,6 +201,7 @@ export async function list(): Promise<void> {
   console.log(
     `  autoClean:      ${config.settings.autoClean ? `on, after ${config.settings.autoCleanAfterDays} idle days` : "off"}`,
   );
+  console.log(`  sync:           ${config.settings.sync ? "on, through Slack" : "off"}`);
 
   console.log("\nlinked channels");
   if (entries.length === 0) {

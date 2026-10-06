@@ -16,6 +16,7 @@ export async function link(
       label: options.label ?? "",
       linkedBy: "cli",
       linkedAt: new Date().toISOString(),
+      remote: "",
     });
     return linksForChannel(config, key);
   });
