@@ -8,7 +8,7 @@ import { link, unlink } from "./channels.js";
 import { start, status, stop } from "./daemon.js";
 import { doctor } from "./doctor.js";
 import { installHook } from "./hook.js";
-import { clean, reopen, sessions, stats } from "./sessions.js";
+import { clean, pr, reopen, sessions, stats } from "./sessions.js";
 import { agents, list, prompts, replies, sync, terminal } from "./settings.js";
 import { init, setup } from "./setup.js";
 import { update } from "./update.js";
@@ -68,6 +68,11 @@ export async function runCli(argv: string[]): Promise<void> {
     .command("reopen [ref]")
     .description("open a session's terminal (or the agent's app) again (branch name or path; default: the latest)")
     .action((ref: string | undefined) => wrap(() => reopen(ref)));
+
+  program
+    .command("pr [ref]")
+    .description("push a session's branch and open a draft pull request for it (branch name or path; default: the latest)")
+    .action((ref: string | undefined) => wrap(() => pr(ref)));
 
   program
     .command("stats")

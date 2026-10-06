@@ -79,6 +79,8 @@ const OP_TIMEOUT_MS = {
   'suggest-repos': 60000,
   'link-repo': 30000,
   'list-sessions': 30000,
+  // A push and gh, each over the network.
+  'open-pr': 180000,
 };
 // A result outlives a scroll away and back, not a working session.
 const RESULT_TTL_MS = 10 * 60 * 1000;

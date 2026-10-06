@@ -17,6 +17,8 @@ import { createSession, type MessageContext } from "../session/create.js";
 import { computeStats, loadHistory, recordSession, updateSession, type HistoryEntry } from "../session/history.js";
 import { findSession, openSession } from "../session/reopen.js";
 import { readResult, resultReply } from "../session/result.js";
+import { openPullRequest } from "../session/pullRequest.js";
+import { openUri } from "../util/openUri.js";
 import { findById, listSessions, removeSession, UncommittedWorkError } from "../session/sessions.js";
 import type { SessionStatus } from "../session/status.js";
 import { describeError } from "../util/errors.js";
@@ -94,6 +96,7 @@ const HANDLERS: Record<string, Handler> = {
   "result-posted": resultPosted,
   "list-sessions": listSessionsForPanel,
   "remove-session": removeSessionFromPanel,
+  "open-pr": openPr,
 };
 
 /**
@@ -396,6 +399,28 @@ async function removeSessionFromPanel(request: AskRequest, host: RequestHost): P
   host.emit({ type: "remove-session", branch: result.branch });
   // Its mark now says it was cleaned up.
   return { reply: { ok: true, ...result }, after: async () => refreshStatusesSoon(host) };
+}
+
+/**
+ * A session's pull request: opened in the browser when it has one, else its
+ * branch pushed and a draft opened for it first. Only on a click; nothing
+ * is pushed on its own.
+ */
+async function openPr(request: AskRequest, host: RequestHost): Promise<Answer> {
+  const branch = (request.branch ?? "").trim();
+  const entry = (await loadHistory()).reverse().find((h) => h.branch === branch);
+  if (!entry) return { reply: { error: `${branch || "That session"} is not one Sidequest knows.` } };
+  const known = host.status(branch)?.pr;
+  const { url, created } = known ? { url: known.url, created: false } : await openPullRequest(entry);
+  if (created) host.emit({ type: "pr-opened", branch, message: url });
+  // The pull request is there either way; a browser that will not open is no failure.
+  await openUri(url, "your browser", "").catch((err) => log.debug(`could not open ${url}: ${String(err)}`));
+  return {
+    reply: { ok: true, branch, url, created },
+    after: async () => {
+      if (created) await host.refreshStatuses();
+    },
+  };
 }
 
 /** A session's result as the thread reply the page posts. */

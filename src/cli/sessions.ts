@@ -4,6 +4,8 @@ import { listWorktrees } from "../git/worktree.js";
 import { cleanSweepOptions, sweepWorktrees } from "../session/cleanup.js";
 import { computeStats, latestSession, loadHistory, MILESTONES } from "../session/history.js";
 import { findSession, openSession } from "../session/reopen.js";
+import { openPullRequest } from "../session/pullRequest.js";
+import type { HistoryEntry } from "../session/history.js";
 import { agentDidNotStart } from "../terminals/launch.js";
 import { UserFacingError } from "../util/errors.js";
 import { plural } from "./shared.js";
@@ -161,4 +163,25 @@ export async function clean(options: { force: boolean; all: boolean; recent: boo
     `\nRemoved ${plural(removed, "worktree")}` +
       (kept > 0 ? `, kept ${kept}.` : "."),
   );
+}
+
+/**
+ * Push a session's branch and open a draft pull request for it, as the
+ * menu's "Open a pull request" does: by branch or worktree path, or the
+ * latest session with nothing named.
+ */
+export async function pr(ref: string | undefined): Promise<void> {
+  const history = await loadHistory();
+  const wanted = ref?.trim() ?? "";
+  const entry: HistoryEntry | undefined = wanted
+    ? [...history].reverse().find((h) => h.branch === wanted || h.worktreePath === wanted)
+    : latestSession(history);
+  if (!entry) {
+    throw new UserFacingError(
+      wanted ? `No Sidequest session found for "${wanted}".` : "No sessions yet.",
+      "Pass a branch name or worktree path from `sidequest sessions`.",
+    );
+  }
+  const { url, created } = await openPullRequest(entry);
+  console.log(created ? `Opened a draft pull request for ${entry.branch}: ${url}` : `${entry.branch} already has one: ${url}`);
 }

@@ -5,6 +5,7 @@ import { sleep } from "../src/util/async.js";
 import { loadHistory, updateSession } from "../src/session/history.js";
 import {
   describeIfChrome,
+  exec,
   apiHandlers,
   attachAndEval,
   configHome,
@@ -131,6 +132,38 @@ describeIfChrome("overlay over CDP: how a session is going, on its message", () 
       expect(seen).toHaveLength(2);
     } finally {
       await evaluate(session, "localStorage.removeItem('localConfig_v2')").catch(() => undefined);
+      attacher.stop();
+      session.close();
+    }
+  }, 45_000);
+
+  it("offers a pull request for a session with commits, and says why it could not push", async () => {
+    const worktree = await madeSession("fix/committed", 1);
+    await updateSession("fix/committed", { ts: "1757430000.000100", baseBranch: "main" });
+    await writeFile(join(worktree, "fix.txt"), "fixed\n");
+    const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@e", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@e" };
+    await exec("git", ["add", "."], { cwd: worktree, env });
+    await exec("git", ["commit", "-m", "Fix it"], { cwd: worktree, env });
+
+    const { attacher, session } = await attachAndEval({ watchIntervalMs: 300 });
+    try {
+      await sleep(600);
+      const deadline = Date.now() + 10_000;
+      let entries = "";
+      while (Date.now() < deadline) {
+        await hover(session, "row-1");
+        await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+        await sleep(150);
+        entries = String(await evaluate(session, `Array.from(${UI}.querySelectorAll('.sq-menu button')).map((b) => b.textContent).join('|')`));
+        if (entries.includes("Open a pull request for Fix")) break;
+        await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+        await sleep(300);
+      }
+      expect(entries).toContain("Open a pull request for Fix");
+      await evaluate(session, `Array.from(${UI}.querySelectorAll('.sq-menu button')).find((b) => b.textContent.includes('Open a pull request')).click()`);
+      // The test repo has no origin to push to; the line under the message says so.
+      expect(await settledResult(session)).toContain("Could not push fix/committed");
+    } finally {
       attacher.stop();
       session.close();
     }
