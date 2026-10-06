@@ -291,6 +291,30 @@ that would need approval. Your `agent.args` go after those flags, before the
 prompt. `sidequest agents` shows each agent's headless run. Clicking the session later (or
 `sidequest reopen`) opens `result.md`, or `agent.log` while it's still working.
 
+### Skipping permission prompts
+
+`sidequest skip-permissions on` starts every session with the agent's own flag
+for acting without asking first (and `off` turns it back):
+
+| Agent | Flag |
+| --- | --- |
+| `claude` | `--dangerously-skip-permissions` |
+| `codex` | `--dangerously-bypass-approvals-and-sandbox` |
+| `gemini`, `qwen` | `--yolo` |
+| `cursor-agent` | `--force` |
+| `copilot` | `--allow-all-tools` |
+| `aider` | `--yes-always` |
+
+The flag goes after your `agent.args`, on first runs, follow-ups and reopened
+sessions alike, and for a prompt's own `agent` too. A headless run drops its
+usual limits for it (`claude -p --dangerously-skip-permissions`, `codex exec`
+without `--full-auto`). opencode, Goose and the desktop apps have no such flag
+and keep asking. The launch toast says *permission prompts off* while it's on.
+
+Think before turning it on: the prompt is the Slack message, so whoever wrote
+it can steer an agent that runs any command on your machine without asking.
+The setting never syncs to your other computers.
+
 ## Configuration
 
 Everything lives in `~/.sidequest/config.json`.
@@ -413,6 +437,7 @@ how to install it if that fails.
 | Setting | Default | |
 | --- | --- | --- |
 | `agent` | `{ "id": "claude" }` | Any id from [Agents](#agents): a CLI in your terminal, or `claude-desktop` or `chatgpt` in their desktop apps (or run `sidequest agents codex`). Use `command`/`args` to override a terminal agent's executable and add flags |
+| `skipPermissions` | `false` | Start agents with their own flag for skipping permission prompts (or run `sidequest skip-permissions on`). See Skipping permission prompts above |
 | `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees go |
 | `terminal` | `warp` | `warp`, `iterm2`, `ghostty`, `terminal`, `tmux` or `headless` (or run `sidequest terminal <name>`). See Terminals above. Ignored by the desktop-app agents |
 | `tmuxSession` | `""` | The tmux session new windows go into. Empty means the one you used last |

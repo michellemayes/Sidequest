@@ -13,7 +13,7 @@ function celebrate(prompt, res) {
         ? `${CONFIG.agentLabel} is working in the background`
         : `${CONFIG.agentLabel} is starting in ${CONFIG.agentHost}`;
   if (!s) {
-    toast({ title: `${prompt.label} is underway`, sub: where, burst: true });
+    toast({ title: `${prompt.label} is underway`, sub: CONFIG.skipPermissions ? `${where} · permission prompts off` : where, burst: true });
     return;
   }
   let title;
@@ -23,6 +23,7 @@ function celebrate(prompt, res) {
   else title = `Sidequest #${s.total} is underway`;
 
   const bits = [where];
+  if (CONFIG.skipPermissions && !res.warning) bits.push('permission prompts off');
   if (s.today > 1) bits.push(`${s.today} today`);
   if (s.streak >= 2 && !(s.firstToday && title.includes('streak'))) bits.push(`🔥 ${s.streak}-day streak`);
   toast({ title, sub: bits.join(' · '), burst: true, big: Boolean(s.milestone) || s.total === 1 });

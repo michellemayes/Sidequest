@@ -48,6 +48,7 @@ const CONFIG = Object.assign({
   agentHost: 'Warp',
   agentInApp: false,
   headless: false,
+  skipPermissions: false,
   sessions: {},
   stats: { total: 0, today: 0, streak: 0 },
   postResults: 'ask',

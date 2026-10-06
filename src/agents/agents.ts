@@ -65,6 +65,12 @@ export interface AgentDefinition {
    * conversation. Otherwise a follow-up starts the agent afresh on it.
    */
   continueWithPrompt?: boolean;
+  /**
+   * The agent's own flags for acting without asking first, added after the
+   * user's args when settings.skipPermissions is on. Absent when the CLI has
+   * no such flag.
+   */
+  skipPermissionsArgs?: string[];
   /** Shown by `sidequest doctor` when the agent is not usable. */
   installHint: string;
   /**
@@ -84,6 +90,12 @@ export interface AgentDefinition {
 export interface HeadlessInvocation {
   /** Placed before the user's own args and the prompt. */
   args: string[];
+  /**
+   * The part of `args` that holds the agent back, left out when
+   * settings.skipPermissions is on (the agent's skipPermissionsArgs go in
+   * with the user's args instead).
+   */
+  limitArgs?: string[];
   /** Placed after `args` on a follow-up, to carry on the last run's conversation. */
   continueArgs?: string[];
   /** How the prompt is handed over, as for an agent's own `promptArgs`. Defaults to `["{prompt}"]`. */
@@ -129,9 +141,15 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     defaultArgs: [],
     continueArgs: ["--continue"],
     continueWithPrompt: true,
+    skipPermissionsArgs: ["--dangerously-skip-permissions"],
     // Print mode answers on stdout. acceptEdits lets it change files in the
     // worktree; anything else it would need a person to approve is refused.
-    headless: { args: ["-p", "--permission-mode", "acceptEdits"], continueArgs: ["--continue"], result: "stdout" },
+    headless: {
+      args: ["-p", "--permission-mode", "acceptEdits"],
+      limitArgs: ["--permission-mode", "acceptEdits"],
+      continueArgs: ["--continue"],
+      result: "stdout",
+    },
     installHint:
       "Install Claude Code (https://claude.com/claude-code), or point settings.agent.command at its executable.",
   },
@@ -145,8 +163,10 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     continueWithPrompt: true,
     // exec streams progress on stdout; --full-auto is its workspace-write
     // sandbox, and the last message is the answer.
+    skipPermissionsArgs: ["--dangerously-bypass-approvals-and-sandbox"],
     headless: {
       args: ["exec", "--full-auto", "--output-last-message", ".sidequest/result.md"],
+      limitArgs: ["--full-auto"],
       result: "file",
     },
     installHint:
@@ -162,6 +182,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     continueArgs: ["--resume", "latest"],
     continueWithPrompt: true,
     promptArgs: ["--prompt-interactive", PROMPT_TOKEN],
+    skipPermissionsArgs: ["--yolo"],
     // -p answers once on stdout; without approval, tools that change things are off.
     headless: { args: [], promptArgs: ["-p", PROMPT_TOKEN], result: "stdout" },
     installHint:
@@ -181,6 +202,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     continueWithPrompt: true,
     promptArgs: ["--message-file", PROMPT_FILE_TOKEN],
     resumeArgs: ["--restore-chat-history"],
+    skipPermissionsArgs: ["--yes-always"],
     installHint:
       "Install Aider (python -m pip install aider-install && aider-install), or point settings.agent.command at its executable.",
   },
@@ -193,6 +215,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     command: "cursor-agent",
     defaultArgs: [],
     continueArgs: ["resume"],
+    skipPermissionsArgs: ["--force"],
     // Print mode answers once on stdout; without --force it changes nothing.
     headless: { args: [], promptArgs: ["-p", PROMPT_TOKEN], result: "stdout" },
     installHint:
@@ -219,6 +242,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     defaultArgs: [],
     continueArgs: ["--continue"],
     promptArgs: ["--interactive", PROMPT_TOKEN],
+    skipPermissionsArgs: ["--allow-all-tools"],
     installHint:
       "Install GitHub Copilot CLI (npm install -g @github/copilot), or point settings.agent.command at its executable.",
   },
@@ -231,6 +255,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     defaultArgs: [],
     continueArgs: ["--continue"],
     promptArgs: ["--prompt-interactive", PROMPT_TOKEN],
+    skipPermissionsArgs: ["--yolo"],
     // Same as Gemini CLI, which it forks.
     headless: { args: [], promptArgs: ["-p", PROMPT_TOKEN], result: "stdout" },
     installHint:
@@ -302,26 +327,49 @@ export interface ResolvedAgent {
   /** The agent's non-interactive mode, if it has one. */
   headless?: HeadlessInvocation;
   app?: DesktopApp;
+  /** True when `args` carry the agent's skipPermissionsArgs. */
+  skipsPermissions?: boolean;
+}
+
+export interface ResolveOptions {
+  /** settings.skipPermissions: run the agent without asking for approval. */
+  skipPermissions?: boolean;
+}
+
+/** `args` with the run of `remove` taken out, wherever it sits. */
+function without(args: string[], remove: string[]): string[] {
+  for (let i = 0; i + remove.length <= args.length; i++) {
+    if (remove.every((arg, j) => args[i + j] === arg)) return [...args.slice(0, i), ...args.slice(i + remove.length)];
+  }
+  return args;
 }
 
 /**
  * Merge a built-in agent definition with the user's overrides from config.
  * An empty command means "the agent's default"; empty args likewise.
  */
-export function resolveAgent(config: AgentConfig): ResolvedAgent {
+export function resolveAgent(config: AgentConfig, options: ResolveOptions = {}): ResolvedAgent {
   const def = agentDefinition(config.id);
+  const own = config.args.length > 0 ? config.args : def.defaultArgs;
+  const skip = options.skipPermissions && def.skipPermissionsArgs ? def.skipPermissionsArgs : null;
+  // Left as they are if the user's args already ask for it.
+  const args = skip && !skip.every((arg) => own.includes(arg)) ? [...own, ...skip] : own;
+  const headless = def.headless && skip && def.headless.limitArgs
+    ? { ...def.headless, args: without(def.headless.args, def.headless.limitArgs) }
+    : def.headless;
   return {
     id: def.id,
     label: def.label,
     host: def.host,
     command: config.command.trim() || def.command,
-    args: config.args.length > 0 ? config.args : def.defaultArgs,
+    args,
     promptArgs: def.promptArgs ?? [PROMPT_TOKEN],
     ...(def.resumeArgs ? { resumeArgs: def.resumeArgs } : {}),
     ...(def.continueArgs ? { continueArgs: def.continueArgs } : {}),
     ...(def.continueWithPrompt ? { continueWithPrompt: true } : {}),
-    ...(def.headless ? { headless: def.headless } : {}),
+    ...(headless ? { headless } : {}),
     ...(def.app ? { app: def.app } : {}),
+    ...(skip ? { skipsPermissions: true } : {}),
   };
 }
 

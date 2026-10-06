@@ -84,7 +84,7 @@ export async function openSession(
   }
 
   // The agent the session was started with, which its prompt may have picked.
-  const agent = resolveAgent(agentConfigFor(config.settings.agent, agentId));
+  const agent = resolveAgent(agentConfigFor(config.settings.agent, agentId), config.settings);
   if (agent.app) {
     await openUri(agent.app.newSessionUri(worktree.path), agent.host, `Is ${agent.host} installed? \`sidequest doctor\` checks.`);
     return { host: agent.host, strategy: agent.id, agentStarted: null };

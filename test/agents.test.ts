@@ -8,6 +8,8 @@ import {
   agentConfigFor,
   agentDefinition,
   describeAgent,
+  describeHeadless,
+  followUpArgs,
   fillPromptArg,
   resolveAgent,
 } from "../src/agents/agents.js";
@@ -232,5 +234,63 @@ describe("an agent per prompt", () => {
     const parsed = configSchema.safeParse({ prompts: { fix: { agent: "clippy" } } });
     expect(parsed.success).toBe(false);
     expect(JSON.stringify(parsed.error?.issues)).toContain("clippy");
+  });
+});
+
+describe("skipping permission prompts", () => {
+  const skip = { skipPermissions: true };
+
+  it("adds each agent's own flag after the user's args", () => {
+    expect(resolveAgent({ id: "claude", command: "", args: ["--model", "opus"] }, skip).args).toEqual([
+      "--model",
+      "opus",
+      "--dangerously-skip-permissions",
+    ]);
+    expect(resolveAgent({ id: "codex", command: "", args: [] }, skip).args).toEqual([
+      "--dangerously-bypass-approvals-and-sandbox",
+    ]);
+    expect(resolveAgent({ id: "gemini", command: "", args: [] }, skip).args).toEqual(["--yolo"]);
+  });
+
+  it("carries the flag into follow-ups", () => {
+    const agent = resolveAgent({ id: "claude", command: "", args: [] }, skip);
+    expect(followUpArgs(agent)).toEqual(["--continue", "--dangerously-skip-permissions", "{prompt}"]);
+  });
+
+  it("leaves things alone when off, or when the user's args already ask for it", () => {
+    expect(resolveAgent({ id: "claude", command: "", args: [] }).args).toEqual([]);
+    expect(resolveAgent({ id: "claude", command: "", args: [] }).skipsPermissions).toBeUndefined();
+    const already = resolveAgent({ id: "claude", command: "", args: ["--dangerously-skip-permissions"] }, skip);
+    expect(already.args).toEqual(["--dangerously-skip-permissions"]);
+  });
+
+  it("drops the headless limits for the agent's own flag", () => {
+    expect(describeHeadless(resolveAgent({ id: "claude", command: "", args: [] }, skip))).toBe(
+      "claude -p --dangerously-skip-permissions <prompt>",
+    );
+    expect(describeHeadless(resolveAgent({ id: "codex", command: "", args: [] }, skip))).toBe(
+      "codex exec --output-last-message .sidequest/result.md --dangerously-bypass-approvals-and-sandbox <prompt>",
+    );
+    expect(describeHeadless(resolveAgent({ id: "claude", command: "", args: [] }))).toBe(
+      "claude -p --permission-mode acceptEdits <prompt>",
+    );
+  });
+
+  it("ignores agents with no such flag", () => {
+    const goose = resolveAgent({ id: "goose", command: "", args: [] }, skip);
+    expect(goose.args).toEqual([]);
+    expect(goose.skipsPermissions).toBeUndefined();
+    expect(resolveAgent({ id: "claude-desktop", command: "", args: [] }, skip).skipsPermissions).toBeUndefined();
+  });
+
+  it("applies to a prompt's own agent and tells the overlay", () => {
+    const config = configSchema.parse({
+      settings: { skipPermissions: true },
+      prompts: { review: { agent: "codex" } },
+    });
+    const review = resolveAgent(agentConfigFor(config.settings.agent, "codex"), config.settings);
+    expect(review.args).toEqual(["--dangerously-bypass-approvals-and-sandbox"]);
+    expect(pageConfig(config).skipPermissions).toBe(true);
+    expect(pageConfig(configSchema.parse({})).skipPermissions).toBe(false);
   });
 });
