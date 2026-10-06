@@ -59,6 +59,12 @@ let dropNextPost = false;
 export function dropNextPostAnswer(): void {
   dropNextPost = true;
 }
+/**
+ * Stand-ins for more of Slack's API, by method, set by the test that needs
+ * them. Each gets the raw form body and returns the JSON to answer with.
+ * Consulted before the built-in ones above.
+ */
+export const apiHandlers = new Map<string, (body: string) => unknown>();
 /** One field of a multipart form body. */
 export const formField = (body: string, name: string) =>
   body.match(new RegExp(`name="${name}"\\r\\n\\r\\n([^]*?)\\r\\n--`))?.[1];
@@ -91,6 +97,16 @@ export function useOverlayBrowser(slot: number): void {
       // As Slack's API does: a wildcard, which a browser does not honour for
       // a request sent with cookies from another origin.
       if (req.url?.startsWith("/api/")) res.setHeader("access-control-allow-origin", "*");
+      const custom = req.method === "POST" ? apiHandlers.get(req.url?.slice("/api/".length) ?? "") : undefined;
+      if (custom) {
+        let body = "";
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", () => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(custom(body)));
+        });
+        return;
+      }
       if (req.method === "POST" && req.url === "/api/chat.postMessage") {
         let body = "";
         req.on("data", (chunk) => (body += chunk));
@@ -216,6 +232,7 @@ export function useOverlayBrowser(slot: number): void {
 
   beforeEach(async () => {
     posts.length = 0;
+    apiHandlers.clear();
     root = await mkdtemp(join(tmpdir(), "sidequest-e2e-"));
     configHome = join(root, "config");
     repoPath = join(root, "repo");
@@ -264,12 +281,13 @@ export function useOverlayBrowser(slot: number): void {
 }
 
 export async function attachAndEval(
-  options: { watchIntervalMs?: number | false } = {},
+  options: { watchIntervalMs?: number | false; syncIntervalMs?: number } = {},
 ): Promise<{ attacher: Attacher; session: CdpSession }> {
   const attacher = new Attacher({
     cdpPort: PORT,
     targetUrlPattern: "127\\.0\\.0\\.1",
     watchIntervalMs: options.watchIntervalMs ?? false,
+    syncIntervalMs: options.syncIntervalMs,
   });
   await attacher.start();
 

@@ -90,8 +90,12 @@ export async function runAttacherLoop(options: {
         case "unlink":
           console.log(`unlinked #${event.channel}${event.message ? ` from ${event.message}` : ""}`);
           break;
+        case "sync":
+          console.log(`settings sync: ${event.message}`);
+          break;
         case "attach-error":
         case "poll-error":
+        case "sync-error":
         case "ask-error":
         case "config-error":
         case "status-error":

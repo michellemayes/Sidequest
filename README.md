@@ -211,6 +211,7 @@ It picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest link <path> -c <channel>` | Link a repo to a channel from the terminal. Linking a second repo adds it; the first stays the default |
 | `sidequest unlink [repo] -c <channel>` | Unlink one repo (by path or label) from a channel, or all of them if you name none |
 | `sidequest replies [on\|off]` | Show the thread replies sessions post, or turn them on or off |
+| `sidequest sync [on\|off]` | Share channel links, prompts and settings with your other computers through Slack. See [Syncing between computers](#syncing-between-computers) |
 | `sidequest agents [id]` | Show the available agents and how each is run, or switch the one new sessions use (`sidequest agents gemini`, `sidequest agents claude-desktop`) |
 | `sidequest terminal [name]` | Show the terminals sessions can open in, or switch: `warp`, `iterm2`, `ghostty`, `terminal`, `tmux` or `headless` |
 | `sidequest list` / `prompts` | Show linked channels and prompt templates |
@@ -396,6 +397,45 @@ how to install it if that fails.
 | `postResults` | `ask` | What to do with the reply the agent leaves in `.sidequest/result.md`: `ask` offers it on the message to review and post, `auto` posts it in the thread as soon as it's written, `off` doesn't ask the agent for one. See Replies from the agent above |
 | `trackStatus` | `true` | Follow each session's commits and pull request (with `gh`) and show them on its mark. Pull requests come from one `gh pr list` per repo; a branch with none is asked about every 90 seconds for its first day, then every 10 minutes, and a worktree untouched for a day is looked at in full every 10 minutes. With this and `postResults` both off, the daemon doesn't look in on sessions at all; turning either back on takes a `sidequest stop` and `start` |
 | `verbose` | `false` | Log overlay activity to Slack's devtools console |
+| `sync` | `false` | Keep channel links, prompts and the portable settings in step with your other computers, through Slack (or run `sidequest sync on`). See Syncing between computers below |
+
+### Syncing between computers
+
+Use the same Slack on more than one Mac? Run `sidequest sync on` on each of
+them, and they share their channel links, prompts and settings. Link
+`#storefront` to a repo on your laptop, and a minute or two later it's linked
+on your desktop too.
+
+There's no server or account to set up. The shared copy is a pinned message in
+your DM with yourself in Slack, which the overlay reads and edits as you, the
+same way it posts thread replies. The running daemon looks at it every two
+minutes, and sends your own changes up a few seconds after you make them.
+
+- **Repos are matched by their git remote**, not their path, so each computer
+  links its own checkout wherever it lives (`~/code/storefront` on one,
+  `~/src/storefront` on the other). It looks where repo suggestions look:
+  `repoSearchRoots`, or `~/code`, `~/src`, `~/Developer` and similar. A repo
+  you haven't cloned on a computer yet waits there and links itself once you
+  clone it; `sidequest sync` lists the ones that are waiting. A repo with no
+  remote is matched by its folder name.
+- **What syncs:** channel links (with each one's base branch and label),
+  `prompts`, and the settings that mean the same anywhere: `agent` (its `id`
+  and `args`, not `command`, which is often a path), `fetchBeforeCreate`,
+  `threadContextLimit`, `pruneBranchesOnClean`, `autoClean`,
+  `autoCleanAfterDays`, `autoReply`, `postResults` and `trackStatus`.
+- **What stays on each computer:** `worktreesRoot`, `terminal` and the other
+  terminal settings, `repoSearchRoots`, the Slack settings (`cdpPort`,
+  `relaunchSlack`, `targetUrlPattern`), `verbose`, and your session history.
+- **When two computers change things before either syncs**, both changes are
+  kept as long as they touch different things. If both change the same
+  setting or prompt, the version already in Slack wins; if both change the
+  same channel's repos, the channel gets the repos from both.
+
+The first time you turn it on on a second computer, its links are added to the
+ones already in Slack, and the settings in Slack win over its own. Leave the
+message pinned. If your workspace stops you editing messages after a while,
+Sidequest posts a fresh one and unpins the old. `sidequest sync off` stops
+syncing on that computer and leaves the message where it is.
 
 **Cleaning up.** Every session leaves a worktree behind. `sidequest clean`
 removes the ones whose branch is merged into the base, deleting the branch too
@@ -464,7 +504,7 @@ Start with `sidequest doctor`.
 
 ## Security
 
-The overlay only talks to the local daemon, with two exceptions, and both use
+The overlay only talks to the local daemon, with a few exceptions, and all use
 the session Slack's window is already signed in with. That token stays in the
 window and never reaches the daemon.
 
@@ -474,6 +514,13 @@ window and never reaches the daemon.
   go to your workspace's own Slack API.
 - **Attachments:** the overlay downloads the message's files from Slack's file
   host and hands the bytes to the daemon, which writes them into the worktree.
+- **Settings sync** (off unless you run `sidequest sync on`): the overlay
+  reads and edits one pinned message in your DM with yourself, holding your
+  channel links (by git remote, not path), prompts and portable settings.
+  Only you can see that DM, but anyone with access to your Slack account
+  could read it, and so could your workspace's admins if they can export
+  DMs. It holds no tokens or repo paths, though it names the computer that
+  last changed it.
 
 An agent's answer is written by the agent, which read the message, so read it
 before you post it; that's why `ask` is the default.

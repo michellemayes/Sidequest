@@ -126,7 +126,10 @@ const CONFIG_LOCK_STALE_MS = 30_000;
  * `sidequest replies off` runs in a terminal). The lock is a file beside the
  * config, held across the read and the write.
  */
-export async function updateConfig<T>(mutate: (config: Config) => T | Promise<T>): Promise<T> {
+export async function updateConfig<T>(
+  mutate: (config: Config) => T | Promise<T>,
+  options: { onlyIfChanged?: boolean } = {},
+): Promise<T> {
   const file = configFile();
   await mkdir(dirname(file), { recursive: true });
   const lock = `${file}.lock`;
@@ -143,8 +146,12 @@ export async function updateConfig<T>(mutate: (config: Config) => T | Promise<T>
   }
   try {
     const config = await loadConfig();
+    const before = options.onlyIfChanged ? JSON.stringify(config) : "";
     const result = await mutate(config);
-    await saveConfig(config);
+    // Otherwise every update writes, which is how `init` round-trips the
+    // defaults into a new file. Settings sync's rounds mostly change nothing,
+    // and leave a file that may be open in an editor alone.
+    if (!options.onlyIfChanged || JSON.stringify(config) !== before) await saveConfig(config);
     return result;
   } finally {
     await releaseLock(lock).catch(() => undefined);

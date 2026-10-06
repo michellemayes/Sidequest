@@ -9,7 +9,7 @@ import { start, status, stop } from "./daemon.js";
 import { doctor } from "./doctor.js";
 import { installHook } from "./hook.js";
 import { clean, reopen, sessions, stats } from "./sessions.js";
-import { agents, list, prompts, replies, terminal } from "./settings.js";
+import { agents, list, prompts, replies, sync, terminal } from "./settings.js";
 import { init, setup } from "./setup.js";
 import { update } from "./update.js";
 
@@ -58,6 +58,11 @@ export async function runCli(argv: string[]): Promise<void> {
     .command("replies [state]")
     .description("show the thread replies sessions post, or turn them on or off")
     .action((state: string | undefined) => wrap(() => replies(state)));
+
+  program
+    .command("sync [state]")
+    .description("share channel links, prompts and settings with your other computers through Slack (on or off)")
+    .action((state: string | undefined) => wrap(() => sync(state)));
 
   program
     .command("reopen [ref]")

@@ -244,6 +244,7 @@ async function linkRepo(request: AskRequest, host: RequestHost): Promise<Answer>
       label: "",
       linkedBy: "overlay",
       linkedAt: new Date().toISOString(),
+      remote: "",
     });
     return { stored, labels: linksForChannel(config, key).map(linkLabel) };
   });
