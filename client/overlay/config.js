@@ -6,7 +6,8 @@
  * daemon and comes back through __sidequestResult. The exceptions are thread
  * replies, which go to Slack's own API as you (see postReply in start.js):
  * the one a session posts when settings.autoReply is on, and the agent's
- * reply under settings.postResults; and, with settings.sync on, the settings
+ * reply under settings.postResults; with settings.reactions on, 👀, ✅ and ❌
+ * on a session's message; and, with settings.sync on, the settings
  * note in your DM with yourself (sync.js).
  *
  * Two pieces of UI:
@@ -50,6 +51,7 @@ const CONFIG = Object.assign({
   sessions: {},
   stats: { total: 0, today: 0, streak: 0 },
   postResults: 'ask',
+  reactions: false,
   /* Where Slack serves the files attached to messages from. */
   fileHosts: '(^|\\.)files\\.slack\\.com$|(^|\\.)slack-files\\.com$',
   verbose: false,
@@ -78,6 +80,10 @@ const OP_TIMEOUT_MS = {
   'suggest-repos': 60000,
   'link-repo': 30000,
   'list-sessions': 30000,
+  // A push and gh, each over the network.
+  'open-pr': 180000,
+  // Opens the terminal, like reopen.
+  'follow-up': 60000,
 };
 // A result outlives a scroll away and back, not a working session.
 const RESULT_TTL_MS = 10 * 60 * 1000;

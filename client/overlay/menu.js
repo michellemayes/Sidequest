@@ -159,6 +159,15 @@ function openMenu(row) {
       spans(again, [['sq-glyph', '↩'], ['', `Back to ${entry.label || 'session'}`], ['sq-sub', shortBranch(entry.branch)]]);
       menu.append(again);
     }
+    if (past[0] && !(past[0].status && past[0].status.state === 'gone')) {
+      const latest = past[0];
+      const more = menuButton('sq-menu-reopen', () => openFollowUpBox(latest));
+      more.title = `Tell ${latest.label || 'the session'}'s agent what to do next, with the thread since this message`;
+      spans(more, [['sq-glyph', '↪'], ['', `Follow up on ${latest.label || 'session'}…`], ['sq-sub', shortBranch(latest.branch)]]);
+      menu.append(more);
+    }
+    const pr = past[0] && prAction(past[0], sig);
+    if (pr) menu.append(pr);
     if (past.length > 0) {
       const sep = document.createElement('div');
       sep.className = 'sq-menu-sep';
@@ -191,7 +200,8 @@ function openMenu(row) {
       if (index < 9) entry.dataset.key = String(index + 1);
       const letter = letterFor(prompt.label);
       if (letter) entry.dataset.letter = letter;
-      entry.title = `${ticket ? `Work ${prompt.label} ${ticket.name}` : prompt.label}${repos.length > 1 ? ' in the picked repo' : ''} with ${CONFIG.agentLabel} — press ${index + 1}${letter ? ` or ${letter.toUpperCase()}` : ''}`;
+      entry.title = `${ticket ? `Work ${prompt.label} ${ticket.name}` : prompt.label}${repos.length > 1 ? ' in the picked repo' : ''} with ${prompt.agentLabel || CONFIG.agentLabel} — press ${index + 1}${letter ? ` or ${letter.toUpperCase()}` : ''}`;
+      if (prompt.agentLabel) spans(entry, [['sq-agent', prompt.agentLabel]]);
       menu.append(entry);
     });
   }
@@ -201,6 +211,47 @@ function openMenu(row) {
   menuSig = sig;
   ui.append(menu);
   schedule();
+}
+
+/**
+ * The next step for the latest session's work, when there is one: a pull
+ * request to open for commits that have none, or the one it has, to view.
+ */
+function prAction(entry, sig) {
+  const status = entry.status || {};
+  const label = entry.label || 'session';
+  let text;
+  let title;
+  if (status.pr && status.pr.url) {
+    text = `View PR #${status.pr.number}`;
+    title = `Open ${status.pr.url} in your browser`;
+  } else if (status.state === 'committed') {
+    text = `Open a pull request for ${label}`;
+    title = `Push ${entry.branch} and open a draft pull request with gh, described by the agent's reply`;
+  } else {
+    return null;
+  }
+  const button = menuButton('sq-menu-reopen', () => {
+    closeMenu();
+    openPr(entry, sig);
+    schedule();
+  });
+  button.title = title;
+  spans(button, [['sq-glyph', '⇡'], ['', text], ['sq-sub', shortBranch(entry.branch)]]);
+  return button;
+}
+
+/** Push and open a session's pull request, or just open the one it has; the line under the message says how it went. */
+function openPr(entry, sig) {
+  const has = entry.status && entry.status.pr;
+  setResult(sig, has ? `Opening PR #${has.number}…` : `Pushing ${entry.branch} and opening a pull request…`, 'busy');
+  ask({ op: 'open-pr', branch: entry.branch }).then((res) => {
+    if (res.error) {
+      setResult(sig, res.hint ? `${res.error} ${res.hint}` : res.error, 'error');
+      return;
+    }
+    setResult(sig, res.created ? `Opened a draft pull request: ${res.url}` : `Opened ${res.url}`, 'info', entry.branch);
+  }).catch((err) => setResult(sig, err.message, 'error')).finally(() => schedule());
 }
 
 /**
@@ -280,7 +331,7 @@ function openAskBox(prompt) {
   const repos = reposFor(channel);
   const where = repos.length > 1 ? ` in ${pickedRepo(channel)}` : '';
   if (where) title.textContent += where;
-  submit.title = `Start ${prompt.label}${where} with ${CONFIG.agentLabel} — Enter`;
+  submit.title = `Start ${prompt.label}${where} with ${prompt.agentLabel || CONFIG.agentLabel} — Enter`;
   foot.append(hint, submit);
 
   menu.replaceChildren(title, box, foot);
@@ -308,6 +359,78 @@ function openAskBox(prompt) {
 
   box.focus();
   schedule();
+}
+
+/**
+ * A follow-up goes to the session already on it, in the menu itself as Ask
+ * does: what to do next, plus whatever the thread has said since.
+ */
+function openFollowUpBox(entry) {
+  const menu = menuEl;
+  if (!menu) return;
+  menu.dataset.asking = '1';
+  menuIndex = -1;
+  const row = menuRow;
+  const sig = menuSig;
+  const channel = row ? channelFor(row) : '';
+  const since = row ? threadAfter(row) : [];
+
+  const title = document.createElement('div');
+  title.className = 'sq-ask-title';
+  title.textContent = `↪ Follow up on ${entry.label || 'session'}`;
+  const box = document.createElement('textarea');
+  box.className = 'sq-ask-input';
+  box.rows = 3;
+  box.spellcheck = true;
+  box.placeholder = since.length > 0
+    ? `What next? The ${since.length} repl${since.length === 1 ? 'y' : 'ies'} since go along too.`
+    : 'What should the agent do next?';
+  const foot = document.createElement('div');
+  foot.className = 'sq-ask-foot';
+  const hint = document.createElement('span');
+  hint.className = 'sq-ask-hint';
+  hint.textContent = '⇧↵ new line · Esc cancel';
+  const submit = menuButton('sq-ask-send', () => send());
+  submit.textContent = 'Follow up';
+  submit.title = `Send it to ${entry.branch} — Enter`;
+  foot.append(hint, submit);
+  menu.replaceChildren(title, box, foot);
+
+  function send() {
+    const text = box.value.trim();
+    if (!text && since.length === 0) {
+      box.focus();
+      return;
+    }
+    closeMenu();
+    followUp(entry, sig, text, since, channel);
+    schedule();
+  }
+
+  boxKeys = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMenu();
+      schedule();
+    } else if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      send();
+    }
+  };
+  box.focus();
+  schedule();
+}
+
+function followUp(entry, sig, text, thread, channel) {
+  setResult(sig, `Following up on ${entry.branch}…`, 'busy');
+  ask({ op: 'follow-up', branch: entry.branch, question: text, thread, channel }).then((res) => {
+    if (res.error) {
+      setResult(sig, res.hint ? `${res.error} ${res.hint}` : res.error, 'error');
+      return;
+    }
+    const base = `Followed up on ${entry.branch} in ${res.host || CONFIG.agentHost}`;
+    setResult(sig, res.warning ? `${base} — ${res.warning}` : base, res.warning ? 'warn' : 'info', entry.branch);
+  }).catch((err) => setResult(sig, err.message, 'error')).finally(() => schedule());
 }
 
 function shortBranch(branch) {

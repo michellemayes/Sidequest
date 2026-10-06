@@ -12,6 +12,7 @@ export const DEFAULT_PROMPTS: Record<PromptKey, PromptConfig> = {
   investigate: {
     label: "Investigate",
     emoji: "mag",
+    agent: "",
     branchPrefix: "investigate",
     reply: "Investigating this.",
     template: `You are investigating an issue reported in Slack. Do NOT change any code yet.
@@ -33,6 +34,7 @@ Report back in the terminal. Leave the working tree clean.`,
   fix: {
     label: "Fix",
     emoji: "wrench",
+    agent: "",
     branchPrefix: "fix",
     reply: "Working on a fix.",
     template: `You are fixing an issue reported in Slack.
@@ -55,6 +57,7 @@ If the report turns out to be wrong or the fix needs a decision I should make, s
   review: {
     label: "Review",
     emoji: "eyes",
+    agent: "",
     branchPrefix: "review",
     reply: "Reviewing this.",
     template: `You are reviewing work referenced in Slack.
@@ -76,6 +79,7 @@ Give me findings ordered most severe first, each with the file, the line, and wh
   ask: {
     label: "Ask",
     emoji: "speech_balloon",
+    agent: "",
     branchPrefix: "ask",
     reply: "Looking into this: {{question}}",
     template: `From @{{author}} in #{{channel}} on {{date}}:
@@ -88,6 +92,7 @@ Read this and the code it touches. If I asked something above, answer it; otherw
   linear: {
     label: "Linear",
     emoji: "ticket",
+    agent: "",
     branchPrefix: "linear",
     reply: "Picking up {{ticketId}}.",
     template: `You are working a Linear ticket shared in Slack.
@@ -113,6 +118,7 @@ If the ticket is wrong, already fixed, or needs a decision I should make, stop a
   github: {
     label: "GitHub",
     emoji: "ticket",
+    agent: "",
     branchPrefix: "issue",
     reply: "Picking up {{ticketId}}.",
     template: `You are working a GitHub issue shared in Slack.
@@ -138,6 +144,7 @@ If the issue is wrong, already fixed, or needs a decision I should make, stop an
   jira: {
     label: "Jira",
     emoji: "ticket",
+    agent: "",
     branchPrefix: "jira",
     reply: "Picking up {{ticketId}}.",
     template: `You are working a Jira ticket shared in Slack.

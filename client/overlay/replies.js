@@ -114,6 +114,7 @@ function openReplyPanel(branch) {
         if (panelEl === panel) closePanel();
         toast({ title: 'Replied in the thread', sub: `${res.label || 'Session'} · ${branch}` });
         markPosted({ branch, resultMs: res.resultMs });
+        if (CONFIG.reactions) reactDone(res.permalink).catch((err) => log('could not react', err.message));
       }, (err) => {
         if (panelEl !== panel) return;
         delete panel.dataset.busy;

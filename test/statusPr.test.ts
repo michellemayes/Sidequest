@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,7 +22,7 @@ vi.mock("../src/util/exec.js", async (importOriginal) => {
   };
 });
 
-const { parsePullRequestList, StatusWatcher } = await import("../src/session/status.js");
+const { headlessExit, parsePullRequestList, stateOf, StatusWatcher } = await import("../src/session/status.js");
 type HistoryEntry = import("../src/session/history.js").HistoryEntry;
 
 let root: string;
@@ -123,5 +123,38 @@ describe("StatusWatcher pull requests", () => {
     expect(ghCalls().map((c) => c.args.slice(0, 2).join(" "))).toEqual(["pr list", "pr view"]);
     // gh view failed, so what was known stands.
     expect(w.snapshot().get("fix/a")).toMatchObject({ state: "pr-open", pr: { number: 9 } });
+  });
+});
+
+describe("a headless run that failed", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "sidequest-exit-"));
+    await mkdir(join(dir, ".sidequest"), { recursive: true });
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+  const log = (text: string) => writeFile(join(dir, ".sidequest", "agent.log"), text);
+
+  it("reads the exit code off the runner's last line", async () => {
+    await log("sidequest: started 2026-10-06T00:00:00Z\nboom\nsidequest: finished 2026-10-06T00:01:00Z, exit 2\n");
+    expect(await headlessExit(dir)).toBe(2);
+  });
+
+  it("knows nothing yet while a run, or a follow-up's second run, is going", async () => {
+    await log("sidequest: started a\nsidequest: finished b, exit 1\nsidequest: started c\nworking…\n");
+    expect(await headlessExit(dir)).toBeNull();
+  });
+
+  it("knows nothing for a terminal session, which keeps no log", async () => {
+    expect(await headlessExit(dir)).toBeNull();
+  });
+
+  it("counts as failed only when it left nothing worth having", () => {
+    expect(stateOf(0, null, null, 1)).toBe("failed");
+    expect(stateOf(0, null, null, 0)).toBe("working");
+    expect(stateOf(2, null, null, 1)).toBe("committed");
+    expect(stateOf(0, null, 123, 1)).toBe("answered");
   });
 });

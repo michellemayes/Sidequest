@@ -89,12 +89,13 @@ The mark also says where the session has got to, and keeps up as it moves:
 
 | Mark | Means |
 | --- | --- |
-| **✦ Fix · working** | Started; nothing committed yet |
+| **✦ Fix · working 12m** | Started 12 minutes ago; nothing committed yet |
 | **✦ Investigate · answered** | The agent left an answer and committed nothing |
 | **✦ Fix · 2 commits** | Commits on the branch that its base doesn't have |
 | **✦ Fix · PR #123** | A pull request is open for the branch |
 | **✦ Fix · merged** | …and it merged |
 | **✦ Fix · PR closed** / **cleaned up** | Closed without merging / the worktree is gone |
+| **✦ Fix · failed** | A [headless](#terminals) run exited with an error and left nothing behind (the exit code is in the tooltip) |
 
 Hover the mark for the details (uncommitted changes, the PR's link). Pull
 requests are looked up with [`gh`](https://cli.github.com/) when it's installed
@@ -117,6 +118,33 @@ Replies you haven't posted or dropped yet don't get lost when the toast goes or
 the message scrolls away: a **💬** count on the channel pill, beside the channel
 name, opens the sessions panel with every waiting reply at the top. The panel
 (**⌃⇧S**) lists them too.
+
+**Follow-ups.** Agents rarely get it right in one go. On a message whose session
+is still around, the menu offers **Follow up on Fix…**: type what to do next
+(**Enter** to send) and it goes to the session that is already on it, with any
+thread replies since the message, rather than to a new branch. Claude Code,
+Codex, Gemini CLI and Aider carry their conversation on (`claude --continue
+"…"` and the like); the other agents start afresh in the same worktree, told
+where the earlier work is. Headless runs it in the background and answers again,
+and the desktop apps open a new session with it in the composer.
+
+**Pull requests.** Sessions commit; they don't push. When you want one reviewed,
+**Open a pull request for Fix** in the message's menu (shown once the branch has
+commits) pushes the branch and opens a **draft** pull request with `gh`, titled
+for its first commit and described by the agent's reply for the thread, then opens
+it in your browser. After that the menu offers **View PR #123**. The description
+says it came from Slack but not which workspace or channel, since the repo may
+be public. `sidequest pr [branch]` does the same from a terminal.
+
+**Reactions.** Turn on `reactions` and the message a session starts from gets
+👀, as you, so whoever asked can see it's being handled without a reply in the
+thread. It becomes ✅ when you post the agent's reply or the pull request merges,
+or ❌ if a headless run fails.
+
+**Notifications.** On a Mac, the daemon also shows a notification when a reply
+is ready, a pull request opens or merges, or a headless run fails, since the
+toast in Slack only reaches you while you're looking at Slack. `notify: false`
+turns them off.
 
 **Screenshots and files.** Files attached to the message (a screenshot of the
 bug, a log) come along. The overlay fetches them with Slack's own session, saves
@@ -206,6 +234,7 @@ It picks up your Slack theme and moves out of the way of Slack's own buttons.
 | `sidequest doctor` | Check git, your terminal, the agent, Slack.app, the debug port, and whether the build is current |
 | `sidequest sessions` | List every worktree Sidequest created (in Slack, **⌃⇧S** shows your recent ones) |
 | `sidequest reopen [ref]` | Reopen a session's terminal (the latest if you name none). A terminal agent that has already run picks up its last conversation there (`claude --continue`, `codex resume --last`, …). Headless, it opens the answer, or the log while it's still running |
+| `sidequest pr [ref]` | Push a session's branch and open a draft pull request for it with `gh` (the latest if you name none) |
 | `sidequest stats` | Your total, today's count, current and best streak |
 | `sidequest clean` | Remove merged worktrees. It won't delete uncommitted work unless you pass `--force`, or anything touched in the last hour unless you pass `--recent`. Turn on `autoClean` and the daemon does this for you |
 | `sidequest link <path> -c <channel>` | Link a repo to a channel from the terminal. Linking a second repo adds it; the first stays the default |
@@ -283,7 +312,12 @@ keeps its default:
 ```
 
 The keys are `investigate`, `fix`, `review`, `ask`, `linear`, `github` and `jira`.
-`"hidden": true` takes one out of the menu.
+`"hidden": true` takes one out of the menu, and `"agent"` runs that prompt with
+another [agent](#agents) than the rest, say Review with Codex while Fix stays on
+Claude Code (`"review": { "agent": "codex" }`). The menu names the agent beside
+such a prompt, and reopening or following up on its sessions uses it too. An agent
+picked this way runs with its own defaults: `settings.agent`'s `command` and `args`
+are for that agent only.
 
 **Prompts of your own.** Any other key adds a prompt to the menu, after the
 built-in ones, in the order your config lists them. It needs a `label` and a
@@ -394,6 +428,8 @@ how to install it if that fails.
 | `relaunchSlack` | `true` | While Sidequest runs, relaunch a Slack reopened from the Dock (without the DevTools port) so the overlay comes back |
 | `targetUrlPattern` | `app\.slack\.com\|/client/` | Which windows count as Slack |
 | `autoReply` | `false` | Reply in the message's thread when a session starts. See Thread replies above |
+| `reactions` | `false` | React to the message a session starts from, as you: 👀 while it works, then ✅ (reply posted or PR merged) or ❌ (headless run failed). See Reactions above |
+| `notify` | `true` | Show a macOS notification when a session's reply is ready, its PR opens or merges, or a headless run fails |
 | `postResults` | `ask` | What to do with the reply the agent leaves in `.sidequest/result.md`: `ask` offers it on the message to review and post, `auto` posts it in the thread as soon as it's written, `off` doesn't ask the agent for one. See Replies from the agent above |
 | `trackStatus` | `true` | Follow each session's commits and pull request (with `gh`) and show them on its mark. Pull requests come from one `gh pr list` per repo; a branch with none is asked about every 90 seconds for its first day, then every 10 minutes, and a worktree untouched for a day is looked at in full every 10 minutes. With this and `postResults` both off, the daemon doesn't look in on sessions at all; turning either back on takes a `sidequest stop` and `start` |
 | `verbose` | `false` | Log overlay activity to Slack's devtools console |
@@ -422,7 +458,7 @@ minutes, and sends your own changes up a few seconds after you make them.
   `prompts`, and the settings that mean the same anywhere: `agent` (its `id`
   and `args`, not `command`, which is often a path), `fetchBeforeCreate`,
   `threadContextLimit`, `pruneBranchesOnClean`, `autoClean`,
-  `autoCleanAfterDays`, `autoReply`, `postResults` and `trackStatus`.
+  `autoCleanAfterDays`, `autoReply`, `reactions`, `postResults` and `trackStatus`.
 - **What stays on each computer:** `worktreesRoot`, `terminal` and the other
   terminal settings, `repoSearchRoots`, the Slack settings (`cdpPort`,
   `relaunchSlack`, `targetUrlPattern`), `verbose`, and your session history.
@@ -512,6 +548,8 @@ window and never reaches the daemon.
   turn on `autoReply`) and the agent's answer, which posts only when you click
   **Post in thread** (or on its own if you set `postResults` to `auto`). Both
   go to your workspace's own Slack API.
+- **Reactions** (off unless you turn on `reactions`): 👀, ✅ and ❌ on the
+  message a session started from, through the same API as the replies.
 - **Attachments:** the overlay downloads the message's files from Slack's file
   host and hands the bytes to the daemon, which writes them into the worktree.
 - **Settings sync** (off unless you run `sidequest sync on`): the overlay
@@ -523,7 +561,8 @@ window and never reaches the daemon.
   last changed it.
 
 An agent's answer is written by the agent, which read the message, so read it
-before you post it; that's why `ask` is the default.
+before you post it; that's why `ask` is the default. Nothing is pushed to your
+git remote unless you click **Open a pull request** (or run `sidequest pr`).
 Sidequest runs commands from argv arrays, never through a shell, and passes the
 prompt in a file, so message text can't inject commands. That holds for every
 terminal: the AppleScript for iTerm2 and Terminal takes the worktree and script

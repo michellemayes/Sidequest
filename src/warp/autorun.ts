@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { PROMPT_FILE_TOKEN, PROMPT_TOKEN } from "../agents/agents.js";
+import { UserFacingError } from "../util/errors.js";
 
 /** Directory inside each worktree holding the generated session files. */
 export const SESSION_DIR = ".sidequest";
@@ -14,6 +15,16 @@ export const CONTINUE_MARKER = "continue";
 
 /** Marks a script that knows the continue marker; older ones don't. */
 const CONTINUE_SENTINEL = "# sidequest:continue";
+
+/**
+ * What the `pending` marker holds for a follow-up: the script then runs the
+ * agent on followup.md (carrying on its conversation, where it can) instead
+ * of on prompt.md.
+ */
+export const FOLLOWUP_MARKER = "followup";
+export const FOLLOWUP_FILE = "followup.md";
+/** Marks a script that knows the follow-up marker, autorun.sh or headless.sh alike. */
+export const FOLLOWUP_SENTINEL = "# sidequest:followup";
 
 export interface AutorunFiles {
   dir: string;
@@ -54,6 +65,12 @@ export interface WriteAutorunOptions {
    * conversation; run instead of the prompt when the session is reopened.
    */
   continueArgs?: string[];
+  /**
+   * Args after the command for a follow-up from Slack, with the prompt
+   * placeholders reading followup.md: the agent's continue args first where
+   * it takes a prompt with them. Absent, the script cannot take follow-ups.
+   */
+  followUpArgs?: string[];
   /** Human label for comments only, e.g. "Codex". */
   agentLabel?: string;
   /** Starting terminal title; the agent may replace it. */
@@ -93,15 +110,16 @@ export async function writeAutorun(options: WriteAutorunOptions): Promise<Autoru
 /**
  * One argv entry for the script. Literal text is single-quoted; the prompt
  * placeholders become double-quoted expansions, so the prompt is read from
- * disk at run time and its shell metacharacters stay literal.
+ * disk at run time and its shell metacharacters stay literal. They read
+ * `$prompt_file`: prompt.md, or followup.md for a follow-up.
  */
 export function shellArg(arg: string): string {
   return arg
     .split(/(\{prompt\}|\{promptFile\})/)
     .filter((part) => part !== "")
     .map((part) => {
-      if (part === PROMPT_TOKEN) return `"$(cat "$session_dir/prompt.md")"`;
-      if (part === PROMPT_FILE_TOKEN) return `"$session_dir/prompt.md"`;
+      if (part === PROMPT_TOKEN) return `"$(cat "$prompt_file")"`;
+      if (part === PROMPT_FILE_TOKEN) return `"$prompt_file"`;
       return shellQuote(part);
     })
     .join("") || "''";
@@ -124,6 +142,18 @@ fi
     : "";
   // A one-shot CLI gets a second, interactive run on the same conversation.
   const resume = options.resumeArgs ? `\n${[...base, ...options.resumeArgs.map(shellQuote)].join(" ")}` : "";
+  // A follow-up from Slack: the agent again, on followup.md.
+  const followUpBlock = options.followUpArgs
+    ? `${FOLLOWUP_SENTINEL}
+if [ "$(cat "$started")" = ${shellQuote(FOLLOWUP_MARKER)} ]; then
+  prompt_file="$session_dir/${FOLLOWUP_FILE}"
+  printf '\\033]0;%s\\007' ${title}
+  ${[shellQuote(options.agentCommand), ...options.followUpArgs.map(shellArg)].join(" ")}${resume.replace(/\n/, "\n  ")}
+  exit
+fi
+
+`
+    : "";
   const agentLine = options.agentLabel ? `# Agent: ${options.agentLabel}\n` : "";
 
   return `#!/usr/bin/env bash
@@ -142,8 +172,9 @@ if ! mv "$pending" "$started" 2>/dev/null; then
 fi
 
 cd "$worktree" || exit 1
+prompt_file="$session_dir/prompt.md"
 
-${continueBlock}if [ ! -f "$session_dir/prompt.md" ]; then
+${followUpBlock}${continueBlock}if [ ! -f "$prompt_file" ]; then
   echo "Sidequest: prompt.md is missing from $session_dir" >&2
   exit 1
 fi
@@ -175,6 +206,44 @@ export async function armContinue(worktreePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Ask the session's script to run the agent on a follow-up the next time it
+ * runs: followup.md written, and the pending marker put back with the
+ * follow-up marker in it. `scriptFile` is the script that will claim it
+ * (autorun.sh, or headless.sh). A session that has not started yet has
+ * nothing to follow up, and one whose script predates follow-ups cannot.
+ */
+export async function armFollowUp(worktreePath: string, scriptFile: string, text: string): Promise<void> {
+  const paths = autorunPaths(worktreePath);
+  let script = "";
+  try {
+    script = await readFile(scriptFile, "utf8");
+  } catch {
+    // Treated as too old below.
+  }
+  if (!script.includes(FOLLOWUP_SENTINEL)) {
+    throw new UserFacingError(
+      "That session was started before Sidequest took follow-ups.",
+      "Go back to it and tell the agent there, or start a new session.",
+    );
+  }
+  let waiting: string | null = null;
+  try {
+    waiting = await readFile(paths.pendingFile, "utf8");
+  } catch {
+    // No marker: the session has run, which is what a follow-up wants.
+  }
+  // A reopen that has not been picked up yet gives way to the follow-up.
+  if (waiting !== null && waiting !== CONTINUE_MARKER && waiting !== FOLLOWUP_MARKER) {
+    throw new UserFacingError(
+      "That session has not started yet.",
+      "Open it first; the follow-up can wait until the agent is on it.",
+    );
+  }
+  await writeFile(join(paths.dir, FOLLOWUP_FILE), `${text}\n`, "utf8");
+  await writeFile(paths.pendingFile, FOLLOWUP_MARKER, "utf8");
 }
 
 /**

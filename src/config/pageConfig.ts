@@ -1,6 +1,6 @@
 import { allPrompts } from "./store.js";
 import { linkLabel } from "./channels.js";
-import { resolveAgent } from "../agents/agents.js";
+import { agentConfigFor, resolveAgent } from "../agents/agents.js";
 import { sessionHost } from "../terminals/registry.js";
 import type { Config } from "./schema.js";
 import { computeStats, type HistoryEntry } from "../session/history.js";
@@ -30,6 +30,8 @@ export interface PageStatus {
   commits?: number;
   dirty?: boolean;
   pr?: { number: number; url: string } | null;
+  /** How a failed headless run exited; left out otherwise. */
+  exitCode?: number;
   /** The agent left a reply for the thread that has not been posted yet. */
   reply: boolean;
   /** When that reply was last written, so a rewrite is news again. */
@@ -50,7 +52,8 @@ export interface PageStatus {
  * one can offer to reopen it.
  */
 export interface PageConfig {
-  prompts: Array<{ key: string; label: string; emoji: string }>;
+  /** `agentLabel` only on a prompt that runs with another agent than settings.agent. */
+  prompts: Array<{ key: string; label: string; emoji: string; agentLabel?: string }>;
   /** Channel keys that have a repo, so the overlay can show its state offline. */
   linkedChannels: string[];
   /** Repo labels per channel key, the default first. A label is how the page names a repo. */
@@ -73,6 +76,8 @@ export interface PageConfig {
   stats: { total: number; today: number; streak: number };
   /** What to do with a reply an agent leaves: offer it, post it, or neither. */
   postResults: string;
+  /** React to a session's message as it starts and ends; see settings.reactions. */
+  reactions: boolean;
   verbose: boolean;
 }
 
@@ -89,11 +94,15 @@ export function pageConfig(
 
   const agent = resolveAgent(config.settings.agent);
   return {
-    prompts: allPrompts(config).map(({ key, prompt }) => ({
-      key,
-      label: prompt.label,
-      emoji: prompt.emoji,
-    })),
+    prompts: allPrompts(config).map(({ key, prompt }) => {
+      const own = resolveAgent(agentConfigFor(config.settings.agent, prompt.agent));
+      return {
+        key,
+        label: prompt.label,
+        emoji: prompt.emoji,
+        ...(own.id !== agent.id ? { agentLabel: own.label } : {}),
+      };
+    }),
     linkedChannels: Object.keys(repoLabels),
     repoLabels,
     lastRepos: lastRepos(config, history),
@@ -104,6 +113,7 @@ export function pageConfig(
     sessions: sessionsByMessage(history, statuses, config.settings.trackStatus, launchErrors),
     stats: (({ total, today, streak }) => ({ total, today, streak }))(computeStats(history)),
     postResults: config.settings.postResults,
+    reactions: config.settings.reactions,
     verbose: config.settings.verbose,
   };
 }
@@ -138,6 +148,7 @@ function pageStatus(status: SessionStatus): PageStatus {
     commits: status.commits,
     dirty: status.dirty,
     pr: status.pr ? { number: status.pr.number, url: status.pr.url } : null,
+    ...(status.exitCode ? { exitCode: status.exitCode } : {}),
     ...replyStatus(status),
   };
 }

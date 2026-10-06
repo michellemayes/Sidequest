@@ -5,12 +5,15 @@ import { join } from "node:path";
 import {
   AGENT_DEFINITIONS,
   agentArgv,
+  agentConfigFor,
   agentDefinition,
   describeAgent,
   fillPromptArg,
   resolveAgent,
 } from "../src/agents/agents.js";
-import { loadConfig } from "../src/config/store.js";
+import { loadConfig, promptFor } from "../src/config/store.js";
+import { configSchema } from "../src/config/schema.js";
+import { pageConfig } from "../src/config/pageConfig.js";
 
 let home: string;
 const OLD_HOME = process.env.SIDEQUEST_HOME;
@@ -200,5 +203,34 @@ describe("warp strategy migration", () => {
       JSON.stringify({ settings: { warpStrategy: "new_tab" } }),
     );
     expect((await loadConfig()).settings.warpStrategy).toBe("new_tab");
+  });
+});
+
+describe("an agent per prompt", () => {
+  const settingsAgent = { id: "claude", command: "/opt/claude", args: ["--model", "opus"] };
+
+  it("keeps settings.agent, command and args, when a prompt names none or the same one", () => {
+    expect(agentConfigFor(settingsAgent, "")).toBe(settingsAgent);
+    expect(agentConfigFor(settingsAgent, "claude")).toBe(settingsAgent);
+  });
+
+  it("runs another agent with its own defaults, not settings.agent's command and args", () => {
+    expect(agentConfigFor(settingsAgent, "codex")).toEqual({ id: "codex", command: "", args: [] });
+    expect(resolveAgent(agentConfigFor(settingsAgent, "codex")).command).toBe("codex");
+  });
+
+  it("takes the agent from a prompt's override and names it in the page's menu", () => {
+    const config = configSchema.parse({ prompts: { review: { agent: "codex" } } });
+    expect(promptFor(config, "review")?.agent).toBe("codex");
+    expect(promptFor(config, "fix")?.agent).toBe("");
+    const prompts = pageConfig(config).prompts;
+    expect(prompts.find((p) => p.key === "review")?.agentLabel).toBe("Codex");
+    expect(prompts.find((p) => p.key === "fix")).not.toHaveProperty("agentLabel");
+  });
+
+  it("refuses an agent it does not know, rather than quietly running Claude Code", () => {
+    const parsed = configSchema.safeParse({ prompts: { fix: { agent: "clippy" } } });
+    expect(parsed.success).toBe(false);
+    expect(JSON.stringify(parsed.error?.issues)).toContain("clippy");
   });
 });

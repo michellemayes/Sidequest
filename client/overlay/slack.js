@@ -339,6 +339,21 @@ function threadContext(item) {
 }
 
 /**
+ * The messages after this one in the same view, oldest first: in a thread
+ * view, the replies since the message a session started from, which is
+ * what a follow-up adds to it.
+ */
+function threadAfter(item) {
+  const rows = messageRows();
+  const index = rows.indexOf(item);
+  if (index === -1) return [];
+  return rows
+    .slice(index + 1, index + 11)
+    .map((row) => ({ author: senderFor(row), text: messageText(row) }))
+    .filter((m) => m.text.length > 0);
+}
+
+/**
  * What the anchored UI is clipped to: a pill for a row scrolled up behind
  * the channel header must not hang there in mid-air.
  */

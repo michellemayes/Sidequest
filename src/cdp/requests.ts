@@ -17,6 +17,9 @@ import { createSession, type MessageContext } from "../session/create.js";
 import { computeStats, loadHistory, recordSession, updateSession, type HistoryEntry } from "../session/history.js";
 import { findSession, openSession } from "../session/reopen.js";
 import { readResult, resultReply } from "../session/result.js";
+import { openPullRequest } from "../session/pullRequest.js";
+import { followUpSession } from "../session/followUp.js";
+import { openUri } from "../util/openUri.js";
 import { findById, listSessions, removeSession, UncommittedWorkError } from "../session/sessions.js";
 import type { SessionStatus } from "../session/status.js";
 import { describeError } from "../util/errors.js";
@@ -94,6 +97,8 @@ const HANDLERS: Record<string, Handler> = {
   "result-posted": resultPosted,
   "list-sessions": listSessionsForPanel,
   "remove-session": removeSessionFromPanel,
+  "open-pr": openPr,
+  "follow-up": followUp,
 };
 
 /**
@@ -176,6 +181,7 @@ async function startSession(request: AskRequest, host: RequestHost): Promise<Ans
       permalink: context.permalink,
       baseBranch: result.baseBranch,
       agentLabel: result.agentLabel,
+      agentId: result.agentId,
     });
     stats = computeStats(history);
   } catch (err) {
@@ -327,7 +333,8 @@ async function reopen(request: AskRequest, host: RequestHost): Promise<Answer> {
     };
   }
   const branch = found.worktree.branch;
-  await openSession(config, found);
+  const entry = history.filter((h) => h.worktreePath === found.worktree.path).pop();
+  await openSession(config, found, entry?.agentId);
   host.emit({ type: "reopen", branch });
   return { reply: { ok: true, branch } };
 }
@@ -394,6 +401,54 @@ async function removeSessionFromPanel(request: AskRequest, host: RequestHost): P
   host.emit({ type: "remove-session", branch: result.branch });
   // Its mark now says it was cleaned up.
   return { reply: { ok: true, ...result }, after: async () => refreshStatusesSoon(host) };
+}
+
+/**
+ * More for a session that is already on it: what you typed, and the thread
+ * since its message, to its agent in its worktree.
+ */
+async function followUp(request: AskRequest, host: RequestHost): Promise<Answer> {
+  const branch = (request.branch ?? "").trim();
+  const config = await loadConfig();
+  const history = await loadHistory();
+  const known = history.filter((h) => h.branch === branch).map((h) => h.repoPath);
+  const found = branch ? await findSession(config, branch, known) : null;
+  if (!found) {
+    return { reply: { error: `${branch || "That session"} is gone.`, hint: "Start a new session from the menu instead." } };
+  }
+  const entry = history.filter((h) => h.worktreePath === found.worktree.path).pop();
+  const launch = await followUpSession(config, found, entry?.agentId ?? "", {
+    text: typeof request.question === "string" ? request.question.slice(0, MAX_QUESTION) : "",
+    thread: (request.thread ?? []).slice(-config.settings.threadContextLimit),
+    channel: entry?.channel ?? request.channel ?? "",
+  });
+  host.emit({ type: "follow-up", branch });
+  return {
+    reply: { ok: true, branch, host: launch.host, warning: launch.agentStarted === false ? "the agent did not start" : undefined },
+    after: async () => refreshStatusesSoon(host),
+  };
+}
+
+/**
+ * A session's pull request: opened in the browser when it has one, else its
+ * branch pushed and a draft opened for it first. Only on a click; nothing
+ * is pushed on its own.
+ */
+async function openPr(request: AskRequest, host: RequestHost): Promise<Answer> {
+  const branch = (request.branch ?? "").trim();
+  const entry = (await loadHistory()).reverse().find((h) => h.branch === branch);
+  if (!entry) return { reply: { error: `${branch || "That session"} is not one Sidequest knows.` } };
+  const known = host.status(branch)?.pr;
+  const { url, created } = known ? { url: known.url, created: false } : await openPullRequest(entry);
+  if (created) host.emit({ type: "pr-opened", branch, message: url });
+  // The pull request is there either way; a browser that will not open is no failure.
+  await openUri(url, "your browser", "").catch((err) => log.debug(`could not open ${url}: ${String(err)}`));
+  return {
+    reply: { ok: true, branch, url, created },
+    after: async () => {
+      if (created) await host.refreshStatuses();
+    },
+  };
 }
 
 /** A session's result as the thread reply the page posts. */

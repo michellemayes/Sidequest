@@ -4,9 +4,10 @@ import { answer, sessionReply, type AskRequest, type AttacherEvent, type Request
 import { SettingsSyncer } from "./syncer.js";
 import { pageConfig } from "../config/pageConfig.js";
 import { loadConfig } from "../config/store.js";
-import { loadHistory } from "../session/history.js";
+import { loadHistory, updateSession, type HistoryEntry } from "../session/history.js";
 import { readResult } from "../session/result.js";
 import { StatusWatcher, type SessionStatus } from "../session/status.js";
+import { noticesFor, showNotice } from "../session/notices.js";
 import { describeError } from "../util/errors.js";
 
 export type { AttacherEvent } from "./requests.js";
@@ -14,6 +15,12 @@ export type { AttacherEvent } from "./requests.js";
 const BINDING = "__sidequestAsk";
 const RESULT_FN = "__sidequestResult";
 const POST_RESULT_FN = "__sidequestPostResult";
+const REACT_FN = "__sidequestReact";
+/** The reaction a session's message gets for how it ended, by the state that says so. */
+const OUTCOME_REACTIONS: Partial<Record<SessionStatus["state"], string>> = {
+  merged: "white_check_mark",
+  failed: "x",
+};
 const POLL_MS = 4000;
 /** As long as the overlay keeps a message's line (RESULT_TTL_MS in client/overlay/config.js). */
 const LAUNCH_ERROR_TTL_MS = 10 * 60 * 1000;
@@ -43,6 +50,9 @@ export class Attacher {
   private statuses = new Map<string, SessionStatus>();
   /** Results already handed to a window to post, as branch + mtime, so each is posted once. */
   private readonly autoPosted = new Set<string>();
+  /** The outcome reaction each session's message has been handed, so each is asked for once. */
+  private readonly reacted = new Map<string, string>();
+  private reacting: Promise<void> = Promise.resolve();
   /**
    * Agents that did not start in a terminal that did open, by branch: found
    * after the overlay was told the session started, so it hears through the
@@ -174,6 +184,11 @@ export class Attacher {
       this.sessions.set(target.id, null);
       try {
         this.sessions.set(target.id, await this.attach(target));
+        // An outcome the watcher saw before any window could react to it
+        // would otherwise wait for the session's next change.
+        void this.reactToOutcomes().catch((err) => {
+          this.emit({ type: "reaction-error", message: describeError(err).message });
+        });
       } catch (err) {
         this.sessions.delete(target.id);
         this.emit({ type: "attach-error", target: target.url, message: describeError(err).message });
@@ -253,12 +268,18 @@ export class Attacher {
       return;
     }
     if (!settings.trackStatus && settings.postResults === "off") return;
+    // Sessions already somewhere when the daemon starts are not news.
+    const since = Date.now();
     this.watcher = new StatusWatcher({
       intervalMs: this.options.watchIntervalMs ?? 15_000,
       pullRequests: settings.trackStatus,
       history: loadHistory,
       onChange: (statuses) => {
+        const before = this.statuses;
         this.statuses = statuses;
+        void this.announce(before, statuses, since).catch((err) => {
+          this.emit({ type: "notify-error", message: describeError(err).message });
+        });
         // A config edited into something that does not parse makes this
         // throw; say so, as the other background work does, rather than let
         // the rejection take the daemon down.
@@ -268,9 +289,24 @@ export class Attacher {
         void this.autoPostResults().catch((err) => {
           this.emit({ type: "result-error", message: describeError(err).message });
         });
+        void this.reactToOutcomes().catch((err) => {
+          this.emit({ type: "reaction-error", message: describeError(err).message });
+        });
       },
     });
     this.watcher.start();
+  }
+
+  /** A desktop notification for each session that has moved on in a way worth stopping for. */
+  private async announce(
+    before: Map<string, SessionStatus>,
+    after: Map<string, SessionStatus>,
+    since: number,
+  ): Promise<void> {
+    const { settings } = await loadConfig();
+    if (!settings.notify) return;
+    const notices = noticesFor(before, after, await loadHistory(), { postResults: settings.postResults, since });
+    for (const notice of notices) await showNotice(notice);
   }
 
   /** Look in on the sessions now rather than on the next tick. */
@@ -303,29 +339,69 @@ export class Attacher {
         label: entry.promptLabel,
         text: sessionReply(entry, result.text, status.pr?.url, config),
       });
-      // One window at a time, unlike the broadcast: the first that takes it
-      // on posts it, and asking them all at once could post it twice. The
-      // short timeout keeps a hung window from holding up the rest for long;
-      // the page answers at once, before it posts anything.
-      for (const session of this.sessions.values()) {
-        if (!session) continue;
-        try {
-          const res = (await session.send(
-            "Runtime.evaluate",
-            {
-              expression: `window.${POST_RESULT_FN} ? window.${POST_RESULT_FN}(${JSON.stringify(payload)}) : false`,
-              returnByValue: true,
-            },
-            AUTO_POST_TIMEOUT_MS,
-          )) as { result?: { value?: unknown } };
-          if (res.result?.value === true) {
-            this.autoPosted.add(key);
-            break;
-          }
-        } catch {
-          // That window is going away; try the next.
-        }
+      if (await this.handToOneWindow(POST_RESULT_FN, payload)) this.autoPosted.add(key);
+    }
+  }
+
+  /**
+   * Have one Slack window do something only a page can, as you: the first
+   * whose `fn` takes the job on (answers true) does it. One at a time,
+   * unlike the broadcast, since asking them all at once could do it twice.
+   * The short timeout keeps a hung window from holding up the rest for
+   * long; the page answers at once, before it calls Slack.
+   */
+  private async handToOneWindow(fn: string, payload: string): Promise<boolean> {
+    for (const session of this.sessions.values()) {
+      if (!session) continue;
+      try {
+        const res = (await session.send(
+          "Runtime.evaluate",
+          {
+            expression: `window.${fn} ? window.${fn}(${JSON.stringify(payload)}) : false`,
+            returnByValue: true,
+          },
+          AUTO_POST_TIMEOUT_MS,
+        )) as { result?: { value?: unknown } };
+        if (res.result?.value === true) return true;
+      } catch {
+        // That window is going away; try the next.
       }
+    }
+    return false;
+  }
+
+  /**
+   * With settings.reactions on, swap the 👀 a session put on its message
+   * for how it ended, once: ✅ when its pull request merged, ❌ when a
+   * headless run failed. A reply posted from Slack gets its ✅ from the page
+   * that posted it.
+   */
+  private reactToOutcomes(): Promise<void> {
+    // One at a time: a window attaching while the watcher calls back would
+    // otherwise have both react before either had noted it.
+    const next = this.reacting.then(() => this.reactToOutcomesNow());
+    this.reacting = next.catch(() => undefined);
+    return next;
+  }
+
+  private async reactToOutcomesNow(): Promise<void> {
+    const config = await loadConfig();
+    if (!config.settings.reactions) return;
+    let history: HistoryEntry[] | null = null;
+    for (const [branch, status] of this.statuses) {
+      const name = OUTCOME_REACTIONS[status.state];
+      if (!name || this.reacted.get(branch) === name) continue;
+      history ??= await loadHistory();
+      const entry = [...history].reverse().find((h) => h.branch === branch);
+      if (!entry?.permalink) continue;
+      if (entry.reacted === name) {
+        this.reacted.set(branch, name);
+        continue;
+      }
+      const payload = JSON.stringify({ permalink: entry.permalink, name });
+      if (!(await this.handToOneWindow(REACT_FN, payload))) continue;
+      this.reacted.set(branch, name);
+      await updateSession(branch, { reacted: name });
     }
   }
 

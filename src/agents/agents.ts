@@ -59,6 +59,12 @@ export interface AgentDefinition {
    * are subcommands), before the user's args. Absent when the CLI can't.
    */
   continueArgs?: string[];
+  /**
+   * Whether `continueArgs` can be followed by a new prompt (`claude
+   * --continue "…"`), which is how a follow-up from Slack carries on the
+   * conversation. Otherwise a follow-up starts the agent afresh on it.
+   */
+  continueWithPrompt?: boolean;
   /** Shown by `sidequest doctor` when the agent is not usable. */
   installHint: string;
   /**
@@ -78,6 +84,8 @@ export interface AgentDefinition {
 export interface HeadlessInvocation {
   /** Placed before the user's own args and the prompt. */
   args: string[];
+  /** Placed after `args` on a follow-up, to carry on the last run's conversation. */
+  continueArgs?: string[];
   /** How the prompt is handed over, as for an agent's own `promptArgs`. Defaults to `["{prompt}"]`. */
   promptArgs?: string[];
   /**
@@ -120,9 +128,10 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     command: "claude",
     defaultArgs: [],
     continueArgs: ["--continue"],
+    continueWithPrompt: true,
     // Print mode answers on stdout. acceptEdits lets it change files in the
     // worktree; anything else it would need a person to approve is refused.
-    headless: { args: ["-p", "--permission-mode", "acceptEdits"], result: "stdout" },
+    headless: { args: ["-p", "--permission-mode", "acceptEdits"], continueArgs: ["--continue"], result: "stdout" },
     installHint:
       "Install Claude Code (https://claude.com/claude-code), or point settings.agent.command at its executable.",
   },
@@ -133,6 +142,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     command: "codex",
     defaultArgs: [],
     continueArgs: ["resume", "--last"],
+    continueWithPrompt: true,
     // exec streams progress on stdout; --full-auto is its workspace-write
     // sandbox, and the last message is the answer.
     headless: {
@@ -150,6 +160,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     command: "gemini",
     defaultArgs: [],
     continueArgs: ["--resume", "latest"],
+    continueWithPrompt: true,
     promptArgs: ["--prompt-interactive", PROMPT_TOKEN],
     // -p answers once on stdout; without approval, tools that change things are off.
     headless: { args: [], promptArgs: ["-p", PROMPT_TOKEN], result: "stdout" },
@@ -166,6 +177,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     command: "aider",
     defaultArgs: [],
     continueArgs: ["--restore-chat-history"],
+    // A follow-up restores the chat and sends the follow-up into it.
+    continueWithPrompt: true,
     promptArgs: ["--message-file", PROMPT_FILE_TOKEN],
     resumeArgs: ["--restore-chat-history"],
     installHint:
@@ -285,6 +298,7 @@ export interface ResolvedAgent {
   promptArgs: string[];
   resumeArgs?: string[];
   continueArgs?: string[];
+  continueWithPrompt?: boolean;
   /** The agent's non-interactive mode, if it has one. */
   headless?: HeadlessInvocation;
   app?: DesktopApp;
@@ -305,9 +319,33 @@ export function resolveAgent(config: AgentConfig): ResolvedAgent {
     promptArgs: def.promptArgs ?? [PROMPT_TOKEN],
     ...(def.resumeArgs ? { resumeArgs: def.resumeArgs } : {}),
     ...(def.continueArgs ? { continueArgs: def.continueArgs } : {}),
+    ...(def.continueWithPrompt ? { continueWithPrompt: true } : {}),
     ...(def.headless ? { headless: def.headless } : {}),
     ...(def.app ? { app: def.app } : {}),
   };
+}
+
+/**
+ * The agent config a session runs with: settings.agent, unless its prompt
+ * names another agent, which then runs with that agent's own defaults —
+ * settings.agent's command and args are for settings.agent's CLI.
+ */
+export function agentConfigFor(settingsAgent: AgentConfig, agentId = ""): AgentConfig {
+  const id = agentId.trim();
+  if (!id || id === settingsAgent.id) return settingsAgent;
+  return { id, command: "", args: [] };
+}
+
+/**
+ * The args after the command for a follow-up in a terminal: the conversation
+ * carried on with the follow-up as its next prompt where the CLI can do
+ * that, else a fresh run on it (the follow-up says where the earlier work is).
+ */
+export function followUpArgs(
+  agent: Pick<ResolvedAgent, "args" | "promptArgs" | "continueArgs" | "continueWithPrompt">,
+): string[] {
+  const carryOn = agent.continueWithPrompt && agent.continueArgs ? agent.continueArgs : [];
+  return [...carryOn, ...agent.args, ...agent.promptArgs];
 }
 
 /** Swap the prompt placeholders in one arg for real values. */

@@ -37,11 +37,15 @@ export interface HistoryEntry {
   baseBranch?: string;
   /** The agent the session was handed to, e.g. "Claude Code", which its reply is signed with. Missing on older entries. */
   agentLabel?: string;
+  /** That agent's id, so a reopen or follow-up runs the same one. Missing on older entries. */
+  agentId?: string;
   /**
    * The mtime of the result.md last posted to the thread, so the same result
    * is never offered twice and a rewritten one is offered again.
    */
   resultPostedMs?: number;
+  /** The outcome reaction (say "white_check_mark") put on the message, so it is put there once. */
+  reacted?: string;
 }
 
 export interface Stats {

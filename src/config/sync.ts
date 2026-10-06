@@ -44,6 +44,7 @@ export const SYNCED_SETTINGS = [
   "autoClean",
   "autoCleanAfterDays",
   "autoReply",
+  "reactions",
   "postResults",
   "trackStatus",
 ] as const;
@@ -66,6 +67,7 @@ const syncedSettingsSchema = settingsSchema
     autoClean: true,
     autoCleanAfterDays: true,
     autoReply: true,
+    reactions: true,
     postResults: true,
     trackStatus: true,
   })
