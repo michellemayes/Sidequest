@@ -65,8 +65,14 @@ export interface ReopenResult {
  * desktop app: a new session in the app, in the worktree (the links cannot
  * reach back into an earlier one), whatever the terminal setting.
  * `agentId` is the agent the session was started with; empty means settings.agent.
+ * With `followUp`, the session's script was armed for one (see followUpSession).
  */
-export async function openSession(config: Config, found: FoundSession, agentId = ""): Promise<ReopenResult> {
+export async function openSession(
+  config: Config,
+  found: FoundSession,
+  agentId = "",
+  options: { followUp?: boolean } = {},
+): Promise<ReopenResult> {
   const { worktree, repoPath } = found;
   try {
     await stat(worktree.path);
@@ -98,7 +104,7 @@ export async function openSession(config: Config, found: FoundSession, agentId =
   }
   // A session that already ran carries on its conversation. Headless has
   // nothing to carry on: it opens the answer instead.
-  if (scriptExists && terminal !== "headless") await armContinue(worktree.path);
+  if (scriptExists && terminal !== "headless" && !options.followUp) await armContinue(worktree.path);
 
   const prefix = worktree.branch.split("/")[0] ?? "";
   const launch = await launchTerminal({

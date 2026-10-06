@@ -18,6 +18,7 @@ import { computeStats, loadHistory, recordSession, updateSession, type HistoryEn
 import { findSession, openSession } from "../session/reopen.js";
 import { readResult, resultReply } from "../session/result.js";
 import { openPullRequest } from "../session/pullRequest.js";
+import { followUpSession } from "../session/followUp.js";
 import { openUri } from "../util/openUri.js";
 import { findById, listSessions, removeSession, UncommittedWorkError } from "../session/sessions.js";
 import type { SessionStatus } from "../session/status.js";
@@ -97,6 +98,7 @@ const HANDLERS: Record<string, Handler> = {
   "list-sessions": listSessionsForPanel,
   "remove-session": removeSessionFromPanel,
   "open-pr": openPr,
+  "follow-up": followUp,
 };
 
 /**
@@ -399,6 +401,32 @@ async function removeSessionFromPanel(request: AskRequest, host: RequestHost): P
   host.emit({ type: "remove-session", branch: result.branch });
   // Its mark now says it was cleaned up.
   return { reply: { ok: true, ...result }, after: async () => refreshStatusesSoon(host) };
+}
+
+/**
+ * More for a session that is already on it: what you typed, and the thread
+ * since its message, to its agent in its worktree.
+ */
+async function followUp(request: AskRequest, host: RequestHost): Promise<Answer> {
+  const branch = (request.branch ?? "").trim();
+  const config = await loadConfig();
+  const history = await loadHistory();
+  const known = history.filter((h) => h.branch === branch).map((h) => h.repoPath);
+  const found = branch ? await findSession(config, branch, known) : null;
+  if (!found) {
+    return { reply: { error: `${branch || "That session"} is gone.`, hint: "Start a new session from the menu instead." } };
+  }
+  const entry = history.filter((h) => h.worktreePath === found.worktree.path).pop();
+  const launch = await followUpSession(config, found, entry?.agentId ?? "", {
+    text: typeof request.question === "string" ? request.question.slice(0, MAX_QUESTION) : "",
+    thread: (request.thread ?? []).slice(-config.settings.threadContextLimit),
+    channel: entry?.channel ?? request.channel ?? "",
+  });
+  host.emit({ type: "follow-up", branch });
+  return {
+    reply: { ok: true, branch, host: launch.host, warning: launch.agentStarted === false ? "the agent did not start" : undefined },
+    after: async () => refreshStatusesSoon(host),
+  };
 }
 
 /**

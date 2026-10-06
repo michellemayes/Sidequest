@@ -81,6 +81,8 @@ const OP_TIMEOUT_MS = {
   'list-sessions': 30000,
   // A push and gh, each over the network.
   'open-pr': 180000,
+  // Opens the terminal, like reopen.
+  'follow-up': 60000,
 };
 // A result outlives a scroll away and back, not a working session.
 const RESULT_TTL_MS = 10 * 60 * 1000;

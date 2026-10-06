@@ -324,7 +324,7 @@ describe("headless runs", () => {
       agentArgs: ["it's"],
       headless: { args: ["-p"], result: "stdout" },
     });
-    expect(script).toContain(`'/opt/my agent' '-p' 'it'\\''s' "$(cat "$session_dir/prompt.md")"`);
+    expect(script).toContain(`'/opt/my agent' '-p' 'it'\\''s' "$(cat "$prompt_file")"`);
   });
 
   it("hands the prompt over the way the headless mode takes it", () => {
@@ -334,7 +334,7 @@ describe("headless runs", () => {
       agentArgs: ["--model", "pro"],
       headless: { args: [], promptArgs: ["-p", "{prompt}"], result: "stdout" },
     });
-    expect(script).toContain(`'gemini' '--model' 'pro' '-p' "$(cat "$session_dir/prompt.md")" </dev/null`);
+    expect(script).toContain(`'gemini' '--model' 'pro' '-p' "$(cat "$prompt_file")" </dev/null`);
   });
 });
 
@@ -439,7 +439,7 @@ describe("createSession, headless", () => {
     const script = join(result.worktreePath, ".sidequest", "autorun.sh");
     expect(calls.at(-1)!.args.at(-1)).toBe(script);
     const body = await readFile(script, "utf8");
-    expect(body).toContain(`'aider' '--message-file' "$session_dir/prompt.md"`);
+    expect(body).toContain(`'aider' '--message-file' "$prompt_file"`);
     expect(body).toContain(`'aider' '--restore-chat-history'`);
   });
 

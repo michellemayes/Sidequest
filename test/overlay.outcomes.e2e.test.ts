@@ -3,6 +3,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { sleep } from "../src/util/async.js";
 import { loadHistory, updateSession } from "../src/session/history.js";
+import { writeAutorun } from "../src/warp/autorun.js";
+import { PROMPT_TOKEN } from "../src/agents/agents.js";
 import {
   describeIfChrome,
   exec,
@@ -12,6 +14,7 @@ import {
   evaluate,
   formField,
   hover,
+  INLINE,
   madeSession,
   press,
   settledResult,
@@ -163,6 +166,42 @@ describeIfChrome("overlay over CDP: how a session is going, on its message", () 
       await evaluate(session, `Array.from(${UI}.querySelectorAll('.sq-menu button')).find((b) => b.textContent.includes('Open a pull request')).click()`);
       // The test repo has no origin to push to; the line under the message says so.
       expect(await settledResult(session)).toContain("Could not push fix/committed");
+    } finally {
+      attacher.stop();
+      session.close();
+    }
+  }, 45_000);
+
+  it("follows up on a session with what you typed and the thread since its message", async () => {
+    const worktree = await madeSession("fix/follow", 1);
+    await updateSession("fix/follow", { ts: "1757430000.000100" });
+    // A session that has run: its script took the pending marker long ago.
+    await writeAutorun({
+      worktreePath: worktree, prompt: "the task", agentCommand: "true", agentArgs: [],
+      continueArgs: ["--continue"], followUpArgs: ["--continue", PROMPT_TOKEN], pending: false,
+    });
+
+    const { attacher, session } = await attachAndEval();
+    try {
+      await sleep(600);
+      await evaluate(session, `${INLINE}('.sq-result-x').forEach((el) => el.click())`);
+      await hover(session, "row-1");
+      await evaluate(session, `${UI}.querySelector('.sq-launch').click()`);
+      await sleep(150);
+      await evaluate(session, `Array.from(${UI}.querySelectorAll('.sq-menu button')).find((b) => b.textContent.includes('Follow up on Fix')).click()`);
+      await sleep(150);
+      expect(String(await evaluate(session, `${UI}.querySelector('.sq-ask-input').placeholder`))).toMatch(/repl(y|ies) since go along/);
+      await evaluate(session, `(() => { const box = ${UI}.querySelector('.sq-ask-input'); box.value = 'Check the EU store too'; })()`);
+      await evaluate(session, `${UI}.querySelector('.sq-ask-send').click()`);
+
+      // Nothing can open a terminal here, but the follow-up is armed for the
+      // session's script to pick up, which is what a terminal would run.
+      await settledResult(session);
+      const followUp = await readFile(join(worktree, ".sidequest", "followup.md"), "utf8");
+      expect(followUp).toContain("Check the EU store too");
+      expect(followUp).toContain("only on the EU store");
+      expect(followUp).not.toContain("Checkout total is wrong for gift cards");
+      expect(await readFile(join(worktree, ".sidequest", "pending"), "utf8")).toBe("followup");
     } finally {
       attacher.stop();
       session.close();

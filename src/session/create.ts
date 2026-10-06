@@ -2,7 +2,7 @@ import { loadConfig, promptFor } from "../config/store.js";
 import { linksForChannel, repoForChannelName } from "../config/channels.js";
 import { renderPrompt, renderReply } from "../config/prompts.js";
 import { firstTicket, isTicketPrompt, keepsBranchCase, ticketFor } from "../config/tickets.js";
-import { agentConfigFor, linkPrompt, resolveAgent, type DesktopApp, type ResolvedAgent } from "../agents/agents.js";
+import { agentConfigFor, followUpArgs, linkPrompt, resolveAgent, type DesktopApp, type ResolvedAgent } from "../agents/agents.js";
 import type { Config } from "../config/schema.js";
 import { defaultBranchCached, forgetRepos, locateRepoCached } from "../git/repo.js";
 import { createWorktree } from "../git/worktree.js";
@@ -216,6 +216,7 @@ export async function createSession(
     promptArgs: agent.promptArgs,
     ...(agent.resumeArgs ? { resumeArgs: agent.resumeArgs } : {}),
     ...(agent.continueArgs ? { continueArgs: agent.continueArgs } : {}),
+    followUpArgs: followUpArgs(agent),
     agentLabel: agent.label,
     title,
     pending: !agent.app,
