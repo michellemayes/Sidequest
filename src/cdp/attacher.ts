@@ -398,7 +398,7 @@ export class Attacher {
         this.reacted.set(branch, name);
         continue;
       }
-      const payload = JSON.stringify({ permalink: entry.permalink, name, remove: "eyes" });
+      const payload = JSON.stringify({ permalink: entry.permalink, name });
       if (!(await this.handToOneWindow(REACT_FN, payload))) continue;
       this.reacted.set(branch, name);
       await updateSession(branch, { reacted: name });

@@ -6,7 +6,8 @@
  * daemon and comes back through __sidequestResult. The exceptions are thread
  * replies, which go to Slack's own API as you (see postReply in start.js):
  * the one a session posts when settings.autoReply is on, and the agent's
- * reply under settings.postResults; and, with settings.sync on, the settings
+ * reply under settings.postResults; with settings.reactions on, 👀, ✅ and ❌
+ * on a session's message; and, with settings.sync on, the settings
  * note in your DM with yourself (sync.js).
  *
  * Two pieces of UI:
