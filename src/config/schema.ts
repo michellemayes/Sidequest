@@ -165,6 +165,12 @@ export const settingsSchema = z.object({
    * it on the message it came from. Needs `gh` for the pull request part.
    */
   trackStatus: z.boolean().default(true),
+  /**
+   * Show a macOS notification when a session needs you: its reply is ready,
+   * its pull request opened or merged, or a headless run failed. The toast
+   * in Slack only reaches you while you are looking at Slack.
+   */
+  notify: z.boolean().default(true),
   /** Log what the injected overlay is doing to the Slack devtools console. */
   verbose: z.boolean().default(false),
   /**

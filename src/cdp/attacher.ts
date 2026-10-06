@@ -7,6 +7,7 @@ import { loadConfig } from "../config/store.js";
 import { loadHistory } from "../session/history.js";
 import { readResult } from "../session/result.js";
 import { StatusWatcher, type SessionStatus } from "../session/status.js";
+import { noticesFor, showNotice } from "../session/notices.js";
 import { describeError } from "../util/errors.js";
 
 export type { AttacherEvent } from "./requests.js";
@@ -253,12 +254,18 @@ export class Attacher {
       return;
     }
     if (!settings.trackStatus && settings.postResults === "off") return;
+    // Sessions already somewhere when the daemon starts are not news.
+    const since = Date.now();
     this.watcher = new StatusWatcher({
       intervalMs: this.options.watchIntervalMs ?? 15_000,
       pullRequests: settings.trackStatus,
       history: loadHistory,
       onChange: (statuses) => {
+        const before = this.statuses;
         this.statuses = statuses;
+        void this.announce(before, statuses, since).catch((err) => {
+          this.emit({ type: "notify-error", message: describeError(err).message });
+        });
         // A config edited into something that does not parse makes this
         // throw; say so, as the other background work does, rather than let
         // the rejection take the daemon down.
@@ -271,6 +278,18 @@ export class Attacher {
       },
     });
     this.watcher.start();
+  }
+
+  /** A desktop notification for each session that has moved on in a way worth stopping for. */
+  private async announce(
+    before: Map<string, SessionStatus>,
+    after: Map<string, SessionStatus>,
+    since: number,
+  ): Promise<void> {
+    const { settings } = await loadConfig();
+    if (!settings.notify) return;
+    const notices = noticesFor(before, after, await loadHistory(), { postResults: settings.postResults, since });
+    for (const notice of notices) await showNotice(notice);
   }
 
   /** Look in on the sessions now rather than on the next tick. */
