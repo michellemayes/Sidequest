@@ -71,6 +71,8 @@ export interface PageConfig {
   agentInApp: boolean;
   /** True when sessions run with no terminal, so there is no window to reopen. */
   headless: boolean;
+  /** True when the agent runs with settings.skipPermissions' flags, asking nothing first. */
+  skipPermissions: boolean;
   /** Message ts -> sessions started from it, oldest first. */
   sessions: Record<string, PageSession[]>;
   stats: { total: number; today: number; streak: number };
@@ -92,10 +94,10 @@ export function pageConfig(
     if (links.length > 0) repoLabels[key] = links.map(linkLabel);
   }
 
-  const agent = resolveAgent(config.settings.agent);
+  const agent = resolveAgent(config.settings.agent, config.settings);
   return {
     prompts: allPrompts(config).map(({ key, prompt }) => {
-      const own = resolveAgent(agentConfigFor(config.settings.agent, prompt.agent));
+      const own = resolveAgent(agentConfigFor(config.settings.agent, prompt.agent), config.settings);
       return {
         key,
         label: prompt.label,
@@ -110,6 +112,7 @@ export function pageConfig(
     agentHost: sessionHost(agent, config.settings.terminal),
     agentInApp: Boolean(agent.app),
     headless: !agent.app && config.settings.terminal === "headless",
+    skipPermissions: Boolean(agent.skipsPermissions),
     sessions: sessionsByMessage(history, statuses, config.settings.trackStatus, launchErrors),
     stats: (({ total, today, streak }) => ({ total, today, streak }))(computeStats(history)),
     postResults: config.settings.postResults,

@@ -119,7 +119,7 @@ export async function createSession(
   const baseBranch = link.baseBranch.trim() || (await defaultBranchCached(repo));
   const repoLabel = link.label.trim() || repo.name;
   const agentConfig = agentConfigFor(config.settings.agent, prompt.agent);
-  const agent = resolveAgent(agentConfig);
+  const agent = resolveAgent(agentConfig, config.settings);
   const terminal = config.settings.terminal;
 
   // Checked before anything is cut, like the ticket above. An agent
@@ -226,7 +226,7 @@ export async function createSession(
       ? await writeHeadlessRunner({
           worktreePath: worktree.path,
           agentCommand: agent.command,
-          agentArgs: agentConfig.args,
+          agentArgs: agent.args,
           headless: agent.headless,
           agentLabel: agent.label,
         })

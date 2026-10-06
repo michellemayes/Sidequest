@@ -9,7 +9,7 @@ import { start, status, stop } from "./daemon.js";
 import { doctor } from "./doctor.js";
 import { installHook } from "./hook.js";
 import { clean, pr, reopen, sessions, stats } from "./sessions.js";
-import { agents, list, prompts, replies, sync, terminal } from "./settings.js";
+import { agents, list, prompts, replies, skipPermissions, sync, terminal } from "./settings.js";
 import { init, setup } from "./setup.js";
 import { update } from "./update.js";
 
@@ -58,6 +58,11 @@ export async function runCli(argv: string[]): Promise<void> {
     .command("replies [state]")
     .description("show the thread replies sessions post, or turn them on or off")
     .action((state: string | undefined) => wrap(() => replies(state)));
+
+  program
+    .command("skip-permissions [state]")
+    .description("start agents with permission prompts off (--dangerously-skip-permissions and the like), on or off")
+    .action((state: string | undefined) => wrap(() => skipPermissions(state)));
 
   program
     .command("sync [state]")

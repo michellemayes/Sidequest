@@ -60,7 +60,7 @@ export async function followUpSession(
   }
   const prompt = renderFollowUp(followUp, config.settings.postResults);
   const worktree = found.worktree.path;
-  const agent = resolveAgent(agentConfigFor(config.settings.agent, agentId));
+  const agent = resolveAgent(agentConfigFor(config.settings.agent, agentId), config.settings);
 
   if (agent.app) {
     const composer = prompt.length > MAX_LINK_PROMPT_CHARS

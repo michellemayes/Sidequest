@@ -63,7 +63,7 @@ export async function terminal(name?: string): Promise<void> {
       );
     }
     const config = await loadConfig();
-    const agent = resolveAgent(config.settings.agent);
+    const agent = resolveAgent(config.settings.agent, config.settings);
     // Refused here rather than on the next click, which would fail in Slack.
     if (def.id === "headless" && !agent.app && !agent.headless) {
       throw new UserFacingError(
@@ -124,6 +124,47 @@ export async function replies(state?: string): Promise<void> {
   console.log(`Change one in ${configFile()}:`);
   console.log(`  { "prompts": { "fix": { "reply": "On it, fixing this now." } } }`);
   console.log('An empty "reply" turns it off for that prompt.');
+}
+
+export async function skipPermissions(state?: string): Promise<void> {
+  const wanted = state?.trim().toLowerCase();
+  if (wanted) {
+    if (wanted !== "on" && wanted !== "off") {
+      throw new UserFacingError(
+        `Unknown state "${state}".`,
+        "Use `sidequest skip-permissions on` or `sidequest skip-permissions off`.",
+      );
+    }
+    await updateConfig((config) => {
+      config.settings.skipPermissions = wanted === "on";
+    });
+  }
+
+  const config = await loadConfig();
+  const on = config.settings.skipPermissions;
+  const agent = resolveAgent(config.settings.agent, config.settings);
+  if (!on) {
+    console.log(
+      wanted
+        ? "New sessions will ask before acting again, as each agent's own settings say."
+        : "Sessions ask before acting, as each agent's own settings say. `sidequest skip-permissions on` starts them with prompts off.",
+    );
+    return;
+  }
+  console.log(
+    wanted
+      ? "New sessions will start with permission prompts off. A running daemon picks this up on the next click."
+      : "Permission prompts are off for new sessions.",
+  );
+  console.log(
+    agent.skipsPermissions
+      ? `  ${agent.label} runs as: ${runsAs(config, agent)}`
+      : `  ${agent.label} has no flag for this, so it still asks.`,
+  );
+  console.log(
+    "\nThe prompt carries the Slack message, so whoever wrote it can steer an agent that runs any command\n" +
+      "without asking. Keep it to channels you trust. `sidequest skip-permissions off` turns it back.",
+  );
 }
 
 export async function sync(state?: string): Promise<void> {
@@ -187,7 +228,7 @@ export async function prompts(): Promise<void> {
 export async function list(): Promise<void> {
   const config = await loadConfig();
   const entries = Object.entries(config.channels);
-  const agent = resolveAgent(config.settings.agent);
+  const agent = resolveAgent(config.settings.agent, config.settings);
 
   console.log(`config: ${configFile()}\n`);
   console.log("settings");
@@ -197,6 +238,9 @@ export async function list(): Promise<void> {
     console.log(`  warpStrategy:   ${config.settings.warpStrategy}${config.settings.warpPreview ? " (preview)" : ""}`);
   }
   console.log(`  agent:          ${agent.label} (${runsAs(config, agent)})`);
+  if (config.settings.skipPermissions) {
+    console.log(`  permissions:    ${agent.skipsPermissions ? "skipped, no prompts" : `skipPermissions is on, but ${agent.label} has no flag for it`}`);
+  }
   console.log(`  threadContext:  ${config.settings.threadContextLimit} messages`);
   console.log(
     `  autoClean:      ${config.settings.autoClean ? `on, after ${config.settings.autoCleanAfterDays} idle days` : "off"}`,

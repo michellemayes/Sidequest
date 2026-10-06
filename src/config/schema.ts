@@ -110,6 +110,16 @@ export const settingsSchema = z.object({
   tmuxSession: z.string().default(""),
   /** Which coding agent to launch; command/args override its defaults. */
   agent: agentConfigSchema.default({}),
+  /**
+   * Start agents with their own flag for acting without asking first
+   * (`claude --dangerously-skip-permissions`, `codex
+   * --dangerously-bypass-approvals-and-sandbox`, `gemini --yolo`, ...),
+   * headless runs included, which then drop their usual limits. The prompt
+   * carries Slack text, so this lets whoever wrote the message steer an agent
+   * that can run anything. Off by default, and never synced: it is this
+   * computer's call.
+   */
+  skipPermissions: z.boolean().default(false),
   /** Pull the base branch before cutting the worktree. */
   fetchBeforeCreate: z.boolean().default(true),
   /** How many messages of surrounding thread context to include. */

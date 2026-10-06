@@ -40,7 +40,7 @@ export async function doctor(): Promise<void> {
 
   check(await succeeds("git", ["--version"]), "git", "required to create worktrees");
 
-  const agent = resolveAgent(config.settings.agent);
+  const agent = resolveAgent(config.settings.agent, config.settings);
   if (agent.app) {
     const installed = await appInstalled(agent.app.appNames);
     if (installed === null) {
@@ -231,7 +231,7 @@ async function doctorTerminal(
       return;
     }
     case "headless": {
-      const agent = resolveAgent(config.settings.agent);
+      const agent = resolveAgent(config.settings.agent, config.settings);
       check(
         agent.headless !== undefined,
         `terminal: ${def.label}`,

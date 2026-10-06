@@ -156,7 +156,7 @@ function signal(pid: number, name: NodeJS.Signals): void {
 
 export async function status(): Promise<void> {
   const config = await loadConfig();
-  const agent = resolveAgent(config.settings.agent);
+  const agent = resolveAgent(config.settings.agent, config.settings);
   const rec = await readDaemonRecord();
   if (rec === null || !(await daemonAlive(rec))) {
     if (rec) await clearDaemonRecord();
