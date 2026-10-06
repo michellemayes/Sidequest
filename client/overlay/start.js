@@ -55,6 +55,9 @@ function startSession(row, prompt, ticket = null, question = '') {
       CONFIG.sessions = Object.assign({}, CONFIG.sessions, { [meta.ts]: list });
     }
     celebrate(prompt, res);
+    if (CONFIG.reactions) {
+      react(meta.permalink, 'eyes').catch((err) => log('could not react', err.message));
+    }
     if (res.reply) {
       postReply(meta.permalink, res.reply).catch((err) => {
         toast({ title: 'Could not reply in the thread', sub: err.message, kind: 'error' });
@@ -155,6 +158,63 @@ async function postReply(permalink, text) {
   if (!body || !body.ok) throw new Error(`Slack said ${(body && body.error) || `HTTP ${res.status}`}.`);
   log('replied in thread', target);
 }
+
+/** The message a permalink names, for reacting to it: its channel and its own ts. */
+function reactionTarget(permalink) {
+  const match = String(permalink || '').match(/\/archives\/([A-Z0-9]+)\/p(\d{10})(\d{6})/);
+  return match ? { channel: match[1], ts: `${match[2]}.${match[3]}` } : null;
+}
+
+/*
+ * What Slack answers when a reaction is already as asked: there, or (on
+ * remove) not there. Either way the message says what it should.
+ */
+const REACTION_SETTLED = ['already_reacted', 'no_reaction'];
+
+/**
+ * React to a message as you, or take a reaction of yours off it, through
+ * the workspace's own API like a reply. Settings.reactions decides whether
+ * this happens at all; callers check it.
+ */
+async function react(permalink, name, remove = false) {
+  const target = reactionTarget(permalink);
+  if (!target) throw new Error('Slack gave that message no link to react to.');
+  const team = slackTeam(permalink);
+  if (!team) throw new Error('Could not find which Slack workspace this window is signed in to.');
+  const form = new FormData();
+  form.append('token', team.token);
+  form.append('channel', target.channel);
+  form.append('timestamp', target.ts);
+  form.append('name', name);
+  const res = await slackApi(remove ? 'reactions.remove' : 'reactions.add', form);
+  const body = await res.json();
+  if (!body || (!body.ok && !REACTION_SETTLED.includes(body.error))) {
+    throw new Error(`Slack said ${(body && body.error) || `HTTP ${res.status}`}.`);
+  }
+  log(remove ? 'unreacted' : 'reacted', name, target);
+}
+
+/** The session is done with its message: 👀 off, `name` on. */
+async function reactDone(permalink, name = 'white_check_mark') {
+  await react(permalink, 'eyes', true).catch((err) => log('could not unreact', err.message));
+  await react(permalink, name);
+}
+
+/*
+ * The daemon asks one window to mark how a session ended (merged, failed);
+ * true means this window took it on. See reactToOutcomes in attacher.ts.
+ */
+window.__sidequestReact = (json) => {
+  let job;
+  try {
+    job = JSON.parse(json);
+  } catch {
+    return false;
+  }
+  if (!job || !job.permalink || !job.name || !slackTeam(job.permalink)) return false;
+  reactDone(job.permalink, job.name).catch((err) => log('could not react', err.message));
+  return true;
+};
 
 function newClientMsgId() {
   if (crypto.randomUUID) return crypto.randomUUID();

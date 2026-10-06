@@ -48,6 +48,7 @@ window.__sidequestPostResult = (json) => {
   postReply(job.permalink, job.text).then(() => {
     toast({ title: `Replied in the thread for ${job.label || 'a session'}`, sub: job.branch });
     markPosted({ branch: job.branch, resultMs: job.resultMs });
+    if (CONFIG.reactions) reactDone(job.permalink).catch((err) => log('could not react', err.message));
   }, (err) => {
     toast({ title: 'Could not post the reply', sub: err.message, kind: 'error' });
     ask({ op: 'result-posted', branch: job.branch, resultMs: job.resultMs, error: err.message }).catch(() => {});

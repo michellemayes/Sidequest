@@ -50,6 +50,7 @@ const CONFIG = Object.assign({
   sessions: {},
   stats: { total: 0, today: 0, streak: 0 },
   postResults: 'ask',
+  reactions: false,
   /* Where Slack serves the files attached to messages from. */
   fileHosts: '(^|\\.)files\\.slack\\.com$|(^|\\.)slack-files\\.com$',
   verbose: false,

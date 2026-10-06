@@ -44,6 +44,8 @@ export interface HistoryEntry {
    * is never offered twice and a rewritten one is offered again.
    */
   resultPostedMs?: number;
+  /** The outcome reaction (say "white_check_mark") put on the message, so it is put there once. */
+  reacted?: string;
 }
 
 export interface Stats {

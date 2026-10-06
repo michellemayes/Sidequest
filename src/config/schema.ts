@@ -156,6 +156,14 @@ export const settingsSchema = z.object({
    */
   autoReply: z.boolean().default(false),
   /**
+   * React to the message a session starts from, as you, so whoever asked
+   * can see how it is going without a reply: 👀 when it starts, swapped for
+   * ✅ when its reply is posted or its pull request merges, or ❌ when a
+   * headless run fails. Off by default, like autoReply: it is Slack activity
+   * in your name.
+   */
+  reactions: z.boolean().default(false),
+  /**
    * Ask the agent to leave a reply for the thread in .sidequest/result.md
    * when it is done, and offer it (or post it) in Slack. See postResultsSchema.
    */

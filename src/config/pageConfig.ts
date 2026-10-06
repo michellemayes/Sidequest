@@ -76,6 +76,8 @@ export interface PageConfig {
   stats: { total: number; today: number; streak: number };
   /** What to do with a reply an agent leaves: offer it, post it, or neither. */
   postResults: string;
+  /** React to a session's message as it starts and ends; see settings.reactions. */
+  reactions: boolean;
   verbose: boolean;
 }
 
@@ -111,6 +113,7 @@ export function pageConfig(
     sessions: sessionsByMessage(history, statuses, config.settings.trackStatus, launchErrors),
     stats: (({ total, today, streak }) => ({ total, today, streak }))(computeStats(history)),
     postResults: config.settings.postResults,
+    reactions: config.settings.reactions,
     verbose: config.settings.verbose,
   };
 }
