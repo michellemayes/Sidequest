@@ -10,7 +10,7 @@
  * All of it is read from git, the worktree and (for pull requests) `gh`; the
  * agent is never asked. Anything that cannot be read is simply not reported.
  */
-import { readFile, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { run, CommandError } from "../util/exec.js";
 import { log } from "../util/log.js";
@@ -30,7 +30,9 @@ export type SessionState =
   | "pr-closed"
   | "merged"
   /** The worktree has been cleaned up. */
-  | "gone";
+  | "gone"
+  /** A headless run exited with an error, leaving nothing behind: no commits, no reply. */
+  | "failed";
 
 export interface PullRequest {
   number: number;
@@ -49,6 +51,11 @@ export interface SessionStatus {
   resultMs: number | null;
   /** A result newer than the one last posted, settled long enough to be finished. */
   resultPending: boolean;
+  /**
+   * How the latest headless run ended, off the last line of agent.log; null
+   * for a terminal session, or a headless one that is still running.
+   */
+  exitCode: number | null;
 }
 
 /** States a session does not come back from, so it is not looked at again. */
@@ -220,6 +227,7 @@ export class StatusWatcher {
         pr,
         resultMs: before?.resultMs ?? null,
         resultPending: false,
+        exitCode: before?.exitCode ?? null,
       };
     }
 
@@ -235,20 +243,21 @@ export class StatusWatcher {
       this.now - activityMs > DAY_MS &&
       this.now - last.at < IDLE_RECHECK_MS
     ) {
-      const resultMs = await resultMtime(cwd);
+      const [resultMs, exitCode] = await Promise.all([resultMtime(cwd), headlessExit(cwd)]);
       const pr = before.commits > 0 || before.pr ? await this.pullRequest(entry) : null;
       return {
-        state: stateOf(before.commits, pr, resultMs),
+        state: stateOf(before.commits, pr, resultMs, exitCode),
         commits: before.commits,
         dirty: before.dirty,
         pr,
         resultMs,
         resultPending: this.isPending(resultMs, entry),
+        exitCode,
       };
     }
     this.lastFull.set(entry.branch, { at: this.now, activityMs });
 
-    const [commits, dirty, resultMs] = await Promise.all([
+    const [commits, dirty, resultMs, exitCode] = await Promise.all([
       this.commitsAhead(entry),
       // Without --no-optional-locks, status refreshes the index and takes
       // index.lock to do it, so a look every few seconds could fail the
@@ -258,17 +267,19 @@ export class StatusWatcher {
         () => false,
       ),
       resultMtime(cwd),
+      headlessExit(cwd),
     ]);
     // A branch with nothing on it has no pull request worth asking about.
     const pr = commits > 0 || before?.pr ? await this.pullRequest(entry) : null;
 
     return {
-      state: stateOf(commits, pr, resultMs),
+      state: stateOf(commits, pr, resultMs, exitCode),
       commits,
       dirty,
       pr,
       resultMs,
       resultPending: this.isPending(resultMs, entry),
+      exitCode,
     };
   }
 
@@ -460,13 +471,51 @@ function prState(state: unknown): PullRequest["state"] {
   return state === "MERGED" || state === "CLOSED" ? state : "OPEN";
 }
 
-function stateOf(commits: number, pr: PullRequest | null, resultMs: number | null): SessionState {
+export function stateOf(
+  commits: number,
+  pr: PullRequest | null,
+  resultMs: number | null,
+  exitCode: number | null = null,
+): SessionState {
   if (pr?.state === "MERGED") return "merged";
   if (pr?.state === "OPEN") return "pr-open";
   if (pr?.state === "CLOSED") return "pr-closed";
   if (commits > 0) return "committed";
   if (resultMs !== null) return "answered";
+  // A run that failed but left commits or a reply is still worth those.
+  if (exitCode !== null && exitCode !== 0) return "failed";
   return "working";
+}
+
+/** Enough of agent.log's end to hold its last few lines. */
+const LOG_TAIL_BYTES = 4096;
+
+/**
+ * How the latest headless run in a worktree ended: the exit code on the
+ * runner's "sidequest: finished …, exit N" line, when that is the last word
+ * it wrote. Null when there is no log (a terminal session), or the last word
+ * is "started": it is still running, or running again after a follow-up.
+ */
+export async function headlessExit(cwd: string): Promise<number | null> {
+  let tail: string;
+  try {
+    const handle = await open(join(cwd, ".sidequest", "agent.log"), "r");
+    try {
+      const { size } = await handle.stat();
+      const length = Math.min(size, LOG_TAIL_BYTES);
+      const buffer = Buffer.alloc(length);
+      await handle.read(buffer, 0, length, size - length);
+      tail = buffer.toString("utf8");
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
+  const marks = [...tail.matchAll(/^sidequest: (started|finished)\b.*?(?:exit (\d+))?$/gm)];
+  const last = marks[marks.length - 1];
+  if (!last || last[1] !== "finished" || last[2] === undefined) return null;
+  return Number.parseInt(last[2], 10);
 }
 
 /**
@@ -492,6 +541,7 @@ function sameStatus(a: SessionStatus, b: SessionStatus): boolean {
     a.dirty === b.dirty &&
     a.resultMs === b.resultMs &&
     a.resultPending === b.resultPending &&
+    a.exitCode === b.exitCode &&
     a.pr?.url === b.pr?.url &&
     a.pr?.state === b.pr?.state;
 }

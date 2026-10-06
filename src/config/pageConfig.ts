@@ -30,6 +30,8 @@ export interface PageStatus {
   commits?: number;
   dirty?: boolean;
   pr?: { number: number; url: string } | null;
+  /** How a failed headless run exited; left out otherwise. */
+  exitCode?: number;
   /** The agent left a reply for the thread that has not been posted yet. */
   reply: boolean;
   /** When that reply was last written, so a rewrite is news again. */
@@ -143,6 +145,7 @@ function pageStatus(status: SessionStatus): PageStatus {
     commits: status.commits,
     dirty: status.dirty,
     pr: status.pr ? { number: status.pr.number, url: status.pr.url } : null,
+    ...(status.exitCode ? { exitCode: status.exitCode } : {}),
     ...replyStatus(status),
   };
 }

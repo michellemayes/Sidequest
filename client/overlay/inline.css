@@ -51,6 +51,7 @@
 .sq-mark::before { content: '✦'; color: #8b5cf6; }
 /* Progress shows in the words; the few states worth a glance get colour too. */
 .sq-mark[data-state="merged"]::before { color: var(--sq-ok); }
+.sq-mark[data-state="failed"] { color: var(--sq-bad); }
 .sq-mark[data-state="pr-closed"], .sq-mark[data-state="gone"] { opacity: .6; }
 .sq-mark[data-reply="1"] { border-color: #8b5cf6; }
 

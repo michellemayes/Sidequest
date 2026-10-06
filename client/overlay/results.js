@@ -88,7 +88,10 @@ function markText(list) {
   const last = list[list.length - 1];
   const label = last.label || 'Session';
   const head = list.length > 1 ? `${label} +${list.length - 1}` : label;
-  const status = statusText(last.status);
+  let status = statusText(last.status);
+  // How long a session has been at it says whether to go and look.
+  const age = status === 'working' ? ageOf(last.at) : '';
+  if (age && age !== 'now') status += ` ${age}`;
   return status ? `${head} · ${status}` : head;
 }
 
@@ -104,6 +107,7 @@ function statusText(status) {
     case 'pr-closed': bits.push('PR closed'); break;
     case 'merged': bits.push('merged'); break;
     case 'gone': bits.push('cleaned up'); break;
+    case 'failed': bits.push('failed'); break;
     default: break;
   }
   if (status.reply) bits.push('reply ready');
@@ -118,5 +122,6 @@ function statusTitle(entry) {
   if (status.dirty) lines.push('uncommitted changes in the worktree');
   if (status.pr) lines.push(`${status.state === 'merged' ? 'merged' : status.state === 'pr-closed' ? 'closed' : 'open'}: ${status.pr.url}`);
   if (status.reply) lines.push('the agent left a reply for the thread');
+  if (status.state === 'failed') lines.push(`the agent exited with ${status.exitCode || 'an error'}; .sidequest/agent.log says why`);
   return lines.join('\n');
 }
