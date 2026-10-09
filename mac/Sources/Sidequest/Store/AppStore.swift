@@ -50,7 +50,8 @@ final class AppStore {
     private(set) var transcripts: [String: [TranscriptItem]] = [:]
     private(set) var structuredTranscripts: Set<String> = []
     var filter: SessionFilter = .needsYou
-    var selection: AppSession.ID?
+    /// The sessions picked in the list; the detail shows one when exactly one is.
+    var selection: Set<AppSession.ID> = []
     var search = ""
     /// The last thing that went wrong, shown until dismissed.
     var lastError: DaemonError?
@@ -221,7 +222,8 @@ final class AppStore {
         }
     }
 
-    var selectedSession: AppSession? { sessions.first { $0.id == selection } }
+    var selectedSession: AppSession? { selection.count == 1 ? sessions.first(where: { selection.contains($0.id) }) : nil }
+    var selectedSessions: [AppSession] { sessions.filter { selection.contains($0.id) } }
 
     private func matches(_ session: AppSession, _ filter: SessionFilter) -> Bool {
         switch filter {
@@ -237,7 +239,7 @@ final class AppStore {
     func reveal(branch: String) {
         guard let session = sessions.first(where: { $0.branch == branch }) else { return }
         filter = needsYou(session) ? .needsYou : .all
-        selection = session.id
+        selection = [session.id]
         NSApp.activate()
     }
 
@@ -406,7 +408,34 @@ final class AppStore {
     /// Remove a session. With uncommitted work it is refused unless `force`.
     func remove(_ session: AppSession, force: Bool = false) async {
         await act { _ = try await self.client.request("remove-session", ["session": session.id, "force": force]) }
-        if selection == session.id { selection = nil }
+        selection.remove(session.id)
+    }
+
+    /// Mark sessions done, or not done again. For the ones nothing else says are finished:
+    /// a question answered in its terminal never gets a reply or a pull request.
+    /// Marked ones leave Working and Needs You at once, and the list moves on to the next.
+    func markDone(_ targets: [AppSession], done: Bool = true) async {
+        guard !targets.isEmpty else { return }
+        let ids = Set(targets.map(\.id))
+        let before = visibleSessions
+        let next: AppSession? = before.firstIndex(where: { ids.contains($0.id) }).flatMap { start in
+            before[start...].first(where: { !ids.contains($0.id) }) ?? before[..<start].last(where: { !ids.contains($0.id) })
+        }
+        let stamp = done ? ISO8601DateFormatter().string(from: Date()) : nil
+        for index in sessions.indices where ids.contains(sessions[index].id) {
+            sessions[index].doneAt = stamp
+            if done { sessions[index].needsYou = false }
+        }
+        if !selection.isEmpty, selection.isSubset(of: ids), !visibleSessions.contains(where: { ids.contains($0.id) }) {
+            selection = next.map { Set([$0.id]) } ?? []
+        }
+        updateBadge()
+        await act {
+            for session in targets {
+                _ = try await self.client.request("mark-done", ["branch": session.branch, "done": done])
+            }
+        }
+        await refreshSessions()
     }
 
     func cleanUp(recent: Bool = false) async -> CleanReply? {

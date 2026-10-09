@@ -4,11 +4,11 @@ import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ControlServer, type ControlHandler } from "../src/control/server.js";
-import { appSessions, createAppHandler, PROTOCOL_VERSION, sessionTitle, type AppHost } from "../src/control/app.js";
+import { appSessions, branchWords, createAppHandler, PROTOCOL_VERSION, sessionTitle, type AppHost } from "../src/control/app.js";
 import type { AskRequest } from "../src/cdp/requests.js";
 import { configFile } from "../src/config/paths.js";
 import { loadConfig } from "../src/config/store.js";
-import { recordSession, type HistoryEntry } from "../src/session/history.js";
+import { loadHistory, recordSession, type HistoryEntry } from "../src/session/history.js";
 import type { SessionStatus } from "../src/session/status.js";
 import { exists } from "../src/util/fs.js";
 
@@ -167,6 +167,24 @@ describe("appSessions", () => {
     expect(sessionTitle(entry(3, { message: "x".repeat(300) })).length).toBe(120);
   });
 
+  it("reads a session with no message back from the words in its branch", () => {
+    const branch = "investigate/jeff-zern-did-the-last-two-hours-match-20260929-2208";
+    expect(sessionTitle(entry(1, { branch }))).toBe("Jeff zern did the last two hours match");
+    expect(branchWords("ask/why-is-it-slow-20260929-2208-2")).toBe("Why is it slow");
+    expect(branchWords("fix/msg-1700000000001-20260929-2208")).toBeNull();
+    expect(branchWords("my-own-branch")).toBeNull();
+  });
+
+  it("stops asking about a session you marked done", () => {
+    const statuses = new Map([
+      ["claude/fix-1", status({ state: "answered", resultMs: 5, resultPending: true })],
+      ["claude/fix-2", status({ state: "failed", exitCode: 1 })],
+    ]);
+    const doneAt = "2026-10-09T12:00:00.000Z";
+    const list = appSessions([entry(1, { doneAt }), entry(2, { doneAt })], statuses, { postResults: "ask" });
+    expect(list.map((s) => [s.doneAt, s.needsYou])).toEqual([[doneAt, false], [doneAt, false]]);
+  });
+
   it("lists newest first, once per worktree, with the watcher's status and what needs you", () => {
     const history = [entry(1), entry(2), entry(3), { ...entry(1), createdAt: new Date(2026, 9, 2).toISOString() }];
     const statuses = new Map([
@@ -267,6 +285,17 @@ describe("createAppHandler", () => {
     await expect(closed({ id: 2, op: "post-reply", branch: "claude/fix-1", text: "hi" }, conn())).rejects.toThrow(
       /No Slack window/,
     );
+  });
+
+  it("marks a session done, and not done again", async () => {
+    await recordSession(entry(1));
+    const handle = createAppHandler(fakeHost());
+    expect(await handle({ id: 1, op: "mark-done", branch: "claude/fix-1" }, conn())).toEqual({ ok: true, branch: "claude/fix-1", done: true });
+    expect((await loadHistory())[0]!.doneAt).toMatch(/^\d{4}-/);
+
+    await handle({ id: 2, op: "mark-done", branch: "claude/fix-1", done: false }, conn());
+    expect((await loadHistory())[0]!.doneAt).toBeUndefined();
+    await expect(handle({ id: 3, op: "mark-done", branch: "claude/nope" }, conn())).rejects.toThrow(/not one Sidequest knows/);
   });
 
   it("dismisses a reply through the overlay's own result-posted", async () => {

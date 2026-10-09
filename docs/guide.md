@@ -198,6 +198,10 @@ still start sessions from Slack; the app is where you follow them:
   for the Slack message it came from, and shows how far it has got (commits, its
   pull request, a reply waiting), with the agent's reply to edit and post, and a
   box to send it a follow-up. The Dock icon counts what needs you.
+- **Mark as Done** (⌘D, a right-click, or a swipe on the row) for the sessions
+  nothing else says are finished, like a question answered in its terminal that
+  will never get a reply or a pull request. It moves them out of Working and
+  Needs you; select several to mark them all, and a follow-up puts one back.
 - **Notifications** that come from Sidequest rather than Script Editor; clicking
   one opens its session. While the app is open, the daemon leaves notifying to it.
 - **Settings** for everything in `config.json`, channel links and prompts

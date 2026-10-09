@@ -52,7 +52,7 @@ struct SessionDetailView: View {
         VStack(alignment: .leading, spacing: 16) {
             header
             if !session.message.isEmpty { quote }
-            ProgressTrack(session: session)
+            ProgressTrack(session: session).card()
             if session.resultPending || reply != nil { replyCard }
             if session.state == "failed" { failureCard }
             facts
@@ -104,16 +104,28 @@ struct SessionDetailView: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(session.title).font(.title2.bold()).textSelection(.enabled)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    PromptTag(session: session)
+                    StatusPill(session: session)
+                }
+                Text(session.title)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(3)
+                    .textSelection(.enabled)
                 Text(metaLine).font(.callout).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            if let step = nextStep {
-                Button(step.title) { perform(step) }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+            HStack(spacing: 8) {
+                MarkDoneButton(sessions: [session])
+                    .help(session.markedDone ? "Put it back in Working" : "Nothing left to do here: move it to Done")
+                if let step = nextStep {
+                    Button(step.title) { perform(step) }
+                        .buttonStyle(.borderedProminent)
+                }
             }
+            .controlSize(.regular)
+            .fixedSize()
         }
     }
 
@@ -138,6 +150,8 @@ struct SessionDetailView: View {
 
     private var nextStep: NextStep? {
         if !store.pendingApprovals(for: session).isEmpty { return .answer }
+        // Done is done: the next step is whatever you pick, not a button asking for it.
+        if session.markedDone { return nil }
         if session.resultPending { return .reviewReply }
         if session.headless && session.running { return .stop }
         if session.state == "failed" { return session.headless ? .runAgain : .reopen }
@@ -168,25 +182,30 @@ struct SessionDetailView: View {
     }
 
     private var metaLine: String {
-        var parts = [session.promptLabel, session.repo]
+        var parts = [session.repo]
         if !session.channel.isEmpty { parts.append("#\(session.channel)") }
         if let created = session.created {
-            parts.append("started \(created.formatted(date: .abbreviated, time: .shortened))")
+            parts.append("started \(created.formatted(.relative(presentation: .named)))")
+        }
+        if let done = session.doneAt.flatMap(ISODate.parse) {
+            parts.append("done \(done.formatted(.relative(presentation: .named)))")
         }
         return parts.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private var quote: some View {
-        HStack(alignment: .top, spacing: 10) {
-            RoundedRectangle(cornerRadius: 2).fill(.quaternary).frame(width: 3)
-            VStack(alignment: .leading, spacing: 4) {
-                if !session.author.isEmpty { Text("@\(session.author)").font(.callout.weight(.semibold)) }
-                Text(session.message).font(.callout).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(8)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label(session.author.isEmpty ? "From Slack" : "@\(session.author)", systemImage: "quote.bubble")
+                    .font(.callout.weight(.semibold))
+                Spacer()
                 if let url = URL(string: session.permalink), !session.permalink.isEmpty {
                     Link("View in Slack", destination: url).font(.caption)
                 }
             }
+            Text(session.message).font(.callout).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(8)
         }
+        .card()
     }
 
     private var replyCard: some View {
@@ -257,19 +276,23 @@ struct SessionDetailView: View {
     }
 
     private var facts: some View {
-        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
-            fact("Branch", session.branch)
-            if !session.baseBranch.isEmpty { fact("Cut from", session.baseBranch) }
-            fact("Changes", [session.commits == 1 ? "1 commit" : "\(session.commits) commits", session.dirty ? "uncommitted changes" : "clean"].joined(separator: " · "))
-            if !session.agent.isEmpty { fact("Agent", session.agent) }
-            fact("Worktree", session.worktreePath)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Details").font(.headline)
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 7) {
+                fact("Branch", session.branch)
+                if !session.baseBranch.isEmpty { fact("Cut from", session.baseBranch) }
+                fact("Changes", [session.commits == 1 ? "1 commit" : "\(session.commits) commits", session.dirty ? "uncommitted changes" : "clean"].joined(separator: " · "))
+                if !session.agent.isEmpty { fact("Agent", session.agent) }
+                fact("Worktree", session.worktreePath)
+            }
+            .font(.callout)
         }
-        .font(.callout)
+        .card()
     }
 
     private func fact(_ label: String, _ value: String) -> some View {
         GridRow {
-            Text(label).foregroundStyle(.secondary)
+            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
             Text(value).font(.callout.monospaced()).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
         }
     }
@@ -336,32 +359,51 @@ struct SessionDetailView: View {
 }
 
 /// Started → commits → reply → pull request → merged, filled as far as the session has got.
+/// A question (Investigate, Review, Ask) that has committed nothing is just started → reply → done.
 struct ProgressTrack: View {
     let session: AppSession
 
-    private var steps: [(String, Bool)] {
+    private struct Step {
+        var label: String
+        var reached: Bool
+    }
+
+    private var answersOnly: Bool {
+        session.commits == 0 && session.pr == nil && ["investigate", "review", "ask"].contains(session.promptKey)
+    }
+
+    private var steps: [Step] {
+        let reply = Step(label: session.resultPending ? "Reply ready" : "Reply", reached: session.resultMs != nil)
+        if answersOnly {
+            return [Step(label: "Started", reached: true), reply, Step(label: "Done", reached: session.markedDone || session.state == "gone")]
+        }
         let committed = session.commits > 0 || ["pr-open", "pr-closed", "merged"].contains(session.state)
-        let replied = session.resultMs != nil
-        let pr = session.pr != nil
+        let merged = session.state == "merged"
         return [
-            ("Started", true),
-            (committed ? (session.commits == 1 ? "1 commit" : "\(max(session.commits, 1)) commits") : "Commits", committed),
-            (session.resultPending ? "Reply ready" : "Reply", replied),
-            (session.pr.map { "PR #\($0.number)" } ?? "PR", pr),
-            ("Merged", session.state == "merged"),
+            Step(label: "Started", reached: true),
+            Step(label: committed ? (session.commits == 1 ? "1 commit" : "\(max(session.commits, 1)) commits") : "Commits", reached: committed),
+            reply,
+            Step(label: session.pr.map { "PR #\($0.number)" } ?? "PR", reached: session.pr != nil),
+            Step(label: session.markedDone && !merged ? "Done" : "Merged", reached: merged || session.markedDone),
         ]
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             ForEach(steps.indices, id: \.self) { index in
                 let step = steps[index]
                 if index > 0 {
-                    Capsule().fill(step.1 ? Color.accentColor : Color.secondary.opacity(0.25)).frame(height: 2)
+                    Capsule()
+                        .fill(step.reached ? Color.accentColor : Color.secondary.opacity(0.25))
+                        .frame(minWidth: 12, maxWidth: .infinity, minHeight: 2, maxHeight: 2)
                 }
-                HStack(spacing: 4) {
-                    Circle().fill(step.1 ? Color.accentColor : Color.secondary.opacity(0.3)).frame(width: 8, height: 8)
-                    Text(step.0).font(.caption).foregroundStyle(step.1 ? .primary : .secondary).fixedSize()
+                HStack(spacing: 5) {
+                    Image(systemName: step.reached ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(step.reached ? Color.accentColor : Color.secondary.opacity(0.6))
+                    Text(step.label)
+                        .font(.callout)
+                        .foregroundStyle(step.reached ? .primary : .secondary)
+                        .fixedSize()
                 }
             }
         }

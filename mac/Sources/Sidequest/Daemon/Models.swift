@@ -35,6 +35,8 @@ struct AppSession: Codable, Identifiable, Hashable {
     var resultMs: Double?
     var resultPending: Bool
     var exitCode: Int?
+    /// When you marked it done yourself; nil until you do (and from an engine too old to know).
+    var doneAt: String?
     var needsYou: Bool
     /// Runs with no terminal: the app is where you watch and work on it.
     var headless: Bool
@@ -43,9 +45,12 @@ struct AppSession: Codable, Identifiable, Hashable {
 
     var created: Date? { ISODate.parse(createdAt) }
 
+    /// Marked done by you: a question answered in its terminal has no reply or pull request to say so.
+    var markedDone: Bool { doneAt != nil }
+
     /// Still being worked on: nothing to show yet, or commits but no pull request.
-    var isWorking: Bool { state == "working" || state == "committed" || state == "unknown" }
-    var isDone: Bool { ["answered", "pr-open", "pr-closed", "merged", "gone"].contains(state) }
+    var isWorking: Bool { !markedDone && (state == "working" || state == "committed" || state == "unknown") }
+    var isDone: Bool { markedDone || ["answered", "pr-open", "pr-closed", "merged", "gone"].contains(state) }
 }
 
 struct Stats: Codable, Hashable {
