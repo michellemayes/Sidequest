@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { createServer, type Server } from "node:http";
-import { CdpSession, listTargets, devtoolsVersion } from "../../src/cdp/client.js";
+import { CdpSession, listTargets, devtoolsVersion, type CdpTarget } from "../../src/cdp/client.js";
 import { Attacher } from "../../src/cdp/attacher.js";
 import { sleep } from "../../src/util/async.js";
 import { inspectRepo } from "../../src/git/repo.js";
@@ -186,10 +186,19 @@ export function useOverlayBrowser(slot: number): void {
       }
     }
 
-    // Measure the untouched page: nothing has attached to it yet.
-    const targets = await listTargets(PORT);
-    const page = targets.find((t) => t.type === "page" && t.url.includes("127.0.0.1"));
-    if (!page?.webSocketDebuggerUrl) throw new Error("no fixture page target");
+    // Measure the untouched page: nothing has attached to it yet. Listing gets
+    // the same patience as the port above: these suites run in parallel, each
+    // with its own Chromium, and a loaded machine can take longer than the
+    // three seconds listTargets allows a single call.
+    let page: CdpTarget | undefined;
+    for (;;) {
+      page = await listTargets(PORT)
+        .then((targets) => targets.find((t) => t.type === "page" && t.url.includes("127.0.0.1")))
+        .catch(() => undefined);
+      if (page?.webSocketDebuggerUrl) break;
+      if (Date.now() > deadline) throw new Error("no fixture page target");
+      await sleep(250);
+    }
     const probe = new CdpSession(page.webSocketDebuggerUrl);
     await probe.connect();
     await probe.send("Runtime.enable");
