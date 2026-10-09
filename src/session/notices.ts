@@ -19,6 +19,8 @@ import type { SessionStatus } from "./status.js";
 export interface Notice {
   title: string;
   body: string;
+  /** The session it is about, so the Mac app can open it from the notification. */
+  branch?: string;
 }
 
 /** What a session started since the daemon began counts as having been before its first look. */
@@ -47,19 +49,20 @@ export function noticesFor(
 
     if (next.state !== prev.state) {
       if (next.state === "pr-open" && next.pr) {
-        notices.push({ title: `${label} opened PR #${next.pr.number}`, body: where });
+        notices.push({ title: `${label} opened PR #${next.pr.number}`, body: where, branch });
       } else if (next.state === "merged") {
-        notices.push({ title: `${label} merged`, body: next.pr ? `PR #${next.pr.number} · ${where}` : where });
+        notices.push({ title: `${label} merged`, body: next.pr ? `PR #${next.pr.number} · ${where}` : where, branch });
       } else if (next.state === "failed") {
         notices.push({
           title: `${label} failed`,
           body: `The agent exited with ${next.exitCode ?? "an error"}. ${where}`,
+          branch,
         });
       }
     }
     // On auto the reply is posted without you; nothing to come back for.
     if (next.resultPending && !prev.resultPending && options.postResults === "ask") {
-      notices.push({ title: `${label} has a reply for the thread`, body: `Review it in Slack. ${where}` });
+      notices.push({ title: `${label} has a reply for the thread`, body: `Review it in Slack. ${where}`, branch });
     }
   }
   return notices;

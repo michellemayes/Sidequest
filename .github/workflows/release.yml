@@ -1,0 +1,70 @@
+name: Release
+
+# Every merge to main ships: a new version of Sidequest.app is built and
+# published as the latest GitHub release, with the Sparkle appcast beside it.
+# The app looks for a new release when it opens and every hour, and says so
+# in a notification.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          # major.minor from package.json, and this workflow's run number as the patch.
+          base="$(node -p "require('./package.json').version.split('.').slice(0, 2).join('.')")"
+          version="${base}.${GITHUB_RUN_NUMBER}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${version}"
+
+      - name: Build Sidequest.app
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
+          COMMIT: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
+        run: mac/scripts/build-app.sh
+
+      - name: Package
+        id: package
+        run: |
+          zip="Sidequest-${{ steps.version.outputs.version }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent mac/build/Sidequest.app "$zip"
+          echo "zip=${zip}" >> "$GITHUB_OUTPUT"
+
+      - name: Appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
+          ZIP: ${{ steps.package.outputs.zip }}
+          REPOSITORY: ${{ github.repository }}
+        run: mac/scripts/appcast.sh > appcast.xml
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            "${{ steps.package.outputs.zip }}" appcast.xml \
+            --target "${GITHUB_SHA}" \
+            --title "Sidequest ${VERSION}" \
+            --generate-notes \
+            --latest

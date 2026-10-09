@@ -1,0 +1,72 @@
+import AppKit
+import UserNotifications
+
+/// Notifications from the app, rather than the daemon's osascript ones that
+/// come from Script Editor: they say Sidequest, and clicking one opens the
+/// session it is about.
+@MainActor
+final class Notifier: NSObject, UNUserNotificationCenterDelegate {
+    /// Called with the branch of a session notification that was clicked.
+    var onOpen: ((String) -> Void)?
+    /// Called when an update notification was clicked.
+    var onUpdate: (() -> Void)?
+
+    private var center: UNUserNotificationCenter? {
+        // Only a bundled app may use the notification center; `swift run` is not one.
+        Bundle.main.bundleIdentifier == nil ? nil : UNUserNotificationCenter.current()
+    }
+
+    func setUp() {
+        guard let center else { return }
+        center.delegate = self
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+    }
+
+    func post(_ notice: Notice) {
+        let content = UNMutableNotificationContent()
+        content.title = notice.title
+        content.body = notice.body
+        content.sound = .default
+        if let branch = notice.branch {
+            content.userInfo = ["branch": branch]
+            content.threadIdentifier = branch
+        }
+        deliver(content, id: "session-\(notice.branch ?? UUID().uuidString)-\(Date().timeIntervalSince1970)")
+    }
+
+    func postUpdate(version: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Sidequest \(version) is available"
+        content.body = "Click to update. It takes a few seconds."
+        content.userInfo = ["update": version]
+        deliver(content, id: "update-\(version)")
+    }
+
+    private func deliver(_ content: UNMutableNotificationContent, id: String) {
+        center?.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound, .list])
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let info = response.notification.request.content.userInfo
+        let branch = info["branch"] as? String
+        let update = info["update"] != nil
+        Task { @MainActor in
+            NSApp.activate()
+            if update { self.onUpdate?() }
+            if let branch { self.onOpen?(branch) }
+        }
+        completionHandler()
+    }
+}

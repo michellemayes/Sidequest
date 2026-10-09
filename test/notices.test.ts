@@ -61,7 +61,7 @@ describe("desktop notices", () => {
   it("counts a session started since as having been working before its first look", () => {
     const after = new Map([["new", status({ state: "failed", exitCode: 1 })]]);
     const notices = noticesFor(new Map(), after, [entry("new", "2026-10-06T00:00:00Z")], { postResults: "ask", since });
-    expect(notices).toEqual([{ title: "Fix failed", body: "The agent exited with 1. storefront · new" }]);
+    expect(notices).toEqual([{ title: "Fix failed", body: "The agent exited with 1. storefront · new", branch: "new" }]);
   });
 
   it("does not call you back for a reply that posts itself", () => {

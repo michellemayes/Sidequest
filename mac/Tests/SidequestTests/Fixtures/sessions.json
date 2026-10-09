@@ -1,0 +1,67 @@
+{
+  "sessions": [
+    {
+      "id": "claude-fix-checkout-total",
+      "branch": "claude/fix-checkout-total",
+      "title": "Checkout total is off by a cent on some carts with discounts",
+      "message": "Checkout total is off by a cent on some carts with discounts",
+      "author": "dana",
+      "channel": "storefront-eng",
+      "repo": "storefront",
+      "repoPath": "/Users/dana/code/storefront",
+      "worktreePath": "/Users/dana/.sidequest/worktrees/storefront/claude-fix-checkout-total",
+      "baseBranch": "main",
+      "promptKey": "fix",
+      "promptLabel": "Fix",
+      "agent": "Claude Code",
+      "agentId": "claude",
+      "createdAt": "2026-10-09T14:31:00.000Z",
+      "permalink": "https://acme.slack.com/archives/C01/p1760000000000100",
+      "state": "pr-open",
+      "commits": 2,
+      "dirty": false,
+      "pr": {
+        "number": 128,
+        "url": "https://github.com/acme/storefront/pull/128",
+        "state": "OPEN"
+      },
+      "resultMs": 1760020000000,
+      "resultPending": true,
+      "exitCode": null,
+      "needsYou": true
+    },
+    {
+      "id": "investigate-webhook-502s",
+      "branch": "investigate/webhook-502s",
+      "title": "Webhook 502s since deploy",
+      "message": "Webhook 502s since deploy",
+      "author": "sam",
+      "channel": "payments",
+      "repo": "payments",
+      "repoPath": "/Users/dana/src/payments",
+      "worktreePath": "/Users/dana/.sidequest/worktrees/payments/investigate-webhook-502s",
+      "baseBranch": "main",
+      "promptKey": "investigate",
+      "promptLabel": "Investigate",
+      "agent": "Claude Code",
+      "agentId": "claude",
+      "createdAt": "2026-10-09T13:58:00.000Z",
+      "permalink": "https://acme.slack.com/archives/C01/p1760000000000100",
+      "state": "failed",
+      "commits": 0,
+      "dirty": false,
+      "pr": null,
+      "resultMs": null,
+      "resultPending": false,
+      "exitCode": 1,
+      "needsYou": true
+    }
+  ],
+  "stats": {
+    "total": 2,
+    "today": 2,
+    "streak": 6,
+    "bestStreak": 9,
+    "firstToday": 0
+  }
+}

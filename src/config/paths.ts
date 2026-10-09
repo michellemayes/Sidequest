@@ -45,6 +45,11 @@ export function historyFile(): string {
   return join(configRoot(), "history.json");
 }
 
+/** The Unix socket the Mac app talks to the running daemon on. */
+export function controlSocketFile(): string {
+  return join(configRoot(), "control.sock");
+}
+
 /** What settings sync last agreed with Slack, and the links it could not place here yet. */
 export function syncStateFile(): string {
   return join(configRoot(), "sync.json");

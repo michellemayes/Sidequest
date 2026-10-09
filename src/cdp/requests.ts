@@ -27,6 +27,8 @@ import { log } from "../util/log.js";
 
 /** Plenty for a question; a paste of a whole log belongs in the terminal. */
 const MAX_QUESTION = 4000;
+/** How much of the message history keeps, to name the session by. */
+const MAX_HISTORY_MESSAGE = 500;
 
 export interface AttacherEvent {
   type: string;
@@ -182,6 +184,8 @@ async function startSession(request: AskRequest, host: RequestHost): Promise<Ans
       baseBranch: result.baseBranch,
       agentLabel: result.agentLabel,
       agentId: result.agentId,
+      message: context.text.slice(0, MAX_HISTORY_MESSAGE),
+      author: context.authorName,
     });
     stats = computeStats(history);
   } catch (err) {

@@ -2,13 +2,15 @@ import { resolveAgent } from "../agents/agents.js";
 import { Attacher } from "../cdp/attacher.js";
 import { SlackKeeper } from "../cdp/keeper.js";
 import type { LaunchResult } from "../cdp/launch.js";
-import { configFile } from "../config/paths.js";
+import { configFile, controlSocketFile } from "../config/paths.js";
 import type { Config } from "../config/schema.js";
 import { loadConfig } from "../config/store.js";
 import { clearDaemonRecord, lockDaemon, unlockDaemon, writeDaemonRecord } from "../daemon.js";
 import { AutoCleaner } from "../session/cleanup.js";
+import { createAppHandler } from "../control/app.js";
+import { ControlServer } from "../control/server.js";
 import { builtCommit, installRoot } from "../update.js";
-import { UserFacingError } from "../util/errors.js";
+import { describeError, UserFacingError } from "../util/errors.js";
 import { log } from "../util/log.js";
 import { plural } from "./shared.js";
 
@@ -54,10 +56,33 @@ export async function runAttacherLoop(options: {
   // Until the banner is out, `start` reports the attach state itself; a running
   // commentary before it would say the same thing twice, out of order.
   let booted = false;
+  // Set below, once the attacher it answers through exists. Until then the
+  // hooks have nobody to tell.
+  let control: ControlServer | null = null;
+  let sessionsTimer: NodeJS.Timeout | null = null;
+  /** The app is told sessions moved; a burst of changes is one event. */
+  const sessionsChanged = (): void => {
+    if (!control || sessionsTimer) return;
+    sessionsTimer = setTimeout(() => {
+      sessionsTimer = null;
+      control?.broadcast("sessions");
+    }, 250);
+  };
   const attacher = new Attacher({
     cdpPort,
     targetUrlPattern,
+    onStatuses: sessionsChanged,
+    onConfigPushed: () => {
+      control?.broadcast("config");
+      sessionsChanged();
+    },
+    deliverNotices: (notices) => {
+      if (!control?.takesNotices) return false;
+      for (const notice of notices) control.broadcast("notice", { ...notice });
+      return true;
+    },
     onEvent: (event) => {
+      if (event.type === "attached" || event.type === "detached") control?.broadcast("health");
       switch (event.type) {
         case "attached":
           console.log(`attached to a Slack window (${attacher.attachedCount} total)`);
@@ -108,6 +133,15 @@ export async function runAttacherLoop(options: {
   });
 
   await attacher.start();
+
+  const server = new ControlServer({ path: controlSocketFile(), handle: createAppHandler(attacher) });
+  try {
+    await server.listen();
+    control = server;
+  } catch (err) {
+    // The Slack overlay works without it; only the Mac app needs the socket.
+    log.warn(`could not open the control socket for the Mac app: ${describeError(err).message}`);
+  }
 
   const keeper = new SlackKeeper({
     cdpPort,
@@ -183,6 +217,7 @@ export async function runAttacherLoop(options: {
         console.log("a session was still starting; stopping anyway");
       }
       attacher.stop();
+      await control?.close();
       await unlockDaemon();
       if (daemonized) await clearDaemonRecord();
       process.exit(0);

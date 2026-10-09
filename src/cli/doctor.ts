@@ -26,17 +26,46 @@ async function appInstalled(names: string[]): Promise<boolean | null> {
   return false;
 }
 
+/** One line of the doctor's report: a check that passed or failed, or something worth knowing. */
+export interface CheckRow {
+  status: "ok" | "fail" | "info";
+  label: string;
+  detail: string;
+  /** Rows after this one belong under this heading, for the printed report. */
+  section?: string;
+}
+
+/** Print the checks and say how many problems there are; the exit code says the same. */
 export async function doctor(): Promise<void> {
-  const config = await loadConfig();
-  let problems = 0;
-
-  const check = (ok: boolean, label: string, detail: string): void => {
-    console.log(`${ok ? "  ok  " : " FAIL "} ${label}`);
-    if (detail) console.log(`       ${detail}`);
-    if (!ok) problems += 1;
-  };
-
   console.log("\nsidequest doctor\n");
+  const rows = await runChecks(await loadConfig());
+  for (const row of rows) {
+    if (row.section) console.log(`\n  ${row.section}`);
+    const mark = row.status === "ok" ? "  ok  " : row.status === "fail" ? " FAIL " : "  --  ";
+    console.log(`${mark} ${row.label}`);
+    if (row.detail) console.log(`       ${row.detail}`);
+  }
+  const problems = rows.filter((r) => r.status === "fail").length;
+  console.log(
+    problems === 0
+      ? "\nEverything checks out. Run `sidequest start`.\n"
+      : `\n${plural(problems, "problem")} to fix.\n`,
+  );
+  if (problems > 0) process.exitCode = 1;
+}
+
+/**
+ * Everything doctor looks at, as rows rather than printed lines, so the Mac
+ * app can show the same checks as the terminal.
+ */
+export async function runChecks(config: Config): Promise<CheckRow[]> {
+  const rows: CheckRow[] = [];
+  const check = (ok: boolean, label: string, detail: string): void => {
+    rows.push({ status: ok ? "ok" : "fail", label, detail });
+  };
+  const note = (ok: boolean, label: string, detail: string): void => {
+    rows.push({ status: ok ? "ok" : "info", label, detail });
+  };
 
   check(await succeeds("git", ["--version"]), "git", "required to create worktrees");
 
@@ -44,8 +73,7 @@ export async function doctor(): Promise<void> {
   if (agent.app) {
     const installed = await appInstalled(agent.app.appNames);
     if (installed === null) {
-      console.log(`  --   ${agent.label} in ${agent.host}`);
-      console.log(`       can't check for the app on ${platform()}. ${agentDefinition(agent.id).installHint}`);
+      note(false, `${agent.label} in ${agent.host}`, `can't check for the app on ${platform()}. ${agentDefinition(agent.id).installHint}`);
     } else {
       check(installed, `${agent.label} in ${agent.host}`, installed ? "" : agentDefinition(agent.id).installHint);
     }
@@ -60,11 +88,12 @@ export async function doctor(): Promise<void> {
 
   if (config.settings.trackStatus) {
     const gh = await succeeds("gh", ["auth", "status"]);
-    console.log(`  ${gh ? "ok " : "-- "}  gh`);
-    console.log(
+    note(
+      gh,
+      "gh",
       gh
-        ? "       signed in, so each session's mark follows its pull request"
-        : "       not installed or not signed in (optional). Without it, a session's mark stops at its commits.",
+        ? "signed in, so each session's mark follows its pull request"
+        : "not installed or not signed in (optional). Without it, a session's mark stops at its commits.",
     );
   }
 
@@ -76,7 +105,7 @@ export async function doctor(): Promise<void> {
       `URI opener for ${platform()}`,
       opener ? `${opener.command}` : `no known way to open ${agent.host}'s links on this platform`,
     );
-    console.log(`  --   terminal: ${terminalSummary(config.settings.terminal, agent)}`);
+    note(false, `terminal: ${terminalSummary(config.settings.terminal, agent)}`, "");
   } else if (config.settings.terminal === "warp") {
     const opener = uriOpener();
     check(
@@ -86,30 +115,34 @@ export async function doctor(): Promise<void> {
     );
 
     const order = strategyOrder(config.settings.warpStrategy);
-    console.log(`  ok   warp strategy: ${config.settings.warpStrategy} (tries ${order.join(" → ")})`);
-    if (order.includes("tab_config")) console.log(`       tab configs in ${warpTabConfigDir(config.settings.warpPreview)}`);
-    if (order.includes("launch_config")) console.log(`       launch configs in ${warpLaunchConfigDir(config.settings.warpPreview)}`);
+    const dirs = [
+      order.includes("tab_config") ? `tab configs in ${warpTabConfigDir(config.settings.warpPreview)}` : "",
+      order.includes("launch_config") ? `launch configs in ${warpLaunchConfigDir(config.settings.warpPreview)}` : "",
+    ].filter(Boolean);
+    note(true, `warp strategy: ${config.settings.warpStrategy} (tries ${order.join(" → ")})`, dirs.join("\n       "));
 
     const hookInstalled = await exists(shellHookFile());
-    console.log(`  ${hookInstalled ? "ok " : "-- "}  shell hook`);
-    console.log(
+    note(
+      hookInstalled,
+      "shell hook",
       hookInstalled
-        ? `       installed at ${shellHookFile()}`
-        : `       not installed. Run \`sidequest install-hook\` so sessions start even when Warp ignores the launch config.`,
+        ? `installed at ${shellHookFile()}`
+        : "not installed. Run `sidequest install-hook` so sessions start even when Warp ignores the launch config.",
     );
   } else {
-    await doctorTerminal(config, check);
+    await doctorTerminal(config, check, note);
   }
 
   const root = installRoot();
   const head = await run("git", ["rev-parse", "HEAD"], { cwd: root }).then((r) => r.stdout.trim(), () => "");
   if (head) {
     const stale = (await buildOutOfDate(root, head)) || (await depsOutOfDate(root));
-    console.log(`  ${stale ? "-- " : "ok "}  install`);
-    console.log(
+    note(
+      !stale,
+      "install",
       stale
-        ? `       the build in ${root} doesn't match its checkout. Run \`sidequest update\`.`
-        : `       built from ${head.slice(0, 7)}; \`sidequest update\` pulls the latest`,
+        ? `the build in ${root} doesn't match its checkout. Run \`sidequest update\`.`
+        : `built from ${head.slice(0, 7)}; \`sidequest update\` pulls the latest`,
     );
   }
 
@@ -149,44 +182,41 @@ export async function doctor(): Promise<void> {
         "quit Slack, or run `sidequest start --force` to restart it.",
     );
   } else {
-    console.log(`  --   Slack DevTools port ${config.settings.cdpPort}`);
-    console.log("       Slack is not running. `sidequest start` will launch it with the port open.");
+    note(false, `Slack DevTools port ${config.settings.cdpPort}`, "Slack is not running. `sidequest start` will launch it with the port open.");
   }
 
   const channels = Object.entries(config.channels);
-  console.log(`\n  linked channels: ${channels.length}`);
+  let section: string | undefined = `linked channels: ${channels.length}`;
   for (const [id, l] of channels.flatMap(([id, links]) => links.map((l) => [id, l] as const))) {
     try {
       const repo = await inspectRepo(l.repoPath);
-      console.log(`  ok   ${id} → ${repo.root}`);
+      rows.push({ status: "ok", label: `${id} → ${repo.root}`, detail: "", section });
     } catch (err) {
-      console.log(` FAIL  ${id} → ${l.repoPath}`);
-      console.log(`       ${describeError(err).message}`);
-      problems += 1;
+      rows.push({ status: "fail", label: `${id} → ${l.repoPath}`, detail: describeError(err).message, section });
     }
+    section = undefined;
   }
 
   // Not a problem, so it doesn't fail the check; just worth knowing.
   const pile = await pileUpNudge(config);
   if (pile) {
-    console.log("\n  --   worktrees");
-    console.log(`       ${pile}`);
+    rows.push({ status: "info", label: "worktrees", detail: pile, section: section ?? "" });
   } else if (config.settings.autoClean) {
-    console.log(`\n  ok   worktrees: auto-clean removes merged ones idle over ${config.settings.autoCleanAfterDays} days`);
+    rows.push({
+      status: "ok",
+      label: `worktrees: auto-clean removes merged ones idle over ${config.settings.autoCleanAfterDays} days`,
+      detail: "",
+      section: section ?? "",
+    });
   }
-
-  console.log(
-    problems === 0
-      ? "\nEverything checks out. Run `sidequest start`.\n"
-      : `\n${plural(problems, "problem")} to fix.\n`,
-  );
-  if (problems > 0) process.exitCode = 1;
+  return rows;
 }
 
 /** Doctor's checks for every terminal but Warp, which has its own above. */
 async function doctorTerminal(
   config: Config,
   check: (ok: boolean, label: string, detail: string) => void,
+  note: (ok: boolean, label: string, detail: string) => void,
 ): Promise<void> {
   const id = config.settings.terminal;
   const def = terminalDefinition(id);
@@ -222,11 +252,12 @@ async function doctorTerminal(
       const target = config.settings.tmuxSession.trim();
       const has = tmuxHasSessionArgv(target);
       const running = await succeeds(has.command, has.args);
-      console.log(`  ${running ? "ok " : "-- "}  tmux session${target ? ` "${target}"` : ""}`);
-      console.log(
+      note(
+        running,
+        `tmux session${target ? ` "${target}"` : ""}`,
         running
-          ? `       sessions open as new windows in ${target ? `"${target}"` : "the session you used last"}`
-          : `       none running, so the first session starts a detached "${target || TMUX_FALLBACK_SESSION}" session to attach to`,
+          ? `sessions open as new windows in ${target ? `"${target}"` : "the session you used last"}`
+          : `none running, so the first session starts a detached "${target || TMUX_FALLBACK_SESSION}" session to attach to`,
       );
       return;
     }

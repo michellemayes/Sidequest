@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  daemon:
+    name: Daemon (typecheck and tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+        env:
+          # The overlay's end-to-end tests drive a headless Chromium.
+          CHROME_PATH: /usr/bin/google-chrome
+
+  mac:
+    name: Mac app (build and tests)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        working-directory: mac
+        run: swift test
+      - name: Build Sidequest.app
+        run: UNIVERSAL=0 mac/scripts/build-app.sh
