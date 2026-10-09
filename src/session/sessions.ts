@@ -239,7 +239,7 @@ export async function findById(
 }
 
 /** The ref a session's commits are counted against: origin/<base> when it exists. */
-async function baseRefFor(config: Config, repoPath: string): Promise<string | null> {
+export async function baseRefFor(config: Config, repoPath: string): Promise<string | null> {
   try {
     const base = baseBranchFor(config, repoPath) || await detectDefaultBranch(repoPath, true);
     if (await refExists(repoPath, `origin/${base}`)) return `origin/${base}`;

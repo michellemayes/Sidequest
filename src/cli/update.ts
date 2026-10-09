@@ -10,6 +10,7 @@ import {
   fastForward,
   installDeps,
   installRoot,
+  isBundled,
   planUpdate,
   rollBack,
 } from "../update.js";
@@ -24,6 +25,12 @@ import { plural } from "./shared.js";
  */
 export async function update(options: { restart: boolean }): Promise<void> {
   const root = installRoot();
+  if (await isBundled(root)) {
+    throw new UserFacingError(
+      "This Sidequest came with the Mac app, which keeps it up to date.",
+      "Use Sidequest › Check for Updates… in the app.",
+    );
+  }
   console.log(`Checking for updates (${root})…`);
   const plan = await planUpdate(root);
   const commits = await changelog(root, plan.from, plan.to);

@@ -6,7 +6,7 @@ Everything Sidequest does, in detail. For the short version, see the
 - [Using it in Slack](#using-it-in-slack)
 - [Updating](#updating)
 - [How it works](#how-it-works) · [Desktop apps](#desktop-apps)
-- [CLI](#cli)
+- [Mac app](#mac-app) · [CLI](#cli)
 - [Terminals](#terminals) · [Skipping permission prompts](#skipping-permission-prompts)
 - [Configuration](#configuration) · [Agents](#agents) · [Syncing between computers](#syncing-between-computers)
 - [Troubleshooting](#troubleshooting)
@@ -188,6 +188,47 @@ The overlay sits in its own shadow-DOM layer. The one thing it puts into
 Slack's DOM is that chip: a single element after a message's content, with its
 own shadow root, so it scrolls with the message instead of floating over it.
 It picks up your Slack theme and moves out of the way of Slack's own buttons.
+
+## Mac app
+
+Sidequest also comes as a Mac app, a window you can keep open beside Slack. You
+still start sessions from Slack; the app is where you follow them:
+
+- **Sessions**: Needs you, Working and Done, or one repo at a time. Each is named
+  for the Slack message it came from, and shows how far it has got (commits, its
+  pull request, a reply waiting), with the agent's reply to edit and post, and a
+  box to send it a follow-up. The Dock icon counts what needs you.
+- **Notifications** that come from Sidequest rather than Script Editor; clicking
+  one opens its session. While the app is open, the daemon leaves notifying to it.
+- **Settings** for everything in `config.json`, channel links and prompts
+  included, saved through the daemon so Slack picks changes up at once.
+- **Menus** for the rest of the CLI: restart Slack, run doctor's checks, clean up,
+  start and stop Sidequest, update.
+- **Updates**: every merge to `main` publishes a release, and the app says so in a
+  notification within the hour.
+- **Headless sessions you can work on**: with `terminal` set to `headless`, a
+  session's window has three tabs. **Conversation** shows what the agent said and
+  did as it runs (from Claude Code's event stream; other agents show their log),
+  with a box to tell it what to do next. **Changes** is the worktree's diff
+  against its base. **Terminal** opens the agent right there, carrying on the
+  conversation. **Stop** ends a run, and **Run Again** starts it over.
+
+Download `Sidequest-<version>.zip` from the
+[latest release](https://github.com/michellemayes/Sidequest/releases/latest), unzip
+it and move Sidequest.app to Applications. Until releases are signed with a
+Developer ID, macOS asks before opening it the first time: open it once, then allow
+it under System Settings → Privacy & Security.
+
+The app carries its own engine (the daemon and Node), so there is nothing else to
+install: it starts Sidequest when it opens, and the window walks you through the
+rest (linking a channel, notifications, the shell hook) as banners. Turn on **Open
+at login** in Settings › General and Sidequest is ready whenever your Mac is.
+**Help › Install Command-Line Tool** puts the app's `sidequest` on your PATH; app
+updates keep it current, so `sidequest update` leaves it alone. A CLI installed
+from a checkout keeps working on its own.
+
+The app talks to the daemon over `~/.sidequest/control.sock`. Building it and
+cutting releases is in [mac/README.md](../mac/README.md).
 
 ## CLI
 
@@ -402,6 +443,7 @@ how to install it if that fails.
 | Setting | Default | |
 | --- | --- | --- |
 | `agent` | `{ "id": "claude" }` | Any id from [Agents](#agents): a CLI in your terminal, or `claude-desktop` or `chatgpt` in their desktop apps (or run `sidequest agents codex`). Use `command`/`args` to override a terminal agent's executable and add flags |
+| `headlessApprovals` | `false` | Headless with Claude Code only: instead of refusing what its limits don't allow, it asks you in the Mac app (and a notification) to allow or deny it. With the app closed, it's refused as before. Applies to sessions started after you turn it on. Never syncs |
 | `skipPermissions` | `false` | Start agents with their own flag for skipping permission prompts (or run `sidequest skip-permissions on`). See Skipping permission prompts above |
 | `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees go |
 | `terminal` | `warp` | `warp`, `iterm2`, `ghostty`, `terminal`, `tmux` or `headless` (or run `sidequest terminal <name>`). See Terminals above. Ignored by the desktop-app agents |
@@ -561,8 +603,8 @@ to the agent as one argument read from the file. The overlay runs inside
 Slack's window, so what the daemon sends it is visible there: channel links,
 prompt labels, past sessions' branch names, and (only while a link menu or panel
 is open) the paths of the repos it suggests. The sessions panel adds each
-session's repo label, channel and git counts, but not its path. Session history is kept in
-`~/.sidequest/history.json`. The DevTools port is
+session's repo label, channel and git counts, but not its path. The Mac app talks to the daemon over a Unix socket, `~/.sidequest/control.sock`, which only your user can open. Session history is kept in
+`~/.sidequest/history.json`, with the first 500 characters of the message each session came from, so the Mac app can name sessions by it. The DevTools port is
 bound to `127.0.0.1`, which means other processes running as your user can reach
 it, as with any Electron app that has remote debugging on.
 

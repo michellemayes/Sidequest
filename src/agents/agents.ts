@@ -107,6 +107,19 @@ export interface HeadlessInvocation {
    * output is progress for the log.
    */
   result: "stdout" | "file";
+  /**
+   * Flags that make the agent print what it does as JSON lines, which the
+   * runner keeps in .sidequest/events.jsonl for the Mac app to show as a
+   * conversation. With `stdout` results, the answer is then read off the
+   * stream's final result event.
+   */
+  events?: { args: string[]; format: "claude-stream-json" };
+  /**
+   * The agent can ask a tool over MCP whether to go ahead (Claude Code's
+   * --permission-prompt-tool), so a headless run can ask you in the Mac app
+   * instead of being held to its limits.
+   */
+  approvals?: boolean;
 }
 
 /**
@@ -149,6 +162,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
       limitArgs: ["--permission-mode", "acceptEdits"],
       continueArgs: ["--continue"],
       result: "stdout",
+      events: { args: ["--output-format", "stream-json", "--verbose"], format: "claude-stream-json" },
+      approvals: true,
     },
     installHint:
       "Install Claude Code (https://claude.com/claude-code), or point settings.agent.command at its executable.",

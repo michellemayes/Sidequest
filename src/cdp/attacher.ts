@@ -7,7 +7,7 @@ import { loadConfig } from "../config/store.js";
 import { loadHistory, updateSession, type HistoryEntry } from "../session/history.js";
 import { readResult } from "../session/result.js";
 import { StatusWatcher, type SessionStatus } from "../session/status.js";
-import { noticesFor, showNotice } from "../session/notices.js";
+import { noticesFor, showNotice, type Notice } from "../session/notices.js";
 import { describeError } from "../util/errors.js";
 
 export type { AttacherEvent } from "./requests.js";
@@ -73,6 +73,15 @@ export class Attacher {
       watchIntervalMs?: number | false;
       /** How often settings sync looks for changes from other computers. */
       syncIntervalMs?: number;
+      /** Every time the watcher sees a session move, with all of them as they are now. */
+      onStatuses?: (statuses: Map<string, SessionStatus>) => void;
+      /** Every time windows are handed fresh config: a link, a setting, a session started. */
+      onConfigPushed?: () => void;
+      /**
+       * Offered each batch of notifications first. True means someone else (the
+       * Mac app) showed them, so the daemon's own osascript ones are skipped.
+       */
+      deliverNotices?: (notices: Notice[]) => boolean;
     },
   ) {
     this.targetUrl = new RegExp(options.targetUrlPattern, "i");
@@ -277,6 +286,7 @@ export class Attacher {
       onChange: (statuses) => {
         const before = this.statuses;
         this.statuses = statuses;
+        this.options.onStatuses?.(statuses);
         void this.announce(before, statuses, since).catch((err) => {
           this.emit({ type: "notify-error", message: describeError(err).message });
         });
@@ -306,6 +316,7 @@ export class Attacher {
     const { settings } = await loadConfig();
     if (!settings.notify) return;
     const notices = noticesFor(before, after, await loadHistory(), { postResults: settings.postResults, since });
+    if (notices.length === 0 || this.options.deliverNotices?.(notices)) return;
     for (const notice of notices) await showNotice(notice);
   }
 
@@ -432,6 +443,45 @@ export class Attacher {
   /** Push fresh config to every attached window after a link changes. */
   async broadcastConfig(): Promise<void> {
     await this.pushConfig([...this.sessions.values()]);
+    this.options.onConfigPushed?.();
+  }
+
+  /** The sessions as the watcher last saw them. */
+  get statusSnapshot(): Map<string, SessionStatus> {
+    return new Map(this.statuses);
+  }
+
+  /**
+   * A request that did not come from a Slack window (the Mac app's), answered
+   * by the same handlers and turned away the same way while stopping.
+   */
+  async ask(request: AskRequest): Promise<Record<string, unknown>> {
+    if (request.op !== "start-session") {
+      const { reply, after } = await answer(request, this.host);
+      if (after) void after().catch((err) => this.emit({ type: "ask-error", message: describeError(err).message }));
+      return reply;
+    }
+    if (this.draining) return { error: "Sidequest is stopping.", hint: "Run `sidequest start` and try again." };
+    this.startsInFlight += 1;
+    let answered;
+    try {
+      answered = await answer(request, this.host);
+    } finally {
+      this.startsInFlight -= 1;
+    }
+    if (answered.after) {
+      void answered.after().catch((err) => this.emit({ type: "ask-error", message: describeError(err).message }));
+    }
+    return answered.reply;
+  }
+
+  /**
+   * Post a session's reply in its thread, as you, through one Slack window:
+   * only a page holds the Slack session. The page marks it posted, as it does
+   * for a reply posted from Slack. False when no window took it on.
+   */
+  async postReply(job: { branch: string; resultMs: number; permalink: string; label: string; text: string }): Promise<boolean> {
+    return this.handToOneWindow(POST_RESULT_FN, JSON.stringify(job));
   }
 
   private async pushConfig(sessions: Array<CdpSession | null>): Promise<void> {

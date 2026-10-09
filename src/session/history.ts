@@ -46,6 +46,12 @@ export interface HistoryEntry {
   resultPostedMs?: number;
   /** The outcome reaction (say "white_check_mark") put on the message, so it is put there once. */
   reacted?: string;
+  /**
+   * The start of the Slack message the session came from, and who wrote it,
+   * so the Mac app can name the session for the message. Missing on older entries.
+   */
+  message?: string;
+  author?: string;
 }
 
 export interface Stats {

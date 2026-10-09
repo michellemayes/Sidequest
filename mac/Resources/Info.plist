@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- build-app.sh fills in the __PLACEHOLDERS__. -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Sidequest</string>
+    <key>CFBundleDisplayName</key>
+    <string>Sidequest</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.michellemayes.sidequest</string>
+    <key>CFBundleExecutable</key>
+    <string>Sidequest</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__BUILD__</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Sidequest opens sessions in iTerm2 or Terminal, and restarts Slack so it can connect.</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>SidequestCommit</key>
+    <string>__COMMIT__</string>
+    <key>SidequestRepository</key>
+    <string>__REPOSITORY__</string>
+    <key>SUFeedURL</key>
+    <string>https://github.com/__REPOSITORY__/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>__SPARKLE_PUBLIC_KEY__</string>
+    <key>SUEnableAutomaticChecks</key>
+    <false/>
+</dict>
+</plist>

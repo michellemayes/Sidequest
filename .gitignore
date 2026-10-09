@@ -8,3 +8,5 @@ coverage/
 docs/demo/frames/
 dist.next/
 dist.old/
+mac/.build/
+mac/build/

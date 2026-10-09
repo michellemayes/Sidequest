@@ -1,0 +1,119 @@
+name: Release
+
+# Every merge to main ships: a new version of Sidequest.app is built and
+# published as the latest GitHub release, with the Sparkle appcast beside it.
+# The app looks for a new release when it opens and every hour, and says so
+# in a notification.
+#
+# With the signing secrets set (see mac/README.md), the app is signed with a
+# Developer ID, notarized by Apple and stapled, so it opens without a
+# warning. Without them it is signed ad hoc, as before.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      CAN_SIGN: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' }}
+      CAN_NOTARIZE: ${{ secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Version
+        id: version
+        run: |
+          # major.minor from package.json, and this workflow's run number as the patch.
+          base="$(node -p "require('./package.json').version.split('.').slice(0, 2).join('.')")"
+          version="${base}.${GITHUB_RUN_NUMBER}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${version}"
+
+      - name: Import the Developer ID certificate
+        id: signing
+        if: env.CAN_SIGN == 'true'
+        env:
+          P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -hex 16)"
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)"
+          if [ -z "$identity" ]; then
+            echo "The certificate has no Developer ID Application identity" >&2
+            exit 1
+          fi
+          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Sidequest.app
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
+          COMMIT: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
+          SIGN_IDENTITY: ${{ steps.signing.outputs.identity || '-' }}
+        run: mac/scripts/build-app.sh
+
+      - name: Notarize and staple
+        if: env.CAN_SIGN == 'true' && env.CAN_NOTARIZE == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: mac/scripts/notarize.sh mac/build/Sidequest.app
+
+      - name: Package
+        id: package
+        run: |
+          zip="Sidequest-${{ steps.version.outputs.version }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent mac/build/Sidequest.app "$zip"
+          echo "zip=${zip}" >> "$GITHUB_OUTPUT"
+
+      - name: Appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
+          ZIP: ${{ steps.package.outputs.zip }}
+          REPOSITORY: ${{ github.repository }}
+        run: mac/scripts/appcast.sh > appcast.xml
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            "${{ steps.package.outputs.zip }}" appcast.xml \
+            --target "${GITHUB_SHA}" \
+            --title "Sidequest ${VERSION}" \
+            --generate-notes \
+            --latest
+
+      - name: Remove the signing keychain
+        if: always() && env.CAN_SIGN == 'true'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
