@@ -10,6 +10,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     var onOpen: ((String) -> Void)?
     /// Called when an update notification was clicked.
     var onUpdate: (() -> Void)?
+    /// Called with an approval's id and your answer, from its notification's buttons.
+    var onApproval: ((String, Bool) -> Void)?
+
+    private static let approvalCategory = "approval"
 
     private var center: UNUserNotificationCenter? {
         // Only a bundled app may use the notification center; `swift run` is not one.
@@ -19,6 +23,11 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     func setUp() {
         guard let center else { return }
         center.delegate = self
+        let allow = UNNotificationAction(identifier: "allow", title: "Allow")
+        let deny = UNNotificationAction(identifier: "deny", title: "Deny", options: [.destructive])
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: Self.approvalCategory, actions: [allow, deny], intentIdentifiers: []),
+        ])
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
@@ -42,6 +51,22 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         deliver(content, id: "update-\(version)")
     }
 
+    func postApproval(_ approval: Approval) {
+        let content = UNMutableNotificationContent()
+        content.title = "\(approval.tool) wants to run"
+        content.subtitle = approval.title
+        content.body = approval.summary
+        content.sound = .default
+        content.categoryIdentifier = Self.approvalCategory
+        content.userInfo = ["branch": approval.branch, "approval": approval.id]
+        deliver(content, id: "approval-\(approval.id)")
+    }
+
+    /// Take an answered question's notification away.
+    func withdraw(approval id: String) {
+        center?.removeDeliveredNotifications(withIdentifiers: ["approval-\(id)"])
+    }
+
     private func deliver(_ content: UNMutableNotificationContent, id: String) {
         center?.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
     }
@@ -62,7 +87,13 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         let info = response.notification.request.content.userInfo
         let branch = info["branch"] as? String
         let update = info["update"] != nil
+        let approval = info["approval"] as? String
+        let action = response.actionIdentifier
         Task { @MainActor in
+            if let approval, action == "allow" || action == "deny" {
+                self.onApproval?(approval, action == "allow")
+                return
+            }
             NSApp.activate()
             if update { self.onUpdate?() }
             if let branch { self.onOpen?(branch) }

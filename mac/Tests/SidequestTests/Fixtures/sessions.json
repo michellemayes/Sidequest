@@ -28,7 +28,9 @@
       "resultMs": 1760020000000,
       "resultPending": true,
       "exitCode": null,
-      "needsYou": true
+      "needsYou": true,
+      "headless": false,
+      "running": false
     },
     {
       "id": "investigate-webhook-502s",
@@ -54,7 +56,9 @@
       "resultMs": null,
       "resultPending": false,
       "exitCode": 1,
-      "needsYou": true
+      "needsYou": true,
+      "headless": false,
+      "running": false
     }
   ],
   "stats": {

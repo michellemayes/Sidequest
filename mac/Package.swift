@@ -12,11 +12,16 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.6.4"),
+        // The terminal tab a headless session opens in.
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.2.0"),
     ],
     targets: [
         .executableTarget(
             name: "Sidequest",
-            dependencies: [.product(name: "Sparkle", package: "Sparkle")],
+            dependencies: [
+                .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+            ],
             path: "Sources/Sidequest",
             linkerSettings: [
                 // Sparkle.framework is copied into Contents/Frameworks by build-app.sh.

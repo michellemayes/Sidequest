@@ -229,6 +229,10 @@ export async function createSession(
           agentArgs: agent.args,
           headless: agent.headless,
           agentLabel: agent.label,
+          node: process.execPath,
+          ...(config.settings.headlessApprovals && !agent.skipsPermissions
+            ? { approvals: approvalServer(worktree.path) }
+            : {}),
         })
       : null;
   const host = sessionHost(agent, terminal);
@@ -365,3 +369,15 @@ async function openInApp(
 
 /** For the error when a ticket prompt arrives without its link. */
 const TRACKER_NAMES = { linear: "Linear", github: "GitHub", jira: "Jira" } as const;
+
+/**
+ * The approval server a headless agent asks before what its limits refuse:
+ * this same CLI, run as `sidequest mcp-approve`, which passes each question
+ * to the Mac app through the daemon.
+ */
+export function approvalServer(worktreePath: string): { command: string; args: string[] } {
+  return {
+    command: process.execPath,
+    args: [...process.execArgv, process.argv[1] ?? "", "mcp-approve", "--worktree", worktreePath],
+  };
+}

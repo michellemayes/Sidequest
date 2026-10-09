@@ -25,6 +25,9 @@ import type { SessionStatus } from "../session/status.js";
 import { TERMINAL_DEFINITIONS } from "../terminals/registry.js";
 import { builtCommit, installRoot } from "../update.js";
 import { UserFacingError } from "../util/errors.js";
+import { readTranscript } from "../session/transcript.js";
+import { armRunAgain, changedFiles, fileDiff, runState, stopRun, terminalCommand } from "../session/workspace.js";
+import type { Approvals } from "./approvals.js";
 import type { ControlConnection, ControlRequest } from "./server.js";
 
 /** Bumped when a reply or event changes shape in a way an older app would misread. */
@@ -75,6 +78,10 @@ export interface AppSession {
   exitCode: number | null;
   /** A reply waiting for you, or a run that failed. */
   needsYou: boolean;
+  /** Runs with no terminal, so the app is where you watch and work on it. */
+  headless: boolean;
+  /** A headless run is going right now. */
+  running: boolean;
 }
 
 /** Slack's link markup, `<url|text>` and `<url>`, as the text a reader sees. */
@@ -134,9 +141,24 @@ export function appSessions(
       resultPending,
       exitCode: status?.exitCode ?? null,
       needsYou: resultPending || status?.state === "failed",
+      headless: false,
+      running: false,
     });
   }
   return out;
+}
+
+/** Each session's run state, read from its worktree. */
+async function withRunState(sessions: AppSession[]): Promise<AppSession[]> {
+  return Promise.all(sessions.map(async (s) => (s.state === "gone" ? s : { ...s, ...(await runState(s.worktreePath)) })));
+}
+
+/** The newest session on a branch, or an error that says it is gone. */
+async function sessionFor(request: ControlRequest): Promise<HistoryEntry> {
+  const branch = str(request.branch);
+  const entry = [...(await loadHistory())].reverse().find((h) => h.branch === branch);
+  if (!entry?.worktreePath) throw new UserFacingError(`${branch || "That session"} is not one Sidequest knows.`);
+  return entry;
 }
 
 /** The ops the overlay also has, answered by its handlers unchanged. */
@@ -260,7 +282,7 @@ async function health(host: AppHost): Promise<Record<string, unknown>> {
 /** Answer one request from the app. */
 export function createAppHandler(
   host: AppHost,
-  hooks: { onSubscribe?: (connection: ControlConnection) => void } = {},
+  hooks: { onSubscribe?: (connection: ControlConnection) => void; approvals?: Approvals } = {},
 ) {
   return async (request: ControlRequest, connection: ControlConnection): Promise<Record<string, unknown>> => {
     const op = request.op;
@@ -286,10 +308,62 @@ export function createAppHandler(
         const history = await loadHistory();
         return {
           ok: true,
-          sessions: appSessions(history, host.statusSnapshot, { postResults: config.settings.postResults }),
+          sessions: await withRunState(appSessions(history, host.statusSnapshot, { postResults: config.settings.postResults })),
           stats: computeStats(history),
         };
       }
+      case "transcript": {
+        const entry = await sessionFor(request);
+        const { items, structured } = await readTranscript(entry.worktreePath);
+        const after = typeof request.after === "number" && request.after >= 0 ? request.after : 0;
+        // A shorter transcript than the app has (the stream was cut) starts it over.
+        const from = after <= items.length ? after : 0;
+        return { ok: true, items: items.slice(from), from, total: items.length, structured, ...(await runState(entry.worktreePath)) };
+      }
+      case "changes": {
+        const entry = await sessionFor(request);
+        return { ok: true, ...(await changedFiles(await loadConfig(), entry.repoPath, entry.worktreePath)) };
+      }
+      case "file-diff": {
+        const entry = await sessionFor(request);
+        return { ok: true, patch: await fileDiff(await loadConfig(), entry.repoPath, entry.worktreePath, str(request.path)) };
+      }
+      case "stop-run": {
+        const entry = await sessionFor(request);
+        return { ok: true, stopped: await stopRun(entry.worktreePath) };
+      }
+      case "run-again": {
+        const entry = await sessionFor(request);
+        if ((await runState(entry.worktreePath)).running) throw new UserFacingError("It's still running.", "Stop it first.");
+        await armRunAgain(entry.worktreePath);
+        return host.ask({ id: String(request.id), op: "reopen", branch: entry.branch });
+      }
+      case "terminal-command": {
+        const entry = await sessionFor(request);
+        return { ok: true, cwd: entry.worktreePath, argv: terminalCommand(await loadConfig(), entry.agentId ?? "") };
+      }
+      case "approval-request": {
+        // From `sidequest mcp-approve`, on behalf of a headless agent; answered when you decide.
+        const worktree = str(request.worktree);
+        const entry = [...(await loadHistory())].reverse().find((h) => h.worktreePath === worktree);
+        const decision = hooks.approvals
+          ? await hooks.approvals.request({
+              branch: entry?.branch ?? "",
+              worktreePath: worktree,
+              title: entry ? sessionTitle(entry) : worktree,
+              tool: str(request.tool) || "a tool",
+              input: request.input ?? {},
+            })
+          : { behavior: "deny" as const, message: "Sidequest isn't taking approvals." };
+        return { ok: true, decision };
+      }
+      case "approval-decision": {
+        const settled = hooks.approvals?.decide(str(request.approvalId), request.allow === true, request.always === true) ?? false;
+        if (!settled) throw new UserFacingError("That question has already been answered or timed out.");
+        return { ok: true };
+      }
+      case "approvals":
+        return { ok: true, approvals: hooks.approvals?.pending ?? [] };
       case "get-config":
         return configReply();
       case "set-config":

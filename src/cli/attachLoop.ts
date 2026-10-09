@@ -8,6 +8,7 @@ import { loadConfig } from "../config/store.js";
 import { clearDaemonRecord, lockDaemon, unlockDaemon, writeDaemonRecord } from "../daemon.js";
 import { AutoCleaner } from "../session/cleanup.js";
 import { createAppHandler } from "../control/app.js";
+import { Approvals } from "../control/approvals.js";
 import { ControlServer } from "../control/server.js";
 import { builtCommit, installRoot } from "../update.js";
 import { describeError, UserFacingError } from "../util/errors.js";
@@ -134,7 +135,14 @@ export async function runAttacherLoop(options: {
 
   await attacher.start();
 
-  const server = new ControlServer({ path: controlSocketFile(), handle: createAppHandler(attacher) });
+  const approvals = new Approvals({
+    canAsk: () => control?.takesNotices ?? false,
+    onChange: ({ asked, settled }) => {
+      if (asked) control?.broadcast("approval", { approval: asked });
+      if (settled) control?.broadcast("approval-settled", { approvalId: settled });
+    },
+  });
+  const server = new ControlServer({ path: controlSocketFile(), handle: createAppHandler(attacher, { approvals }) });
   try {
     await server.listen();
     control = server;

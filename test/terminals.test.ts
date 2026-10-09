@@ -376,8 +376,8 @@ describe("createSession, headless", () => {
     await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repoPath, env: gitEnv });
 
     const agent = join(root, "claude.sh");
-    // Claude's headless flags come first; the answer is on stdout.
-    await writeFile(agent, `#!/usr/bin/env bash\n[ "$1" = "-p" ] || exit 9\necho "The answer."\n`);
+    // Claude's headless flags come first; the answer is the event stream's result.
+    await writeFile(agent, `#!/usr/bin/env bash\n[ "$1" = "-p" ] || exit 9\necho '{"type":"result","subtype":"success","result":"The answer.\\n"}'\n`);
     await chmod(agent, 0o755);
 
     const config = configSchema.parse({

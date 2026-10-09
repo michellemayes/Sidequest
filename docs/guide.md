@@ -206,6 +206,12 @@ still start sessions from Slack; the app is where you follow them:
   start and stop Sidequest, update.
 - **Updates**: every merge to `main` publishes a release, and the app says so in a
   notification within the hour.
+- **Headless sessions you can work on**: with `terminal` set to `headless`, a
+  session's window has three tabs. **Conversation** shows what the agent said and
+  did as it runs (from Claude Code's event stream; other agents show their log),
+  with a box to tell it what to do next. **Changes** is the worktree's diff
+  against its base. **Terminal** opens the agent right there, carrying on the
+  conversation. **Stop** ends a run, and **Run Again** starts it over.
 
 Download `Sidequest-<version>.zip` from the
 [latest release](https://github.com/michellemayes/Sidequest/releases/latest), unzip
@@ -430,6 +436,7 @@ how to install it if that fails.
 | Setting | Default | |
 | --- | --- | --- |
 | `agent` | `{ "id": "claude" }` | Any id from [Agents](#agents): a CLI in your terminal, or `claude-desktop` or `chatgpt` in their desktop apps (or run `sidequest agents codex`). Use `command`/`args` to override a terminal agent's executable and add flags |
+| `headlessApprovals` | `false` | Headless with Claude Code only: instead of refusing what its limits don't allow, it asks you in the Mac app (and a notification) to allow or deny it. With the app closed, it's refused as before. Applies to sessions started after you turn it on. Never syncs |
 | `skipPermissions` | `false` | Start agents with their own flag for skipping permission prompts (or run `sidequest skip-permissions on`). See Skipping permission prompts above |
 | `worktreesRoot` | `~/.sidequest/worktrees` | Where worktrees go |
 | `terminal` | `warp` | `warp`, `iterm2`, `ghostty`, `terminal`, `tmux` or `headless` (or run `sidequest terminal <name>`). See Terminals above. Ignored by the desktop-app agents |

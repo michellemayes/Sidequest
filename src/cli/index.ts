@@ -8,6 +8,7 @@ import { link, unlink } from "./channels.js";
 import { start, status, stop } from "./daemon.js";
 import { doctor } from "./doctor.js";
 import { installHook } from "./hook.js";
+import { mcpApprove } from "./mcpApprove.js";
 import { clean, pr, reopen, sessions, stats } from "./sessions.js";
 import { agents, list, prompts, replies, skipPermissions, sync, terminal } from "./settings.js";
 import { init, setup } from "./setup.js";
@@ -142,6 +143,12 @@ export async function runCli(argv: string[]): Promise<void> {
     .description("pull the latest Sidequest, rebuild, and restart the daemon if it's running")
     .option("--no-restart", "leave a running daemon on the old version")
     .action((options: { restart: boolean }) => wrap(() => update(options)));
+
+  // Started by a headless Claude Code, not by people: see src/cli/mcpApprove.ts.
+  program
+    .command("mcp-approve", { hidden: true })
+    .requiredOption("--worktree <path>", "the session's worktree")
+    .action((options: { worktree: string }) => wrap(() => mcpApprove(options)));
 
   program
     .command("doctor")

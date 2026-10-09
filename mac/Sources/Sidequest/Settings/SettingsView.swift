@@ -261,8 +261,13 @@ struct TerminalPane: View {
             }
             if terminal == "headless" {
                 Section("Headless") {
-                    Text("The agent runs in the background with no terminal. Its answer becomes the session's reply here and in Slack; its log is in .sidequest/agent.log.")
+                    Text("The agent runs in the background with no terminal. Watch it, see its changes, tell it what to do next, or open it in a terminal tab, all in the session's window. Its answer becomes the reply here and in Slack.")
                         .font(.callout).foregroundStyle(.secondary)
+                    Toggle(isOn: store.setting("headlessApprovals", \.headlessApprovals, fallback: false)) {
+                        Text("Ask me before commands run")
+                        Text("Claude Code only. Instead of refusing what its limits don't allow, it asks you here and in a notification. With the app closed, it's refused as before. Applies to sessions started from now on")
+                    }
+                    .disabled(agent?.id != "claude" || store.settings?.skipPermissions == true)
                 }
             }
         }

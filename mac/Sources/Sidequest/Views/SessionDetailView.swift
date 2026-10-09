@@ -9,30 +9,88 @@ struct SessionDetailView: View {
     @State private var reply: ResultReply?
     @State private var draft = ""
     @State private var followUp = ""
+    @State private var tab: WorkspaceTab = .conversation
     @FocusState private var replyFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    header
-                    if !session.message.isEmpty { quote }
-                    ProgressTrack(session: session)
-                    if session.resultPending || reply != nil { replyCard }
-                    if session.state == "failed" { failureCard }
-                    facts
-                }
-                .padding(20)
-                .frame(maxWidth: 760, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if session.headless {
+                workspace
+            } else {
+                ScrollView { overview.padding(20).frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading) }
             }
-            Divider()
-            composer
+            if tab != .terminal || !session.headless {
+                Divider()
+                composer
+            }
         }
         .toolbar { toolbar }
         .task(id: session.resultMs) { await loadReply() }
+        .task(id: session.id) {
+            // A headless run is watched as it goes: often while it runs, now and then after.
+            guard session.headless else { return }
+            while !Task.isCancelled {
+                await store.loadTranscript(session)
+                try? await Task.sleep(for: .seconds(session.running ? 1.5 : 6))
+            }
+        }
         .onChange(of: store.focusReply) { _, wanted in
             if wanted { replyFocused = true; store.focusReply = false }
+        }
+    }
+
+    /// The message, its progress, and the reply: the whole view for a terminal session.
+    private var overview: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            header
+            if !session.message.isEmpty { quote }
+            ProgressTrack(session: session)
+            if session.resultPending || reply != nil { replyCard }
+            if session.state == "failed" { failureCard }
+            facts
+        }
+    }
+
+    /// A headless session: the conversation, its changes, or a terminal on it.
+    private var workspace: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                header
+                Picker("View", selection: $tab) {
+                    ForEach(WorkspaceTab.allCases) { tab in Text(tab.rawValue).tag(tab) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 360)
+            }
+            .padding([.horizontal, .top], 20)
+            .padding(.bottom, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Divider()
+            switch tab {
+            case .conversation:
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            if !session.message.isEmpty { quote }
+                            TranscriptView(session: session)
+                            if session.resultPending || reply != nil { replyCard }
+                            if session.state == "failed" { failureCard }
+                            Color.clear.frame(height: 1).id("end")
+                        }
+                        .padding(20)
+                        .frame(maxWidth: 760, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .onChange(of: store.transcripts[session.branch]?.count ?? 0) { _, _ in
+                        withAnimation { proxy.scrollTo("end", anchor: .bottom) }
+                    }
+                }
+            case .changes:
+                ChangesView(session: session)
+            case .terminal:
+                TerminalTab(session: session)
+            }
         }
     }
 
@@ -110,7 +168,12 @@ struct SessionDetailView: View {
                     let log = (session.worktreePath as NSString).appendingPathComponent(".sidequest/agent.log")
                     NSWorkspace.shared.open(URL(fileURLWithPath: log))
                 }
-                Button("Open in Terminal") { Task { await store.reopen(session) } }
+                if session.headless {
+                    Button("Run Again") { Task { await store.runAgain(session) } }
+                    Button("Open Terminal Tab") { tab = .terminal }
+                } else {
+                    Button("Open in Terminal") { Task { await store.reopen(session) } }
+                }
             }
         }
         .padding(12)
@@ -138,12 +201,12 @@ struct SessionDetailView: View {
 
     private var composer: some View {
         HStack(spacing: 8) {
-            TextField("Follow up: tell the session what to do next…", text: $followUp, axis: .vertical)
+            TextField(session.headless ? "Tell it what to do next…" : "Follow up: tell the session what to do next…", text: $followUp, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...4)
                 .onSubmit(sendFollowUp)
             Button("Send", action: sendFollowUp)
-                .disabled(followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.state == "gone")
+                .disabled(followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.state == "gone" || session.running)
         }
         .padding(12)
     }
@@ -166,8 +229,20 @@ struct SessionDetailView: View {
             }
         }
         ToolbarItemGroup(placement: .primaryAction) {
-            Button { Task { await store.reopen(session) } } label: { Label("Open in Terminal", systemImage: "terminal") }
-                .help("Open this session in its terminal")
+            if session.headless {
+                if session.running {
+                    Button { Task { await store.stopRun(session) } } label: { Label("Stop", systemImage: "stop.circle") }
+                        .help("Stop the background run; the worktree stays")
+                } else {
+                    Button { Task { await store.runAgain(session) } } label: { Label("Run Again", systemImage: "arrow.clockwise") }
+                        .help("Run the session's prompt again in the background")
+                }
+                Button { tab = .terminal } label: { Label("Terminal", systemImage: "terminal") }
+                    .help("Open the agent here, carrying on the conversation")
+            } else {
+                Button { Task { await store.reopen(session) } } label: { Label("Open in Terminal", systemImage: "terminal") }
+                    .help("Open this session in its terminal")
+            }
             if session.pr != nil || session.commits > 0 {
                 Button { Task { await store.openPullRequest(session) } } label: {
                     Label(session.pr.map { "PR #\($0.number)" } ?? "Open PR", systemImage: "arrow.triangle.pull")

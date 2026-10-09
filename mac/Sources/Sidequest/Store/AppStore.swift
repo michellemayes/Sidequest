@@ -41,6 +41,11 @@ final class AppStore {
     private(set) var stats: Stats?
     private(set) var configReply: ConfigReply?
     private(set) var checks: [CheckRow] = []
+    /// Headless agents waiting on your yes or no.
+    private(set) var approvals: [Approval] = []
+    /// Each headless session's conversation so far, by branch.
+    private(set) var transcripts: [String: [TranscriptItem]] = [:]
+    private(set) var structuredTranscripts: Set<String> = []
     var filter: SessionFilter = .needsYou
     var selection: AppSession.ID?
     var search = ""
@@ -62,6 +67,10 @@ final class AppStore {
         client.onEvent = { [weak self] event, line in self?.handle(event: event, line: line) }
         client.onDisconnect = { [weak self] in self?.lost() }
         notifier.onOpen = { [weak self] branch in self?.reveal(branch: branch) }
+        notifier.onApproval = { [weak self] id, allow in
+            guard let self, let approval = self.approvals.first(where: { $0.id == id }) else { return }
+            Task { await self.decide(approval, allow: allow) }
+        }
     }
 
     // MARK: Connection
@@ -76,6 +85,7 @@ final class AppStore {
             try client.connect()
             hello = try await client.request("hello", as: Hello.self)
             _ = try await client.request("subscribe", ["notices": true])
+            approvals = (try? await client.request("approvals", as: ApprovalsReply.self))?.approvals ?? []
             connection = .connected
             await refreshAll()
         } catch {
@@ -114,6 +124,18 @@ final class AppStore {
         case "health": Task { await refreshHealth() }
         case "notice":
             if let notice = try? JSONDecoder().decode(Notice.self, from: line) { notifier.post(notice) }
+        case "approval":
+            if let event = try? JSONDecoder().decode(ApprovalEvent.self, from: line) {
+                approvals.append(event.approval)
+                notifier.postApproval(event.approval)
+                updateBadge()
+            }
+        case "approval-settled":
+            if let event = try? JSONDecoder().decode(ApprovalSettledEvent.self, from: line) {
+                approvals.removeAll { $0.id == event.approvalId }
+                notifier.withdraw(approval: event.approvalId)
+                updateBadge()
+            }
         default: break
         }
     }
@@ -124,6 +146,10 @@ final class AppStore {
         guard let reply = try? await client.request("sessions", as: SessionsReply.self) else { return }
         sessions = reply.sessions
         stats = reply.stats
+        updateBadge()
+    }
+
+    private func updateBadge() {
         NSApp.dockTile.badgeLabel = needsYouCount > 0 ? String(needsYouCount) : nil
     }
 
@@ -139,7 +165,16 @@ final class AppStore {
         if let reply = try? await client.request("doctor", as: ChecksReply.self) { checks = reply.rows }
     }
 
-    var needsYouCount: Int { sessions.filter(\.needsYou).count }
+    var needsYouCount: Int { sessions.filter { needsYou($0) }.count }
+
+    /// A reply to read, a failed run, or a question waiting on you.
+    func needsYou(_ session: AppSession) -> Bool {
+        session.needsYou || approvals.contains { $0.branch == session.branch }
+    }
+
+    func pendingApprovals(for session: AppSession) -> [Approval] {
+        approvals.filter { $0.branch == session.branch }
+    }
     var repos: [String] { Array(Set(sessions.map(\.repo).filter { !$0.isEmpty })).sorted() }
 
     func count(_ filter: SessionFilter) -> Int { sessions.filter { matches($0, filter) }.count }
@@ -158,9 +193,9 @@ final class AppStore {
 
     private func matches(_ session: AppSession, _ filter: SessionFilter) -> Bool {
         switch filter {
-        case .needsYou: return session.needsYou
-        case .working: return session.isWorking && !session.needsYou
-        case .done: return session.isDone && !session.needsYou
+        case .needsYou: return needsYou(session)
+        case .working: return session.isWorking && !needsYou(session)
+        case .done: return session.isDone && !needsYou(session)
         case .all: return true
         case .repo(let name): return session.repo == name
         }
@@ -169,7 +204,7 @@ final class AppStore {
     /// Open the window on a session, from a notification.
     func reveal(branch: String) {
         guard let session = sessions.first(where: { $0.branch == branch }) else { return }
-        filter = session.needsYou ? .needsYou : .all
+        filter = needsYou(session) ? .needsYou : .all
         selection = session.id
         NSApp.activate()
     }
@@ -338,5 +373,52 @@ final class AppStore {
         if let baseBranch { params["baseBranch"] = baseBranch }
         if let label { params["label"] = label }
         await act { self.configReply = try await self.client.request("set-link", params, as: ConfigReply.self) }
+    }
+
+    // MARK: Headless workspace
+
+    /// Catch up on a session's conversation: new items are appended, a reset starts it over.
+    func loadTranscript(_ session: AppSession) async {
+        let have = transcripts[session.branch]?.count ?? 0
+        guard let reply = try? await client.request("transcript", ["branch": session.branch, "after": have], as: TranscriptReply.self) else { return }
+        if reply.from == 0 {
+            if transcripts[session.branch] != reply.items { transcripts[session.branch] = reply.items }
+        } else if !reply.items.isEmpty {
+            transcripts[session.branch, default: []].append(contentsOf: reply.items)
+        }
+        if reply.structured { structuredTranscripts.insert(session.branch) }
+        if reply.running != session.running { await refreshSessions() }
+    }
+
+    func changes(for session: AppSession) async -> [ChangedFile] {
+        (try? await client.request("changes", ["branch": session.branch], as: ChangesReply.self))?.files ?? []
+    }
+
+    func diff(for session: AppSession, path: String) async -> String {
+        (try? await client.request("file-diff", ["branch": session.branch, "path": path], as: FileDiffReply.self))?.patch ?? ""
+    }
+
+    func stopRun(_ session: AppSession) async {
+        await act("Stopping…") { _ = try await self.client.request("stop-run", ["branch": session.branch]) }
+        await refreshSessions()
+    }
+
+    func runAgain(_ session: AppSession) async {
+        await act { _ = try await self.client.request("run-again", ["branch": session.branch]) }
+        transcripts[session.branch] = nil
+        await refreshSessions()
+    }
+
+    func terminalCommand(for session: AppSession) async -> TerminalCommandReply? {
+        try? await client.request("terminal-command", ["branch": session.branch], as: TerminalCommandReply.self)
+    }
+
+    func decide(_ approval: Approval, allow: Bool, always: Bool = false) async {
+        approvals.removeAll { $0.id == approval.id }
+        notifier.withdraw(approval: approval.id)
+        updateBadge()
+        await act {
+            _ = try await self.client.request("approval-decision", ["approvalId": approval.id, "allow": allow, "always": always])
+        }
     }
 }

@@ -183,6 +183,7 @@ struct StatusPill: View {
 
     var text: String {
         if session.resultPending { return "reply ready" }
+        if session.headless && session.running { return "running \(Elapsed.short(since: session.created))" }
         switch session.state {
         case "failed": return session.exitCode.map { "failed · exit \($0)" } ?? "failed"
         case "committed": return session.commits == 1 ? "1 commit" : "\(session.commits) commits"

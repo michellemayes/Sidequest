@@ -120,6 +120,13 @@ export const settingsSchema = z.object({
    * computer's call.
    */
   skipPermissions: z.boolean().default(false),
+  /**
+   * Headless only, and only for an agent that can ask (Claude Code): send
+   * what its limits would refuse to the Mac app to allow or deny, instead of
+   * refusing it. Without the app open, it is refused as before. Stays on this
+   * computer, like skipPermissions.
+   */
+  headlessApprovals: z.boolean().default(false),
   /** Pull the base branch before cutting the worktree. */
   fetchBeforeCreate: z.boolean().default(true),
   /** How many messages of surrounding thread context to include. */

@@ -88,17 +88,33 @@ describe("following up on a session", () => {
   });
 
   it("runs a headless follow-up on followup.md, carrying on where the agent can, and answers again", async () => {
+    // Claude Code streams JSON events; the answer is the last result event's text.
+    await writeFile(agent, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" >> "${calls}"\necho >> "${calls}"\n` +
+      `echo '{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}'\n` +
+      `echo '{"type":"result","subtype":"success","result":"the answer\\n"}'\n`);
     const claude = resolveAgent({ id: "claude", command: agent, args: [] });
     await writeAutorun({ worktreePath: root, prompt: "the task", agentCommand: agent, agentArgs: [] });
-    const headless = await writeHeadlessRunner({ worktreePath: root, agentCommand: agent, agentArgs: [], headless: claude.headless! });
+    const headless = await writeHeadlessRunner({
+      worktreePath: root, agentCommand: agent, agentArgs: [], headless: claude.headless!, node: process.execPath,
+    });
     await exec(headless.scriptFile, []);
     await armFollowUp(root, headless.scriptFile, "and the refund page");
     await exec(headless.scriptFile, []);
     const [first, second] = await runs();
-    expect(first).toEqual(["-p", "--permission-mode", "acceptEdits", "the task"]);
-    expect(second).toEqual(["-p", "--permission-mode", "acceptEdits", "--continue", "and the refund page"]);
+    const stream = ["--output-format", "stream-json", "--verbose"];
+    expect(first).toEqual(["-p", "--permission-mode", "acceptEdits", ...stream, "the task"]);
+    expect(second).toEqual(["-p", "--permission-mode", "acceptEdits", "--continue", ...stream, "and the refund page"]);
     expect(await readFile(headless.resultFile, "utf8")).toBe("the answer\n");
     expect(await readFile(headless.logFile, "utf8")).toMatch(/finished .*, exit 0\n$/);
+
+    // Both runs are in the event stream, each opened with its prompt and closed with how it ended.
+    const events = (await readFile(headless.eventsFile, "utf8")).trim().split("\n").map((l) => JSON.parse(l));
+    const marks = events.filter((e) => e.type === "sidequest");
+    expect(marks.map((m) => [m.event, m.mode ?? m.status])).toEqual([["run-start", "first"], ["run-end", 0], ["run-start", "followup"], ["run-end", 0]]);
+    expect(marks[0].prompt).toBe("the task\n");
+    expect(marks[2].prompt).toContain("and the refund page");
+    // The pid is only there while a run is going.
+    await expect(readFile(headless.pidFile, "utf8")).rejects.toThrow();
   });
 
   it("tells the agent what came in since and where the earlier work is", () => {

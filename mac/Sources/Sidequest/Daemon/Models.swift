@@ -36,6 +36,10 @@ struct AppSession: Codable, Identifiable, Hashable {
     var resultPending: Bool
     var exitCode: Int?
     var needsYou: Bool
+    /// Runs with no terminal: the app is where you watch and work on it.
+    var headless: Bool
+    /// A headless run is going right now.
+    var running: Bool
 
     var created: Date? { ISODate.parse(createdAt) }
 
@@ -101,6 +105,7 @@ struct SidequestSettings: Codable, Hashable {
     var tmuxSession: String
     var agent: AgentSetting
     var skipPermissions: Bool
+    var headlessApprovals: Bool
     var fetchBeforeCreate: Bool
     var threadContextLimit: Int
     var repoSearchRoots: [String]
@@ -232,4 +237,69 @@ enum ISODate {
     static func parse(_ text: String) -> Date? {
         withFraction.date(from: text) ?? plain.date(from: text)
     }
+}
+
+// MARK: Headless workspace
+
+/// One step of a headless run, as src/session/transcript.ts reads it.
+struct TranscriptItem: Codable, Hashable {
+    /// you, agent, tool, error, done or log.
+    var kind: String
+    var text: String
+    var tool: String?
+}
+
+struct TranscriptReply: Codable {
+    var items: [TranscriptItem]
+    /// The index of the first item, so a poll appends; 0 starts over.
+    var from: Int
+    var total: Int
+    /// From the agent's event stream, rather than its plain log.
+    var structured: Bool
+    var running: Bool
+}
+
+struct ChangedFile: Codable, Hashable, Identifiable {
+    var path: String
+    var added: Int?
+    var removed: Int?
+    /// modified, added or deleted.
+    var status: String
+    var id: String { path }
+}
+
+struct ChangesReply: Codable {
+    var files: [ChangedFile]
+}
+
+struct FileDiffReply: Codable {
+    var patch: String
+}
+
+struct TerminalCommandReply: Codable {
+    var cwd: String
+    var argv: [String]
+}
+
+/// A headless agent asking whether it may use a tool.
+struct Approval: Codable, Hashable, Identifiable {
+    var id: String
+    var branch: String
+    var worktreePath: String
+    var title: String
+    var tool: String
+    var summary: String
+    var askedAt: String
+}
+
+struct ApprovalsReply: Codable {
+    var approvals: [Approval]
+}
+
+struct ApprovalEvent: Codable {
+    var approval: Approval
+}
+
+struct ApprovalSettledEvent: Codable {
+    var approvalId: String
 }
