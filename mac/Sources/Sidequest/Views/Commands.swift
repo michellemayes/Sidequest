@@ -5,13 +5,17 @@ import SwiftUI
 struct SidequestCommands: Commands {
     let store: AppStore
     let updater: Updater
+    @Environment(\.openWindow) private var openWindow
 
     /// Read when an item is clicked, not when the menu was built, so it is the session selected now.
     private var session: AppSession? { store.selectedSession }
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
-            Button("Check for Updates…") { Task { await updater.check(); updater.install() } }
+            Button("Check for Updates…") {
+                if !updater.usesSparkle { openWindow(id: UpdateView.windowID) }
+                updater.checkForUpdates()
+            }
         }
         CommandGroup(after: .appSettings) {
             Divider()

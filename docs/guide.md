@@ -209,7 +209,8 @@ still start sessions from Slack; the app is where you follow them:
 - **Menus** for the rest of the CLI: restart Slack, run doctor's checks, clean up,
   start and stop Sidequest, update.
 - **Updates**: every merge to `main` publishes a release, and the app says so in a
-  notification within the hour.
+  notification within the hour. Clicking it, or **Sidequest › Check for Updates…**,
+  downloads the new version, checks its signature, and relaunches on it, all in the app.
 - **Headless sessions you can work on**: with `terminal` set to `headless`, a
   session's window has three tabs. **Conversation** shows what the agent said and
   did as it runs (from Claude Code's event stream; other agents show their log),

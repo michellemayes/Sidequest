@@ -38,4 +38,21 @@ final class ModelsTests: XCTestCase {
         XCTAssertFalse(Updater.isNewer("0.1.57", than: "0.1.57"))
         XCTAssertFalse(Updater.isNewer("0.1.9", than: "0.1.10"))
     }
+
+    func testFindsTheAppInARelease() throws {
+        let json = """
+        {"tag_name": "v0.1.7", "html_url": "https://github.com/o/r/releases/tag/v0.1.7", "name": "Sidequest 0.1.7",
+         "assets": [
+           {"name": "appcast.xml", "browser_download_url": "https://github.com/o/r/releases/download/v0.1.7/appcast.xml"},
+           {"name": "Sidequest-0.1.7.zip", "browser_download_url": "https://github.com/o/r/releases/download/v0.1.7/Sidequest-0.1.7.zip"}
+         ]}
+        """
+        let release = try JSONDecoder().decode(Updater.Release.self, from: Data(json.utf8))
+        XCTAssertEqual(release.version, "0.1.7")
+        XCTAssertEqual(release.download?.lastPathComponent, "Sidequest-0.1.7.zip")
+
+        // Published before its zip was attached: nothing to download yet.
+        let bare = try JSONDecoder().decode(Updater.Release.self, from: Data(#"{"tag_name": "v0.1.8", "html_url": "x"}"#.utf8))
+        XCTAssertNil(bare.download)
+    }
 }

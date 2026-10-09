@@ -16,7 +16,7 @@ cask "sidequest" do
     strategy :github_latest
   end
 
-  # The app updates itself with Sparkle.
+  # The app updates itself.
   auto_updates true
   depends_on macos: ">= :sonoma"
 

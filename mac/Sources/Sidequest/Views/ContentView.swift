@@ -4,7 +4,9 @@ import SwiftUI
 /// The main window: what to show on the left, the sessions in the middle, the one you picked on the right.
 struct ContentView: View {
     @Environment(AppStore.self) private var store
+    @Environment(Updater.self) private var updater
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         @Bindable var store = store
@@ -24,7 +26,10 @@ struct ContentView: View {
                 EmptyDetailView()
             }
         }
-        .onAppear { SettingsOpener.action = openSettings }
+        .onAppear {
+            SettingsOpener.action = openSettings
+            updater.showWindow = { [openWindow] in openWindow(id: UpdateView.windowID) }
+        }
         .sheet(isPresented: $store.showChecks) { ChecksView() }
         .sheet(isPresented: $store.showStats) { StatsView() }
         .sheet(isPresented: $store.showLinkRepo) { LinkRepoSheet().padding() }

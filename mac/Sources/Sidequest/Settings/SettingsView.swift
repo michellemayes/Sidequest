@@ -123,16 +123,21 @@ struct GeneralPane: View {
             }
             Section("Updates") {
                 LabeledContent {
-                    Button(updater.checking ? "Checking…" : "Check Now") { Task { await updater.check() } }
-                        .disabled(updater.checking)
+                    Button(updater.checking ? "Checking…" : "Check Now") { Task { await updater.check(quietly: false) } }
+                        .disabled(updater.checking || updater.busy)
                 } label: {
                     Text("Sidequest \(BuildInfo.version)")
-                    Text(updater.updateAvailable ? "Version \(updater.latest?.version ?? "") is available" : "Up to date")
+                    Text(updater.summary)
                 }
-                if updater.updateAvailable {
+                if case .downloading(let fraction) = updater.phase {
+                    ProgressView(value: fraction)
+                }
+                if updater.phase == .readyToRelaunch {
+                    Button("Relaunch") { updater.relaunch() }.buttonStyle(.borderedProminent)
+                } else if updater.updateAvailable && !updater.busy {
                     Button("Update Now") { updater.install() }.buttonStyle(.borderedProminent)
                 }
-                if updater.installsInApp {
+                if updater.usesSparkle {
                     Toggle("Install updates automatically", isOn: $updater.installsAutomatically)
                 }
                 LabeledContent {
