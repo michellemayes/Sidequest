@@ -110,7 +110,7 @@ struct SessionDetailView: View {
             }
             Spacer(minLength: 8)
             if let step = nextStep {
-                Button(step.title, action: step.action)
+                Button(step.title) { perform(step) }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
             }
@@ -118,31 +118,53 @@ struct SessionDetailView: View {
     }
 
     /// The one thing to do next, which follows where the session has got to.
-    private var nextStep: (title: String, action: () -> Void)? {
-        if !store.pendingApprovals(for: session).isEmpty {
-            return ("Answer Its Question", { tab = .conversation })
+    private enum NextStep {
+        case answer, reviewReply, stop, runAgain, reopen, terminal, openPR
+        case viewPR(Int)
+
+        var title: String {
+            switch self {
+            case .answer: return "Answer Its Question"
+            case .reviewReply: return "Review Reply"
+            case .stop: return "Stop"
+            case .runAgain: return "Run Again"
+            case .reopen: return "Open in Terminal"
+            case .terminal: return "Open Terminal"
+            case .openPR: return "Open Pull Request"
+            case .viewPR(let number): return "View PR #\(number)"
+            }
         }
-        if session.resultPending {
-            return ("Review Reply", { tab = .conversation; replyFocused = true })
-        }
-        if session.headless && session.running {
-            return ("Stop", { Task { await store.stopRun(session) } })
-        }
-        if session.state == "failed" {
-            return session.headless
-                ? ("Run Again", { Task { await store.runAgain(session) } })
-                : ("Open in Terminal", { Task { await store.reopen(session) } })
-        }
-        if let pr = session.pr, session.state == "pr-open" {
-            return ("View PR #\(pr.number)", { Task { await store.openPullRequest(session) } })
-        }
-        if session.commits > 0 && session.pr == nil {
-            return ("Open Pull Request", { Task { await store.openPullRequest(session) } })
-        }
+    }
+
+    private var nextStep: NextStep? {
+        if !store.pendingApprovals(for: session).isEmpty { return .answer }
+        if session.resultPending { return .reviewReply }
+        if session.headless && session.running { return .stop }
+        if session.state == "failed" { return session.headless ? .runAgain : .reopen }
+        if let pr = session.pr, session.state == "pr-open" { return .viewPR(pr.number) }
+        if session.commits > 0 && session.pr == nil { return .openPR }
         if session.state == "merged" || session.state == "gone" { return nil }
-        return session.headless
-            ? ("Open Terminal", { tab = .terminal })
-            : ("Open in Terminal", { Task { await store.reopen(session) } })
+        return session.headless ? .terminal : .reopen
+    }
+
+    private func perform(_ step: NextStep) {
+        switch step {
+        case .answer:
+            tab = .conversation
+        case .reviewReply:
+            tab = .conversation
+            replyFocused = true
+        case .stop:
+            Task { await store.stopRun(session) }
+        case .runAgain:
+            Task { await store.runAgain(session) }
+        case .reopen:
+            Task { await store.reopen(session) }
+        case .terminal:
+            tab = .terminal
+        case .openPR, .viewPR:
+            Task { await store.openPullRequest(session) }
+        }
     }
 
     private var metaLine: String {
