@@ -26,6 +26,9 @@ sidequest setup
 
 Then in Slack, hover any message → **Sidequest** → **Fix**.
 
+Or skip all that: download the [Mac app](https://github.com/michellemayes/Sidequest/releases/latest).
+It carries its own engine, so the app is the only thing to install.
+
 ## What you get
 
 - **Four one-click prompts**: **Investigate**, **Fix**, **Review**, **Ask**
@@ -40,6 +43,10 @@ Then in Slack, hover any message → **Sidequest** → **Fix**.
 - **Your agent, your terminal**: Claude Code, Codex, Gemini CLI, Aider, Cursor
   Agent and more, in Warp, iTerm2, Ghostty, Terminal, tmux, headless, or the
   Claude / ChatGPT desktop apps.
+- **A Mac app beside Slack**, if you'd rather watch than hover: sessions grouped
+  by what needs you, the agent's reply to edit and post, every setting, and
+  headless sessions you can read and steer in their own window. Signed,
+  notarized and self-updating. See [Mac app](docs/guide.md#mac-app).
 - **Nothing leaves your machine** unless you post it. Your main checkout is
   never touched.
 
