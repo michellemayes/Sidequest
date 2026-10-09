@@ -34,7 +34,7 @@ final class ControlClient {
         self.path = path
     }
 
-    static var defaultPath: String {
+    nonisolated static var defaultPath: String {
         let root = ProcessInfo.processInfo.environment["SIDEQUEST_HOME"].flatMap { $0.isEmpty ? nil : $0 }
             ?? (NSHomeDirectory() as NSString).appendingPathComponent(".sidequest")
         return (root as NSString).appendingPathComponent("control.sock")
