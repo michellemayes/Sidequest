@@ -1,5 +1,4 @@
 import AppKit
-import SwiftTerm
 import SwiftUI
 
 /// The tabs a headless session has: watch it, see what it changed, or take the wheel.
@@ -166,8 +165,9 @@ struct DiffText: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(patch.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { pair in
-                let line = String(pair.element)
+            let lines = patch.components(separatedBy: "\n")
+            ForEach(lines.indices, id: \.self) { index in
+                let line = lines[index]
                 Text(line.isEmpty ? " " : line)
                     .font(.caption.monospaced())
                     .foregroundStyle(color(line))
@@ -219,31 +219,5 @@ struct TerminalTab: View {
             }
         }
         .task(id: session.id) { command = await store.terminalCommand(for: session) }
-    }
-}
-
-/// SwiftTerm's terminal view, running `argv` through your login shell in the worktree.
-struct AgentTerminal: NSViewRepresentable {
-    let command: TerminalCommandReply
-
-    func makeNSView(context: Context) -> LocalProcessTerminalView {
-        let view = LocalProcessTerminalView(frame: .zero)
-        let quoted = command.argv.map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }.joined(separator: " ")
-        let cwd = "'" + command.cwd.replacingOccurrences(of: "'", with: "'\\''") + "'"
-        var environment = ProcessInfo.processInfo.environment
-        environment["TERM"] = "xterm-256color"
-        environment["COLORTERM"] = "truecolor"
-        view.startProcess(
-            executable: "/bin/zsh",
-            args: ["-lc", "cd \(cwd) && exec \(quoted)"],
-            environment: environment.map { "\($0.key)=\($0.value)" }
-        )
-        return view
-    }
-
-    func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {}
-
-    static func dismantleNSView(_ nsView: LocalProcessTerminalView, coordinator: ()) {
-        nsView.process?.terminate()
     }
 }
