@@ -129,7 +129,11 @@ describeIfChrome("overlay over CDP: how a session is going, on its message", () 
       const deadline = Date.now() + 10_000;
       while (seen.length < 2 && Date.now() < deadline) await sleep(100);
       expect(seen).toEqual(["remove:eyes@C0SMOKE/1757430000.000100", "add:x@C0SMOKE/1757430000.000100"]);
-      expect((await loadHistory()).find((h) => h.branch === "fix/broken")?.reacted).toBe("x");
+      // The history entry is written just after the call Slack saw.
+      const written = Date.now() + 5_000;
+      const reacted = async () => (await loadHistory()).find((h) => h.branch === "fix/broken")?.reacted;
+      while (!(await reacted()) && Date.now() < written) await sleep(100);
+      expect(await reacted()).toBe("x");
       // The watcher keeps looking; the message is not reacted to again.
       await sleep(1200);
       expect(seen).toHaveLength(2);
