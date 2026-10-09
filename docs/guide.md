@@ -215,9 +215,9 @@ still start sessions from Slack; the app is where you follow them:
 
 Download `Sidequest-<version>.zip` from the
 [latest release](https://github.com/michellemayes/Sidequest/releases/latest), unzip
-it and move Sidequest.app to Applications. Until releases are signed with a
-Developer ID, macOS asks before opening it the first time: open it once, then allow
-it under System Settings → Privacy & Security.
+it and move Sidequest.app to Applications. Releases are signed with a Developer ID
+and notarized by Apple, with the ticket stapled, so it opens without a Gatekeeper
+warning — offline included.
 
 The app carries its own engine (the daemon and Node), so there is nothing else to
 install: it starts Sidequest when it opens, and the window walks you through the
