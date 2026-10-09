@@ -27,6 +27,13 @@ struct SidequestApp: App {
         .defaultSize(width: 1100, height: 680)
         .commands { SidequestCommands(store: store, updater: updater) }
 
+        Window("Software Update", id: UpdateView.windowID) {
+            UpdateView()
+                .environment(updater)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+
         Settings {
             SettingsView()
                 .environment(store)

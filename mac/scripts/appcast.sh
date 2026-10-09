@@ -4,8 +4,8 @@
 # the newest version.
 #
 # Environment: VERSION, BUILD, ZIP, REPOSITORY, and optionally SPARKLE_PRIVATE_KEY.
-# Without the key the item carries no EdDSA signature, and the app sends you to
-# the release page instead of installing in place.
+# Without the key the item carries no EdDSA signature, Sparkle stays off, and the
+# app installs updates with its own installer (Support/AppInstaller.swift).
 set -euo pipefail
 
 : "${VERSION:?}" "${BUILD:?}" "${ZIP:?}" "${REPOSITORY:?}"

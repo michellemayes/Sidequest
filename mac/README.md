@@ -34,11 +34,16 @@ alone: app updates replace it.
 zips it, writes a Sparkle appcast, and publishes both as the latest GitHub
 release, `v<major>.<minor>.<run number>`. The app checks `/releases/latest` when
 it opens and every hour, and posts a notification for a version it hasn't
-announced yet.
+announced yet. Clicking it, or Sidequest › Check for Updates…, installs the new
+version and relaunches.
 
 ### Signing updates (Sparkle)
 
-For the app to install updates itself (rather than open the release page):
+Check for Updates… always installs in the app: it downloads the release's zip,
+checks that the app inside is Sidequest, intact, and signed by the same Developer ID
+team as the running copy (any valid signature, for an ad hoc build), swaps it in when
+the app quits, and reopens on it. With Sparkle's keys set, Sparkle does this instead,
+checking each update's EdDSA signature too:
 
 1. Download Sparkle 2.6.4 and run `bin/generate_keys`. It stores the private key in
    your login keychain and prints the public key.
