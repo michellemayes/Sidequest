@@ -53,6 +53,21 @@ struct Stats: Codable, Hashable {
     var today: Int
     var streak: Int
     var bestStreak: Int
+    var byPrompt: [String: Int]?
+    var byChannel: [String: Int]?
+}
+
+struct SyncStatus: Codable, Hashable {
+    struct Waiting: Codable, Hashable {
+        var channel: String
+        var repo: String
+    }
+    /// When this Mac last agreed with Slack; empty when it never has.
+    var syncedAt: String
+    /// The computer that had last written the note then.
+    var from: String
+    /// Synced links waiting for a checkout on this Mac.
+    var waiting: [Waiting]
 }
 
 struct SessionsReply: Codable {
@@ -288,6 +303,8 @@ struct Approval: Codable, Hashable, Identifiable {
     var worktreePath: String
     var title: String
     var tool: String
+    /// For a shell, "always" covers this exact command only.
+    var perCommand: Bool?
     var summary: String
     var askedAt: String
 }

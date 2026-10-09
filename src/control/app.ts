@@ -19,6 +19,9 @@ import { configSchema, PROMPT_KEYS, type Config } from "../config/schema.js";
 import { allPrompts, loadConfig, updateConfig } from "../config/store.js";
 import { runChecks } from "../cli/doctor.js";
 import { cleanSweepOptions, sweepWorktrees } from "../session/cleanup.js";
+import { loadSyncState } from "../config/sync.js";
+import { headlessPaths } from "../terminals/headless.js";
+import { readTail } from "../daemon.js";
 import { computeStats, loadHistory, type HistoryEntry } from "../session/history.js";
 import { readResult } from "../session/result.js";
 import type { SessionStatus } from "../session/status.js";
@@ -364,6 +367,27 @@ export function createAppHandler(
       }
       case "approvals":
         return { ok: true, approvals: hooks.approvals?.pending ?? [] };
+      case "log-tail": {
+        // The end of a headless run's log, for a failed run's card.
+        const entry = await sessionFor(request);
+        const lines = typeof request.lines === "number" ? Math.min(Math.max(request.lines, 1), 200) : 20;
+        const text = await readTail(headlessPaths(entry.worktreePath).logFile, 64 * 1024);
+        return { ok: true, lines: text.split("\n").filter((l) => l.trim()).slice(-lines) };
+      }
+      case "clean-preview": {
+        const outcomes = await sweepWorktrees(await loadConfig(), {
+          ...cleanSweepOptions({ force: false, all: false, recent: false }),
+          dryRun: true,
+        });
+        return { ok: true, removable: outcomes.filter((o) => o.kind === "removed").length };
+      }
+      case "sync-status": {
+        const state = await loadSyncState();
+        const waiting = Object.entries(state.pending).flatMap(([channel, links]) =>
+          links.map(({ link }) => ({ channel, repo: link.remote || link.name })),
+        );
+        return { ok: true, syncedAt: state.syncedAt, from: state.from, waiting };
+      }
       case "get-config":
         return configReply();
       case "set-config":

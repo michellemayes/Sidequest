@@ -78,6 +78,7 @@ struct GeneralPane: View {
     @Environment(AppStore.self) private var store
     @Environment(Updater.self) private var updater
     @State private var openAtLogin = SMAppService.mainApp.status == .enabled
+    @State private var startsEngine = AppStore.startsEngine
 
     var body: some View {
         @Bindable var updater = updater
@@ -94,6 +95,11 @@ struct GeneralPane: View {
                         openAtLogin = SMAppService.mainApp.status == .enabled
                     }
                 }
+                Toggle(isOn: $startsEngine) {
+                    Text("Start Sidequest when the app opens")
+                    Text("Connects to Slack, opening it if it isn't already. With Open at login, Sidequest is ready as soon as your Mac is")
+                }
+                .onChange(of: startsEngine) { _, on in AppStore.startsEngine = on }
                 LabeledContent {
                     if store.connection == .connected {
                         Button("Stop") { Task { await store.stopDaemon() } }
@@ -169,6 +175,12 @@ struct AgentPane: View {
                         ForEach(choices.filter(\.app)) { Text($0.label).tag($0.id) }
                     }
                 }
+                if let current, let check = store.checks.first(where: { $0.label.hasPrefix(current.label) }) {
+                    Label(check.status == "ok" ? "Installed" : (check.detail.isEmpty ? "Not found" : check.detail),
+                          systemImage: check.status == "ok" ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(check.status == "ok" ? .green : .orange)
+                        .font(.callout)
+                }
                 if let current {
                     Text(current.app ? "Opens \(current.host) with the prompt ready. Each prompt can pick its own agent in Prompts."
                                      : "Runs in your terminal. Each prompt can pick its own agent in Prompts.")
@@ -205,6 +217,7 @@ struct AgentPane: View {
 
 struct TerminalPane: View {
     @Environment(AppStore.self) private var store
+    @AppStorage("terminalFontSize") private var terminalFontSize = 13.0
 
     var body: some View {
         let reply = store.configReply
@@ -221,7 +234,9 @@ struct TerminalPane: View {
             Section {
                 Picker("Open sessions in", selection: store.setting("terminal", \.terminal, fallback: "warp")) {
                     ForEach(reply?.terminals ?? []) { choice in
-                        Text(choice.label).tag(choice.id)
+                        Text(choice.id == "headless" && agent?.headless == false ? "\(choice.label) (not with \(agent?.label ?? "this agent"))" : choice.label)
+                            .tag(choice.id)
+                            .selectionDisabled(choice.id == "headless" && agent?.headless == false)
                     }
                 }
                 if let summary = reply?.terminals.first(where: { $0.id == terminal })?.summary {
@@ -268,6 +283,9 @@ struct TerminalPane: View {
                         Text("Claude Code only. Instead of refusing what its limits don't allow, it asks you here and in a notification. With the app closed, it's refused as before. Applies to sessions started from now on")
                     }
                     .disabled(agent?.id != "claude" || store.settings?.skipPermissions == true)
+                    Stepper(value: $terminalFontSize, in: 9...24) {
+                        Text("Terminal tab font size: \(Int(terminalFontSize)) pt")
+                    }
                 }
             }
         }
@@ -574,6 +592,7 @@ struct FlowTokens: View {
 struct CleanupPane: View {
     @Environment(AppStore.self) private var store
     @State private var outcome: String?
+    @State private var removable: Int?
 
     var body: some View {
         Form {
@@ -597,13 +616,14 @@ struct CleanupPane: View {
             }
             Section {
                 HStack {
-                    Text(outcome ?? "Removes worktrees whose branch is merged. Uncommitted work is never deleted.")
+                    Text(outcome ?? cleanupSummary)
                         .font(.callout).foregroundStyle(.secondary)
                     Spacer()
                     Button("Clean Up Now") {
                         Task {
                             if let reply = await store.cleanUp() {
                                 outcome = "Removed \(reply.removed), kept \(reply.kept)."
+                                removable = await store.cleanPreview()
                             }
                         }
                     }
@@ -612,6 +632,17 @@ struct CleanupPane: View {
             }
         }
         .formStyle(.grouped)
+        .task { removable = await store.cleanPreview() }
+    }
+
+    private var cleanupSummary: String {
+        let rule = "Removes worktrees whose branch is merged. Uncommitted work is never deleted."
+        switch removable {
+        case .none: return rule
+        case .some(0): return "Nothing finished to remove. " + rule
+        case .some(1): return "1 finished session can be removed. " + rule
+        case .some(let n): return "\(n) finished sessions can be removed. " + rule
+        }
     }
 }
 
@@ -619,6 +650,7 @@ struct CleanupPane: View {
 
 struct SyncPane: View {
     @Environment(AppStore.self) private var store
+    @State private var status: SyncStatus?
 
     var body: some View {
         Form {
@@ -627,17 +659,45 @@ struct SyncPane: View {
                     Text("Sync with my other Macs")
                     Text("Through a pinned message in your DM with yourself in Slack. No server or account")
                 }
+                if store.settings?.sync == true {
+                    LabeledContent("Last synced") {
+                        Text(lastSynced).foregroundStyle(.secondary)
+                    }
+                    if let waiting = status?.waiting, !waiting.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Waiting for a clone on this Mac")
+                            ForEach(waiting, id: \.self) { link in
+                                Text("#\(link.channel) → \(link.repo)").font(.callout.monospaced()).foregroundStyle(.secondary)
+                            }
+                            Text("Each links itself once you clone it where Sidequest looks for repos.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
             Section("What syncs") {
                 Text("Channel links (matched by git remote), prompts, the agent and its arguments, fetching, thread messages, clean-up, Say I'm on it, reactions and agent replies.")
                     .font(.callout)
             }
             Section("What stays on this Mac") {
-                Text("Terminal settings, folders, Slack connection settings, skip permission prompts, and your session history.")
+                Text("Terminal settings, folders, Slack connection settings, skip permission prompts, approvals, and your session history.")
                     .font(.callout)
             }
         }
         .formStyle(.grouped)
+        .task(id: store.settings?.sync) {
+            // Checked every two minutes by the daemon; looked at again here while the tab is open.
+            while !Task.isCancelled {
+                status = await store.syncStatus()
+                try? await Task.sleep(for: .seconds(30))
+            }
+        }
+    }
+
+    private var lastSynced: String {
+        guard let status, let date = ISODate.parse(status.syncedAt) else { return "Not yet" }
+        let when = date.formatted(.relative(presentation: .named))
+        return status.from.isEmpty ? when : "\(when), last changed on \(status.from)"
     }
 }
 

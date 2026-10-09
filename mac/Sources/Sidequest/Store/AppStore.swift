@@ -20,7 +20,10 @@ enum SessionFilter: Hashable {
 
 /// Something wrong, with the one thing that fixes it.
 struct Banner: Identifiable, Hashable {
-    enum Fix: Hashable { case startDaemon, restartSlack, updateEngine, showChecks, openSettings }
+    enum Fix: Hashable {
+        case startDaemon, startDaemonRestartingSlack, restartSlack, updateEngine, showChecks, openSettings
+        case linkRepo, notifications, installHook
+    }
     var id: String
     var title: String
     var detail: String
@@ -58,12 +61,32 @@ final class AppStore {
     var focusReply = false
     var confirmRemove: AppSession?
     var confirmClean = false
+    var focusFollowUp = false
+    var showStats = false
+    var showLinkRepo = false
+    /// Terminal tabs open right now; quitting asks first while any are.
+    var openTerminals = 0
+    /// Why the last start failed, for the banner that offers to try again.
+    private(set) var startError: String?
+    /// Whether notifications are allowed, once the app has asked the system.
+    private(set) var notificationsAllowed: Bool?
+    private var triedAutoStart = false
+
+    /// The one window's store, for the app delegate.
+    static weak var shared: AppStore?
+
+    /// Start the engine when the app opens and finds it stopped. On unless turned off in Settings › General.
+    static var startsEngine: Bool {
+        get { UserDefaults.standard.object(forKey: "startEngineOnLaunch") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "startEngineOnLaunch") }
+    }
 
     let notifier = Notifier()
     private let client = ControlClient()
     private var reconnectTask: Task<Void, Never>?
 
     init() {
+        AppStore.shared = self
         client.onEvent = { [weak self] event, line in self?.handle(event: event, line: line) }
         client.onDisconnect = { [weak self] in self?.lost() }
         notifier.onOpen = { [weak self] branch in self?.reveal(branch: branch) }
@@ -77,7 +100,10 @@ final class AppStore {
 
     func start() {
         notifier.setUp()
-        Task { await connect() }
+        Task {
+            await connect()
+            notificationsAllowed = await notifier.allowed()
+        }
     }
 
     private func connect() async {
@@ -91,6 +117,12 @@ final class AppStore {
         } catch {
             client.disconnect()
             connection = .notRunning
+            if !triedAutoStart && AppStore.startsEngine {
+                // Opening the app is how you start Sidequest; nothing to click.
+                triedAutoStart = true
+                await startDaemon(quietly: true)
+                return
+            }
             scheduleReconnect()
         }
     }
@@ -213,7 +245,17 @@ final class AppStore {
     var banners: [Banner] {
         var out: [Banner] = []
         if connection == .notRunning {
-            out.append(Banner(id: "daemon", title: "Sidequest isn't running", detail: "Start it and it connects to Slack.", action: "Start", fix: .startDaemon))
+            if let startError, startError.contains("without --remote-debugging-port") {
+                out.append(Banner(id: "daemon", title: "Slack needs a quick restart",
+                                  detail: "It's open without Sidequest. Your messages and drafts stay put.",
+                                  action: "Restart Slack", fix: .startDaemonRestartingSlack))
+            } else if let startError {
+                out.append(Banner(id: "daemon", title: "Sidequest didn't start",
+                                  detail: startError.split(separator: "\n").first.map(String.init) ?? startError,
+                                  action: "Try Again", fix: .startDaemon))
+            } else {
+                out.append(Banner(id: "daemon", title: "Sidequest isn't running", detail: "Start it and it connects to Slack.", action: "Start", fix: .startDaemon))
+            }
             return out
         }
         if let health {
@@ -230,7 +272,21 @@ final class AppStore {
         }
         if let hello, !hello.build.isEmpty, let mine = BuildInfo.commit, !mine.isEmpty, !hello.build.hasPrefix(mine), !mine.hasPrefix(hello.build) {
             out.append(Banner(id: "engine", title: "Sidequest's engine is a different version",
-                              detail: "Update it to match this app.", action: "Update", fix: .updateEngine))
+                              detail: CommandLineTool.bundled == nil ? "Update it to match this app." : "Switch to the one that came with this app.",
+                              action: CommandLineTool.bundled == nil ? "Update" : "Switch", fix: .updateEngine))
+        }
+        // First run, one step at a time: each shows until it is done.
+        if let reply = configReply, reply.config.channels.isEmpty {
+            out.append(Banner(id: "link", title: "Link your first channel",
+                              detail: "Pick a Slack channel and the repo its messages are about.", action: "Link a Repo…", fix: .linkRepo))
+        }
+        if notificationsAllowed == false {
+            out.append(Banner(id: "notify", title: "Turn on notifications",
+                              detail: "So you hear when a reply is ready or an agent asks to run something.", action: "Turn On", fix: .notifications))
+        }
+        if configReply?.config.settings.terminal == "warp", let hook = checks.first(where: { $0.label == "shell hook" }), hook.status != "ok" {
+            out.append(Banner(id: "hook", title: "Install the shell hook",
+                              detail: "So sessions start even when Warp ignores its launch config.", action: "Install", fix: .installHook))
         }
         let failed = checks.filter(\.failed)
         if !failed.isEmpty {
@@ -243,6 +299,10 @@ final class AppStore {
     func perform(_ fix: Banner.Fix) {
         switch fix {
         case .startDaemon: Task { await startDaemon() }
+        case .startDaemonRestartingSlack: Task { await startDaemon(restartingSlack: true) }
+        case .linkRepo: showLinkRepo = true
+        case .notifications: Task { notificationsAllowed = await notifier.askOrOpenSettings() }
+        case .installHook: Task { await installShellHook() }
         case .restartSlack: Task { await act("Restarting Slack…") { _ = try await self.client.request("restart-slack") } }
         case .updateEngine: Task { await updateEngine() }
         case .showChecks: showChecks = true
@@ -266,11 +326,20 @@ final class AppStore {
         }
     }
 
-    func startDaemon() async {
-        await act("Starting Sidequest…") {
-            let out = await CommandLineTool.sidequest(["start"])
-            if out.status != 0 {
-                throw DaemonError(message: "Sidequest didn't start.", hint: out.text.trimmingCharacters(in: .whitespacesAndNewlines))
+    /// Start the engine. `quietly` (on launch) leaves a failure to the banner rather than an alert.
+    func startDaemon(restartingSlack: Bool = false, quietly: Bool = false) async {
+        working = "Starting Sidequest…"
+        let out = await CommandLineTool.sidequest(restartingSlack ? ["start", "--force"] : ["start"])
+        working = nil
+        if out.status == 0 {
+            startError = nil
+        } else {
+            let text = out.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let error = text.components(separatedBy: "\n").first { $0.hasPrefix("error:") }
+                .map { String($0.dropFirst("error:".count)).trimmingCharacters(in: .whitespaces) }
+            startError = error ?? (text.isEmpty ? "The engine exited without saying why." : text)
+            if !quietly && !(startError?.contains("without --remote-debugging-port") ?? false) {
+                lastError = DaemonError(message: "Sidequest didn't start.", hint: startError)
             }
         }
         await connect()
@@ -280,13 +349,27 @@ final class AppStore {
         await act("Stopping Sidequest…") { _ = await CommandLineTool.sidequest(["stop"]) }
     }
 
+    /// Bring the engine in line with the app: restart on the bundled one, or update an installed one.
     func updateEngine() async {
+        if CommandLineTool.bundled != nil {
+            await act("Switching engines…") { _ = await CommandLineTool.sidequest(["stop"]) }
+            await startDaemon()
+            return
+        }
         await act("Updating Sidequest's engine…") {
             let out = await CommandLineTool.sidequest(["update"])
             if out.status != 0 {
                 throw DaemonError(message: "The update didn't finish.", hint: out.text.trimmingCharacters(in: .whitespacesAndNewlines))
             }
         }
+    }
+
+    func refreshNotificationStatus() async {
+        notificationsAllowed = await notifier.allowed()
+    }
+
+    func installCommandLineTool() async {
+        await act { try CommandLineTool.installLink() }
     }
 
     func installShellHook() async {
@@ -420,5 +503,21 @@ final class AppStore {
         await act {
             _ = try await self.client.request("approval-decision", ["approvalId": approval.id, "allow": allow, "always": always])
         }
+    }
+
+    // MARK: Status for Settings and cards
+
+    func cleanPreview() async -> Int? {
+        struct Reply: Decodable { var removable: Int }
+        return (try? await client.request("clean-preview", as: Reply.self))?.removable
+    }
+
+    func syncStatus() async -> SyncStatus? {
+        try? await client.request("sync-status", as: SyncStatus.self)
+    }
+
+    func logTail(_ session: AppSession, lines: Int = 12) async -> [String] {
+        struct Reply: Decodable { var lines: [String] }
+        return (try? await client.request("log-tail", ["branch": session.branch, "lines": lines], as: Reply.self))?.lines ?? []
     }
 }

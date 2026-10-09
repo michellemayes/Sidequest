@@ -36,3 +36,11 @@ jobs:
         run: swift test
       - name: Build Sidequest.app
         run: UNIVERSAL=0 mac/scripts/build-app.sh
+      - name: The bundled engine runs from inside the app
+        run: |
+          cli=mac/build/Sidequest.app/Contents/Resources/engine/bin/sidequest
+          "$cli" --version
+          # App updates replace the bundled engine, so `update` leaves it alone.
+          if "$cli" update --no-restart; then echo "update should refuse a bundled engine" >&2; exit 1; fi
+          # The approval helper a headless Claude Code starts speaks MCP.
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | "$cli" mcp-approve --worktree /tmp | grep -q '"approve"'

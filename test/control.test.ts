@@ -275,6 +275,22 @@ describe("createAppHandler", () => {
     expect(host.asked[0]).toMatchObject({ op: "result-posted", branch: "claude/fix-1", dismissed: true });
   });
 
+  it("says how many finished sessions can go, how sync stands, and how a failed run ended", async () => {
+    const handle = createAppHandler(fakeHost());
+    expect(await handle({ id: 1, op: "clean-preview" }, conn())).toEqual({ ok: true, removable: 0 });
+    expect(await handle({ id: 2, op: "sync-status" }, conn())).toEqual({ ok: true, syncedAt: "", from: "", waiting: [] });
+
+    const wt = join(root, "wt");
+    await recordSession(entry(1, { worktreePath: wt }));
+    const { mkdir: mk, writeFile: wf } = await import("node:fs/promises");
+    await mk(join(wt, ".sidequest"), { recursive: true });
+    await wf(join(wt, ".sidequest", "agent.log"), "one\ntwo\nError: not authenticated\nsidequest: finished, exit 1\n");
+    expect(await handle({ id: 3, op: "log-tail", branch: "claude/fix-1", lines: 2 }, conn())).toEqual({
+      ok: true,
+      lines: ["Error: not authenticated", "sidequest: finished, exit 1"],
+    });
+  });
+
   it("answers an op it does not know with an error", async () => {
     expect(await createAppHandler(fakeHost())({ id: 1, op: "teleport" }, conn())).toEqual({ error: "unknown op teleport" });
   });

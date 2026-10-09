@@ -217,8 +217,15 @@ Download `Sidequest-<version>.zip` from the
 [latest release](https://github.com/michellemayes/Sidequest/releases/latest), unzip
 it and move Sidequest.app to Applications. Until releases are signed with a
 Developer ID, macOS asks before opening it the first time: open it once, then allow
-it under System Settings → Privacy & Security. The app uses the CLI install above
-for the daemon itself (`sidequest start`, `sidequest update`), so set that up first.
+it under System Settings → Privacy & Security.
+
+The app carries its own engine (the daemon and Node), so there is nothing else to
+install: it starts Sidequest when it opens, and the window walks you through the
+rest (linking a channel, notifications, the shell hook) as banners. Turn on **Open
+at login** in Settings › General and Sidequest is ready whenever your Mac is.
+**Help › Install Command-Line Tool** puts the app's `sidequest` on your PATH; app
+updates keep it current, so `sidequest update` leaves it alone. A CLI installed
+from a checkout keeps working on its own.
 
 The app talks to the daemon over `~/.sidequest/control.sock`. Building it and
 cutting releases is in [mac/README.md](../mac/README.md).

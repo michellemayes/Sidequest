@@ -24,6 +24,11 @@ struct ContentView: View {
         }
         .onAppear { SettingsOpener.action = openSettings }
         .sheet(isPresented: $store.showChecks) { ChecksView() }
+        .sheet(isPresented: $store.showStats) { StatsView() }
+        .sheet(isPresented: $store.showLinkRepo) { LinkRepoSheet().padding() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await store.refreshNotificationStatus() }
+        }
         .alert(item: $store.lastError) { error in
             Alert(title: Text(error.message), message: error.hint.map { Text($0) })
         }
@@ -304,5 +309,44 @@ struct ChecksView: View {
         }
         .padding(20)
         .frame(width: 560)
+    }
+}
+
+/// Your totals, as `sidequest stats` prints them, and what you use most.
+struct StatsView: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Stats").font(.title2.bold())
+            if let stats = store.stats {
+                Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 8) {
+                    GridRow { Text("Sessions in all").foregroundStyle(.secondary); Text("\(stats.total)").monospacedDigit() }
+                    GridRow { Text("Today").foregroundStyle(.secondary); Text("\(stats.today)").monospacedDigit() }
+                    GridRow { Text("Streak").foregroundStyle(.secondary); Text(stats.streak == 1 ? "1 day" : "\(stats.streak) days").monospacedDigit() }
+                    GridRow { Text("Best streak").foregroundStyle(.secondary); Text(stats.bestStreak == 1 ? "1 day" : "\(stats.bestStreak) days").monospacedDigit() }
+                }
+                HStack(alignment: .top, spacing: 32) {
+                    ranking("By prompt", stats.byPrompt ?? [:])
+                    ranking("By channel", (stats.byChannel ?? [:]).reduce(into: [:]) { $0["#\($1.key)"] = $1.value })
+                }
+            } else {
+                Text("Start Sidequest to see your stats.").foregroundStyle(.secondary)
+            }
+            HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
+        }
+        .padding(20)
+        .frame(width: 440)
+    }
+
+    private func ranking(_ title: String, _ counts: [String: Int]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ForEach(counts.sorted { $0.value > $1.value }.prefix(6), id: \.key) { key, value in
+                HStack { Text(key); Spacer(minLength: 12); Text("\(value)").monospacedDigit().foregroundStyle(.secondary) }
+            }
+        }
+        .frame(minWidth: 160, alignment: .leading)
     }
 }

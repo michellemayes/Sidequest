@@ -25,6 +25,8 @@
     <string>public.app-category.developer-tools</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Sidequest opens sessions in iTerm2 or Terminal, and restarts Slack so it can connect.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>SidequestCommit</key>

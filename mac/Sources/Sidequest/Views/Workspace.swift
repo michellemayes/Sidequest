@@ -94,7 +94,10 @@ struct ApprovalCard: View {
             HStack {
                 Button("Allow") { Task { await store.decide(approval, allow: true) } }
                     .buttonStyle(.borderedProminent)
-                Button("Always Allow \(approval.tool)") { Task { await store.decide(approval, allow: true, always: true) } }
+                Button(approval.perCommand == true ? "Always Allow This Command" : "Always Allow \(approval.tool)") {
+                    Task { await store.decide(approval, allow: true, always: true) }
+                }
+                .help(approval.perCommand == true ? "Allow this exact command for the rest of this session" : "Allow \(approval.tool) for the rest of this session")
                 Button("Deny") { Task { await store.decide(approval, allow: false) } }
             }
         }
@@ -199,11 +202,15 @@ struct TerminalTab: View {
     @State private var command: TerminalCommandReply?
     @State private var started = false
     @State private var generation = 0
+    @AppStorage("terminalFontSize") private var fontSize = 13.0
 
     var body: some View {
         Group {
             if started, let command {
-                AgentTerminal(command: command).id(generation)
+                AgentTerminal(command: command, fontSize: fontSize)
+                    .id(generation)
+                    .onAppear { store.openTerminals += 1 }
+                    .onDisappear { store.openTerminals = max(0, store.openTerminals - 1) }
             } else {
                 ContentUnavailableView {
                     Label("Take the wheel", systemImage: "terminal")

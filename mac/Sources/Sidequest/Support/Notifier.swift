@@ -31,6 +31,26 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
+    /// Whether notifications are allowed; nil outside a bundled app, where there are none.
+    func allowed() async -> Bool? {
+        guard let center else { return nil }
+        let status = await center.notificationSettings().authorizationStatus
+        return status == .authorized || status == .provisional
+    }
+
+    /// Ask, or once you have said no, open the system's notification settings, where it can be changed.
+    func askOrOpenSettings() async -> Bool? {
+        guard let center else { return nil }
+        let status = await center.notificationSettings().authorizationStatus
+        if status == .notDetermined {
+            return (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+        }
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+        return await allowed()
+    }
+
     func post(_ notice: Notice) {
         let content = UNMutableNotificationContent()
         content.title = notice.title

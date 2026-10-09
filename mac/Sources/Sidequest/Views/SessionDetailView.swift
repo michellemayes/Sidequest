@@ -10,7 +10,9 @@ struct SessionDetailView: View {
     @State private var draft = ""
     @State private var followUp = ""
     @State private var tab: WorkspaceTab = .conversation
+    @State private var logTail: [String] = []
     @FocusState private var replyFocused: Bool
+    @FocusState private var followUpFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,6 +35,12 @@ struct SessionDetailView: View {
                 await store.loadTranscript(session)
                 try? await Task.sleep(for: .seconds(session.running ? 1.5 : 6))
             }
+        }
+        .onChange(of: store.focusFollowUp) { _, wanted in
+            if wanted { tab = .conversation; followUpFocused = true; store.focusFollowUp = false }
+        }
+        .task(id: "\(session.id)-\(session.state)") {
+            logTail = session.state == "failed" ? await store.logTail(session) : []
         }
         .onChange(of: store.focusReply) { _, wanted in
             if wanted { replyFocused = true; store.focusReply = false }
@@ -95,10 +103,46 @@ struct SessionDetailView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(session.title).font(.title2.bold()).textSelection(.enabled)
-            Text(metaLine).font(.callout).foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(session.title).font(.title2.bold()).textSelection(.enabled)
+                Text(metaLine).font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            if let step = nextStep {
+                Button(step.title, action: step.action)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+            }
         }
+    }
+
+    /// The one thing to do next, which follows where the session has got to.
+    private var nextStep: (title: String, action: () -> Void)? {
+        if !store.pendingApprovals(for: session).isEmpty {
+            return ("Answer Its Question", { tab = .conversation })
+        }
+        if session.resultPending {
+            return ("Review Reply", { tab = .conversation; replyFocused = true })
+        }
+        if session.headless && session.running {
+            return ("Stop", { Task { await store.stopRun(session) } })
+        }
+        if session.state == "failed" {
+            return session.headless
+                ? ("Run Again", { Task { await store.runAgain(session) } })
+                : ("Open in Terminal", { Task { await store.reopen(session) } })
+        }
+        if let pr = session.pr, session.state == "pr-open" {
+            return ("View PR #\(pr.number)", { Task { await store.openPullRequest(session) } })
+        }
+        if session.commits > 0 && session.pr == nil {
+            return ("Open Pull Request", { Task { await store.openPullRequest(session) } })
+        }
+        if session.state == "merged" || session.state == "gone" { return nil }
+        return session.headless
+            ? ("Open Terminal", { tab = .terminal })
+            : ("Open in Terminal", { Task { await store.reopen(session) } })
     }
 
     private var metaLine: String {
@@ -162,7 +206,16 @@ struct SessionDetailView: View {
                   systemImage: "xmark.octagon.fill")
                 .foregroundStyle(.red)
                 .font(.callout.weight(.semibold))
-            Text("Its log is in .sidequest/agent.log in the worktree.").font(.caption).foregroundStyle(.secondary)
+            if logTail.isEmpty {
+                Text("Its log is in .sidequest/agent.log in the worktree.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text(logTail.joined(separator: "\n"))
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 6))
+            }
             HStack {
                 Button("Show Log") {
                     let log = (session.worktreePath as NSString).appendingPathComponent(".sidequest/agent.log")
@@ -204,6 +257,7 @@ struct SessionDetailView: View {
             TextField(session.headless ? "Tell it what to do next…" : "Follow up: tell the session what to do next…", text: $followUp, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...4)
+                .focused($followUpFocused)
                 .onSubmit(sendFollowUp)
             Button("Send", action: sendFollowUp)
                 .disabled(followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.state == "gone" || session.running)

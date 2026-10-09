@@ -100,6 +100,12 @@ describe("approvals", () => {
     expect(await ask()).toMatchObject({ behavior: "allow" });
     expect(approvals.pending).toEqual([]);
 
+    // For a shell, "always" covers that command, not every command.
+    const different = approvals.request({ branch: "b", worktreePath: "/wt", title: "Fix it", tool: "Bash", input: { command: "rm -rf build" } });
+    expect(approvals.pending).toMatchObject([{ summary: "rm -rf build", perCommand: true }]);
+    approvals.decide(approvals.pending[0]!.id, false);
+    await different;
+
     const other = approvals.request({ branch: "c", worktreePath: "/other", title: "x", tool: "Bash", input: {} });
     approvals.decide(approvals.pending[0]!.id, false);
     expect(await other).toMatchObject({ behavior: "deny" });

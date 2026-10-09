@@ -26,6 +26,16 @@ export function installRoot(): string {
   return fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 }
 
+/**
+ * Present in the copy of Sidequest the Mac app carries inside its bundle,
+ * which the app's own updates replace; `sidequest update` leaves it alone.
+ */
+export const BUNDLED_MARKER = ".sidequest-bundled";
+
+export async function isBundled(root = installRoot()): Promise<boolean> {
+  return exists(join(root, BUNDLED_MARKER));
+}
+
 /** Written after a successful `npm ci`; holds the dependency fingerprint it installed. */
 const INSTALL_STAMP = join("node_modules", ".sidequest-deps");
 /** Written into each build; holds the commit it was built from. */
