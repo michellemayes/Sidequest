@@ -25,6 +25,13 @@ struct SidequestCommands: Commands {
         }
 
         CommandMenu("Session") {
+            Button(markDoneTitle) {
+                let picked = store.selectedSessions
+                Task { await store.markDone(picked, done: !picked.allSatisfy(\.markedDone)) }
+            }
+            .keyboardShortcut("d")
+            .disabled(store.selection.isEmpty)
+            Divider()
             Button("Open in Terminal") { if let session { Task { await store.reopen(session) } } }
                 .keyboardShortcut("o")
             Button("Follow Up…") { if session != nil { store.focusFollowUp = true } }
@@ -72,6 +79,12 @@ struct SidequestCommands: Commands {
             Divider()
             Button("Install Command-Line Tool…") { Task { await store.installCommandLineTool() } }
         }
+    }
+
+    /// Every selected session already done, and the item puts them back.
+    private var markDoneTitle: String {
+        let picked = store.selectedSessions
+        return !picked.isEmpty && picked.allSatisfy(\.markedDone) ? "Mark as Not Done" : "Mark as Done"
     }
 
     private func open(_ link: String) {

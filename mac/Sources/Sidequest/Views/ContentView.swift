@@ -18,6 +18,8 @@ struct ContentView: View {
             if let session = store.selectedSession {
                 SessionDetailView(session: session)
                     .id(session.id)
+            } else if store.selection.count > 1 {
+                SelectionDetailView()
             } else {
                 EmptyDetailView()
             }
@@ -67,6 +69,23 @@ extension DaemonError: Identifiable {
     var id: String { message + (hint ?? "") }
 }
 
+/// Several sessions picked at once: what can be done to all of them.
+struct SelectionDetailView: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        let picked = store.selectedSessions
+        ContentUnavailableView {
+            Label("\(picked.count) sessions selected", systemImage: "square.stack.3d.up")
+        } description: {
+            Text("Mark them done to move them out of Working and Needs You.")
+        } actions: {
+            MarkDoneButton(sessions: picked)
+                .buttonStyle(.borderedProminent)
+        }
+    }
+}
+
 struct EmptyDetailView: View {
     @Environment(AppStore.self) private var store
 
@@ -89,15 +108,15 @@ struct SidebarView: View {
         @Bindable var store = store
         List(selection: Binding(get: { store.filter }, set: { if let f = $0 { store.filter = f } })) {
             Section {
-                row(.needsYou, icon: "circle.fill", badge: true)
-                row(.working, icon: "circle.lefthalf.filled")
-                row(.done, icon: "checkmark.circle")
-                row(.all, icon: "tray.full")
+                row(.needsYou, icon: "exclamationmark.bubble.fill", tint: .orange, badge: true)
+                row(.working, icon: "circle.dotted", tint: .blue)
+                row(.done, icon: "checkmark.circle.fill", tint: .green)
+                row(.all, icon: "tray.full.fill", tint: .secondary)
             }
             if !store.repos.isEmpty {
                 Section("Repos") {
                     ForEach(store.repos, id: \.self) { repo in
-                        row(.repo(repo), icon: "folder")
+                        row(.repo(repo), icon: "folder", tint: .secondary)
                     }
                 }
             }
@@ -105,24 +124,39 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) {
             if let stats = store.stats {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(stats.today) today · \(stats.streak)-day streak")
-                    Text("\(stats.total) sessions in all")
+                HStack(spacing: 8) {
+                    Image(systemName: "flame.fill")
+                        .foregroundStyle(stats.streak > 0 ? Color.orange : Color.secondary)
+                        .font(.title3)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(stats.streak == 1 ? "1-day streak" : "\(stats.streak)-day streak")
+                            .font(.callout.weight(.semibold))
+                        Text("\(stats.today) today · \(stats.total) in all")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
+                .padding(10)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(10)
+                .contentShape(Rectangle())
+                .onTapGesture { store.showStats = true }
+                .help("Show stats")
             }
         }
     }
 
-    private func row(_ filter: SessionFilter, icon: String, badge: Bool = false) -> some View {
+    private func row(_ filter: SessionFilter, icon: String, tint: Color, badge: Bool = false) -> some View {
         let count = store.count(filter)
         let label: Text? = badge && count == 0 ? nil : Text("\(count)")
-        return Label(filter.title, systemImage: icon)
-            .badge(label)
-            .tag(filter)
+        return Label {
+            Text(filter.title)
+        } icon: {
+            Image(systemName: icon).foregroundStyle(tint)
+        }
+        .badge(label)
+        .tag(filter)
     }
 }
 
@@ -139,7 +173,18 @@ struct SessionListView: View {
             List(store.visibleSessions, selection: $store.selection) { session in
                 SessionRow(session: session)
                     .tag(session.id)
-                    .contextMenu { SessionMenu(session: session) }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button {
+                            Task { await store.markDone([session], done: !session.markedDone) }
+                        } label: {
+                            Label(session.markedDone ? "Not Done" : "Done",
+                                  systemImage: session.markedDone ? "arrow.uturn.backward" : "checkmark")
+                        }
+                        .tint(session.markedDone ? Color.gray : Color.green)
+                    }
+            }
+            .contextMenu(forSelectionType: AppSession.ID.self) { ids in
+                SelectionMenu(ids: ids)
             }
             .overlay {
                 if store.visibleSessions.isEmpty {
@@ -154,70 +199,42 @@ struct SessionListView: View {
 }
 
 struct SessionRow: View {
+    @Environment(AppStore.self) private var store
     let session: AppSession
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(session.title).font(.headline).lineLimit(1)
-                Spacer(minLength: 6)
-                StatusPill(session: session)
+        let look = SessionLook(session)
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: store.pendingApprovals(for: session).isEmpty ? look.symbol : "hand.raised.fill")
+                .foregroundStyle(store.pendingApprovals(for: session).isEmpty ? look.color : Color.orange)
+                .font(.body)
+                .frame(width: 18)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(session.title)
+                        .font(.body.weight(store.needsYou(session) ? .semibold : .regular))
+                        .lineLimit(2)
+                        .foregroundStyle(session.markedDone ? .secondary : .primary)
+                    Spacer(minLength: 4)
+                    Text(Elapsed.short(since: session.created))
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+                HStack(spacing: 6) {
+                    PromptTag(session: session)
+                    Text([session.repo, session.channel.isEmpty ? nil : "#\(session.channel)"]
+                            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    StatusPill(session: session)
+                }
             }
-            Text([session.repo, session.channel.isEmpty ? nil : "#\(session.channel)", session.promptLabel]
-                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
         }
-        .padding(.vertical, 3)
-    }
-}
-
-/// One word for where a session has got to, coloured by whether it needs you.
-struct StatusPill: View {
-    let session: AppSession
-
-    var body: some View {
-        Text(text)
-            .font(.caption2.weight(.semibold))
-            .monospacedDigit()
-            .padding(.horizontal, 7).padding(.vertical, 2)
-            .background(background, in: Capsule())
-            .foregroundStyle(foreground)
-    }
-
-    var text: String {
-        if session.resultPending { return "reply ready" }
-        if session.headless && session.running { return "running \(Elapsed.short(since: session.created))" }
-        switch session.state {
-        case "failed": return session.exitCode.map { "failed · exit \($0)" } ?? "failed"
-        case "committed": return session.commits == 1 ? "1 commit" : "\(session.commits) commits"
-        case "pr-open": return session.pr.map { "PR #\($0.number)" } ?? "PR open"
-        case "pr-closed": return "PR closed"
-        case "merged": return "merged"
-        case "answered": return "answered"
-        case "gone": return "cleaned up"
-        case "working": return "working \(Elapsed.short(since: session.created))"
-        default: return Elapsed.short(since: session.created) + " ago"
-        }
-    }
-
-    var background: Color {
-        if session.resultPending { return .accentColor }
-        switch session.state {
-        case "failed": return .red.opacity(0.15)
-        case "merged": return .green.opacity(0.15)
-        default: return .secondary.opacity(0.12)
-        }
-    }
-
-    var foreground: Color {
-        if session.resultPending { return .white }
-        switch session.state {
-        case "failed": return .red
-        case "merged": return .green
-        default: return .secondary
-        }
+        .padding(.vertical, 5)
     }
 }
 
@@ -260,6 +277,8 @@ struct SessionMenu: View {
     let session: AppSession
 
     var body: some View {
+        MarkDoneButton(sessions: [session])
+        Divider()
         Button("Open in Terminal") { Task { await store.reopen(session) } }
         if session.pr != nil || session.commits > 0 {
             Button(session.pr == nil ? "Open Pull Request" : "View Pull Request") { Task { await store.openPullRequest(session) } }
@@ -275,6 +294,21 @@ struct SessionMenu: View {
         }
         Divider()
         Button("Remove Session…", role: .destructive) { store.confirmRemove = session }
+    }
+}
+
+/// A right-click on the list: one session's whole menu, or what can be done to several.
+struct SelectionMenu: View {
+    @Environment(AppStore.self) private var store
+    let ids: Set<AppSession.ID>
+
+    var body: some View {
+        let picked = store.sessions.filter { ids.contains($0.id) }
+        if picked.count == 1, let session = picked.first {
+            SessionMenu(session: session)
+        } else if !picked.isEmpty {
+            MarkDoneButton(sessions: picked)
+        }
     }
 }
 

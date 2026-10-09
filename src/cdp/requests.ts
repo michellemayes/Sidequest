@@ -427,6 +427,8 @@ async function followUp(request: AskRequest, host: RequestHost): Promise<Answer>
     channel: entry?.channel ?? request.channel ?? "",
   });
   host.emit({ type: "follow-up", branch });
+  // More work on it, so it is no longer one you marked done.
+  if (entry?.doneAt) await updateSession(branch, { doneAt: undefined });
   return {
     reply: { ok: true, branch, host: launch.host, warning: launch.agentStarted === false ? "the agent did not start" : undefined },
     after: async () => refreshStatusesSoon(host),

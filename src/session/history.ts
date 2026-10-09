@@ -52,6 +52,12 @@ export interface HistoryEntry {
    */
   message?: string;
   author?: string;
+  /**
+   * When you marked the session done in the Mac app: a question answered in
+   * the terminal, say, that will never have a reply or a pull request to say
+   * so for it. A follow-up clears it, since that is more work.
+   */
+  doneAt?: string;
 }
 
 export interface Stats {

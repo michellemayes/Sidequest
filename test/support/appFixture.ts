@@ -28,6 +28,10 @@ export function fixtureSessions(): { sessions: ReturnType<typeof appSessions>; s
     author: "dana",
   };
   const history: HistoryEntry[] = [
+    // Recorded before messages were, answered in its terminal, and marked done.
+    { ...base, branch: "ask/why-are-refunds-slow-20261008-0915", promptKey: "ask", promptLabel: "Ask",
+      worktreePath: "/Users/dana/.sidequest/worktrees/storefront/ask-why-are-refunds-slow-20261008-0915",
+      createdAt: "2026-10-08T09:15:00.000Z", message: undefined, author: undefined, doneAt: "2026-10-08T10:02:00.000Z" },
     { ...base, branch: "investigate/webhook-502s", promptKey: "investigate", promptLabel: "Investigate",
       worktreePath: "/Users/dana/.sidequest/worktrees/payments/investigate-webhook-502s", repoLabel: "payments",
       repoPath: "/Users/dana/src/payments", channel: "payments", message: "Webhook 502s since deploy", author: "sam",
@@ -37,9 +41,10 @@ export function fixtureSessions(): { sessions: ReturnType<typeof appSessions>; s
   const statuses = new Map<string, SessionStatus>([
     ["claude/fix-checkout-total", { state: "pr-open", commits: 2, dirty: false, pr: { number: 128, url: "https://github.com/acme/storefront/pull/128", state: "OPEN" }, resultMs: 1760020000000, resultPending: true, exitCode: null }],
     ["investigate/webhook-502s", { state: "failed", commits: 0, dirty: false, pr: null, resultMs: null, resultPending: false, exitCode: 1 }],
+    ["ask/why-are-refunds-slow-20261008-0915", { state: "working", commits: 0, dirty: false, pr: null, resultMs: null, resultPending: false, exitCode: null }],
   ]);
   return {
     sessions: appSessions(history, statuses, { postResults: "ask" }),
-    stats: { total: 2, today: 2, streak: 6, bestStreak: 9, firstToday: 0 },
+    stats: { total: 3, today: 2, streak: 6, bestStreak: 9, firstToday: 0 },
   };
 }

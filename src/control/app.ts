@@ -22,7 +22,7 @@ import { cleanSweepOptions, sweepWorktrees } from "../session/cleanup.js";
 import { loadSyncState } from "../config/sync.js";
 import { headlessPaths } from "../terminals/headless.js";
 import { readTail } from "../daemon.js";
-import { computeStats, loadHistory, type HistoryEntry } from "../session/history.js";
+import { computeStats, loadHistory, updateSession, type HistoryEntry } from "../session/history.js";
 import { readResult } from "../session/result.js";
 import type { SessionStatus } from "../session/status.js";
 import { TERMINAL_DEFINITIONS } from "../terminals/registry.js";
@@ -79,7 +79,9 @@ export interface AppSession {
   resultMs: number | null;
   resultPending: boolean;
   exitCode: number | null;
-  /** A reply waiting for you, or a run that failed. */
+  /** When you marked it done yourself; null until you do. */
+  doneAt: string | null;
+  /** A reply waiting for you, or a run that failed, on a session you have not marked done. */
   needsYou: boolean;
   /** Runs with no terminal, so the app is where you watch and work on it. */
   headless: boolean;
@@ -95,12 +97,24 @@ function plainSlack(text: string): string {
     .replace(/[*_~`]/g, "");
 }
 
+/**
+ * A branch Sidequest named, `investigate/jeff-did-the-match-20260929-2208`,
+ * read back as words: "Jeff did the match". Null for one it did not name.
+ */
+export function branchWords(branch: string): string | null {
+  const stem = branch.slice(branch.lastIndexOf("/") + 1);
+  const match = stem.match(/^(.+?)-\d{8}-\d{4}(?:-\d+)?$/);
+  if (!match || match[1]!.startsWith("msg-")) return null;
+  const words = match[1]!.replace(/-+/g, " ").trim();
+  return words ? words[0]!.toUpperCase() + words.slice(1) : null;
+}
+
 export function sessionTitle(entry: HistoryEntry): string {
   const line = plainSlack(entry.message ?? "")
     .split("\n")
     .map((l) => l.trim())
     .find((l) => l.length > 0);
-  const title = line ?? `${entry.promptLabel || "Session"} · ${entry.branch}`;
+  const title = line ?? branchWords(entry.branch) ?? `${entry.promptLabel || "Session"} · ${entry.branch}`;
   return title.length > TITLE_MAX ? `${title.slice(0, TITLE_MAX - 1).trimEnd()}…` : title;
 }
 
@@ -143,7 +157,8 @@ export function appSessions(
       resultMs: status?.resultMs ?? null,
       resultPending,
       exitCode: status?.exitCode ?? null,
-      needsYou: resultPending || status?.state === "failed",
+      doneAt: entry.doneAt ?? null,
+      needsYou: !entry.doneAt && (resultPending || status?.state === "failed"),
       headless: false,
       running: false,
     });
@@ -339,7 +354,15 @@ export function createAppHandler(
         const entry = await sessionFor(request);
         if ((await runState(entry.worktreePath)).running) throw new UserFacingError("It's still running.", "Stop it first.");
         await armRunAgain(entry.worktreePath);
+        if (entry.doneAt) await updateSession(entry.branch, { doneAt: undefined });
         return host.ask({ id: String(request.id), op: "reopen", branch: entry.branch });
+      }
+      case "mark-done": {
+        // For a session with nothing to show it is finished: a question answered in its terminal, say.
+        const entry = await sessionFor(request);
+        const done = request.done !== false;
+        await updateSession(entry.branch, { doneAt: done ? new Date().toISOString() : undefined });
+        return { ok: true, branch: entry.branch, done };
       }
       case "terminal-command": {
         const entry = await sessionFor(request);
