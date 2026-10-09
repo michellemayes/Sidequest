@@ -88,7 +88,8 @@ describeIfChrome("overlay over CDP: settings sync", () => {
       // This computer's settings go up, pinned.
       const first = await waitFor(() => dm.messages[0]);
       expect(first).toBeTruthy();
-      expect(dm.pinned.has(first!.ts)).toBe(true);
+      // Pinning is a second call, so it lands just after the message itself.
+      expect(await waitFor(() => dm.pinned.has(first!.ts))).toBe(true);
       const note = decodeNote(first!.text);
       expect(note.content.channels["eng-alerts"]).toMatchObject([{ name: "repo", remote: "" }]);
 

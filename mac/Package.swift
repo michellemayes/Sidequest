@@ -12,8 +12,10 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.6.4"),
-        // The terminal tab a headless session opens in.
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.2.0"),
+        // The terminal tab a headless session opens in. 1.19.0 added a build tool
+        // plugin, and a universal build (which goes through Xcode's build system)
+        // cannot resolve it: "missing target with GUID PACKAGE-TARGET:SwiftTermBuildInfoPlugin".
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm", "1.2.0" ..< "1.19.0"),
     ],
     targets: [
         .executableTarget(
