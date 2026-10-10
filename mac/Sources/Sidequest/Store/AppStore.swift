@@ -39,6 +39,8 @@ final class AppStore {
 
     private(set) var connection: Connection = .connecting
     private(set) var hello: Hello?
+    /// The engine turned down a request it doesn't know: it started before this app was installed.
+    private(set) var engineBehind = false
     private(set) var health: Health?
     private(set) var sessions: [AppSession] = []
     private(set) var stats: Stats?
@@ -111,6 +113,7 @@ final class AppStore {
         do {
             try client.connect()
             hello = try await client.request("hello", as: Hello.self)
+            engineBehind = false
             _ = try await client.request("subscribe", ["notices": true])
             approvals = (try? await client.request("approvals", as: ApprovalsReply.self))?.approvals ?? []
             connection = .connected
@@ -272,7 +275,7 @@ final class AppStore {
                                   detail: "Sidequest opens it with the overlay attached.", action: "Open Slack", fix: .restartSlack))
             }
         }
-        if let hello, !hello.build.isEmpty, let mine = BuildInfo.commit, !mine.isEmpty, !hello.build.hasPrefix(mine), !mine.hasPrefix(hello.build) {
+        if engineBehind || engineMismatch {
             out.append(Banner(id: "engine", title: "Sidequest's engine is a different version",
                               detail: CommandLineTool.bundled == nil ? "Update it to match this app." : "Switch to the one that came with this app.",
                               action: CommandLineTool.bundled == nil ? "Update" : "Switch", fix: .updateEngine))
@@ -298,6 +301,11 @@ final class AppStore {
         return out
     }
 
+    private var engineMismatch: Bool {
+        guard let hello, !hello.build.isEmpty, let mine = BuildInfo.commit, !mine.isEmpty else { return false }
+        return !hello.build.hasPrefix(mine) && !mine.hasPrefix(hello.build)
+    }
+
     func perform(_ fix: Banner.Fix) {
         switch fix {
         case .startDaemon: Task { await startDaemon() }
@@ -321,6 +329,14 @@ final class AppStore {
         do {
             try await body()
             lastError = nil
+        } catch let error as DaemonError where error.isUnknownOp {
+            engineBehind = true
+            lastError = DaemonError(
+                message: "Sidequest's engine is older than this app.",
+                hint: CommandLineTool.bundled == nil
+                    ? "Update it from the banner, then try again."
+                    : "Switch to the one that came with this app from the banner, then try again."
+            )
         } catch let error as DaemonError {
             lastError = error
         } catch {

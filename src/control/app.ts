@@ -302,18 +302,19 @@ export function createAppHandler(
   host: AppHost,
   hooks: { onSubscribe?: (connection: ControlConnection) => void; approvals?: Approvals } = {},
 ) {
+  // What this daemon started on. Read later, the disk may already hold the next
+  // version (the app swaps in its update while the old engine keeps running),
+  // and the app would take a stale engine for a matching one.
+  const startedOn = Promise.all([packageVersion(), builtCommit(installRoot())]);
   return async (request: ControlRequest, connection: ControlConnection): Promise<Record<string, unknown>> => {
     const op = request.op;
     if (SHARED_OPS.has(op)) return host.ask(request as unknown as AskRequest);
 
     switch (op) {
-      case "hello":
-        return {
-          ok: true,
-          protocol: PROTOCOL_VERSION,
-          version: await packageVersion(),
-          build: (await builtCommit(installRoot())) ?? "",
-        };
+      case "hello": {
+        const [version, build] = await startedOn;
+        return { ok: true, protocol: PROTOCOL_VERSION, version, build: build ?? "" };
+      }
       case "subscribe":
         connection.subscribed = true;
         connection.takesNotices = request.notices === true;

@@ -12,6 +12,9 @@ struct DaemonError: LocalizedError, Equatable {
         message: "Sidequest isn't running.",
         hint: "Start it, and it will connect to Slack."
     )
+
+    /// The daemon doesn't know the request: it is older than the app asking.
+    var isUnknownOp: Bool { message.hasPrefix("unknown op ") }
 }
 
 /// Talks to the running daemon over ~/.sidequest/control.sock: one JSON
