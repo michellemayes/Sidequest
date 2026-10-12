@@ -56,3 +56,86 @@ final class ModelsTests: XCTestCase {
         XCTAssertNil(bare.download)
     }
 }
+
+final class ActivityTests: XCTestCase {
+    private func fixture() throws -> [AppSession] {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "sessions", withExtension: "json", subdirectory: "Fixtures"))
+        return try JSONDecoder().decode(SessionsReply.self, from: Data(contentsOf: url)).sessions
+    }
+
+    func testFollowsWhereASessionHasGot() throws {
+        let sessions = try fixture()
+
+        // Two commits, a pull request and a reply waiting: the reply is what wants you.
+        let fix = ActivityStep.steps(for: sessions[0])
+        XCTAssertEqual(fix.map(\.label), ["Started from Slack", "Worktree ready", "2 commits", "Pull request #128 opened", "Reply drafted", "Merged"])
+        XCTAssertEqual(fix[0].detail, "Fix, from @dana in #storefront-eng")
+        XCTAssertEqual(fix[4].mark, .current)
+        XCTAssertEqual(fix.last?.mark, .pending)
+
+        // A question that failed before answering: no commits or pull request to wait for.
+        let failed = ActivityStep.steps(for: sessions[1])
+        XCTAssertEqual(failed.map(\.label), ["Started from Slack", "Worktree ready", "Agent stopped", "Reply", "Done"])
+        XCTAssertEqual(failed[2].mark, .failed)
+        XCTAssertEqual(failed[2].detail, "Exit code 1")
+
+        // Answered in its terminal and marked done by you.
+        let asked = ActivityStep.steps(for: sessions[2])
+        XCTAssertEqual(asked.map(\.label), ["Started from Slack", "Worktree ready", "Reply", "Done"])
+        XCTAssertEqual(asked.last?.mark, .reached)
+        XCTAssertNotNil(asked.last?.time)
+    }
+}
+
+final class ThemeTests: XCTestCase {
+    func testReadsAndWritesHex() {
+        XCTAssertEqual(RGB(hex: "#6D28D9")?.hex, "#6d28d9")
+        XCTAssertEqual(RGB(hex: "2563eb")?.hex, "#2563eb")
+        XCTAssertNil(RGB(hex: "violet"))
+        XCTAssertNil(RGB(hex: "#fff"))
+    }
+
+    /// Whatever you pick, text in it is darkened or lightened until it reads on the window.
+    func testTextShadesReadOnTheirBackground() throws {
+        let dark = RGB(red: 0.12, green: 0.12, blue: 0.13)
+        for hex in ["#ffd400", "#6d28d9", "#7dd3fc", "#111111", "#ffffff"] {
+            let colour = try XCTUnwrap(RGB(hex: hex))
+            XCTAssertGreaterThanOrEqual(colour.readable(on: .white).contrast(with: .white), 4.5, hex)
+            XCTAssertGreaterThanOrEqual(colour.readable(on: dark).contrast(with: dark), 4.5, hex)
+        }
+        XCTAssertEqual(RGB(hex: "#6d28d9")?.textOnFill, .white)
+        XCTAssertNotEqual(RGB(hex: "#ffd400")?.textOnFill, .white)
+    }
+
+    func testAPaletteKeepsDefaultsForMissingOrBadColours() throws {
+        let palette = try JSONDecoder().decode(Palette.self, from: Data(#"{"accent":"#2563eb","working":"blue"}"#.utf8))
+        XCTAssertEqual(palette.accent, "#2563eb")
+        XCTAssertEqual(palette.working, Palette().working)
+        XCTAssertEqual(palette.fix, Palette().fix)
+    }
+
+    func testTicketPromptsShareATag() {
+        let palette = Palette()
+        XCTAssertEqual(palette.tag("jira"), palette.rgb(\.ticket))
+        XCTAssertEqual(palette.tag("linear"), palette.rgb(\.ticket))
+        XCTAssertNil(palette.tag("my-own-prompt"))
+        XCTAssertNil(palette.rgb(Tone.neutral))
+    }
+
+    @MainActor
+    func testAppearanceSavesAndResets() throws {
+        let suite = "SidequestTests.appearance"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let appearance = Appearance(defaults: defaults)
+        appearance.set(\.accent, "#db2777")
+        appearance.set(\.done, "not a colour")
+        XCTAssertEqual(Appearance(defaults: defaults).palette.accent, "#db2777")
+        XCTAssertEqual(Appearance(defaults: defaults).palette.done, Palette().done)
+
+        appearance.reset()
+        XCTAssertEqual(Appearance(defaults: defaults).palette, Palette())
+    }
+}

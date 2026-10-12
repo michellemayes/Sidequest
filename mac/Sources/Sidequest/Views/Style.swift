@@ -1,38 +1,70 @@
 import SwiftUI
 
-/// How a session's state looks wherever it is shown: one symbol, one colour, one word.
+/// How a session's state looks wherever it is shown: one symbol, one of the palette's tones, one word.
 struct SessionLook {
     var symbol: String
-    var color: Color
+    var tone: Tone
     var word: String
 
     init(_ session: AppSession) {
         if session.markedDone {
-            self.init("checkmark.circle.fill", .green, "done")
+            self.init("checkmark.circle.fill", .done, "done")
         } else if session.resultPending {
-            self.init("text.bubble.fill", .accentColor, "reply ready")
+            self.init("text.bubble.fill", .needsYou, "reply ready")
         } else if session.headless && session.running {
-            self.init("circle.dotted", .blue, "running \(Elapsed.short(since: session.created))")
+            self.init("circle.dotted", .working, "running \(Elapsed.short(since: session.created))")
         } else {
             switch session.state {
-            case "failed": self.init("xmark.octagon.fill", .red, session.exitCode.map { "failed · exit \($0)" } ?? "failed")
-            case "committed": self.init("circle.lefthalf.filled", .orange, session.commits == 1 ? "1 commit" : "\(session.commits) commits")
-            case "pr-open": self.init("arrow.triangle.pull", .green, session.pr.map { "PR #\($0.number)" } ?? "PR open")
-            case "pr-closed": self.init("xmark.circle", .secondary, "PR closed")
-            case "merged": self.init("arrow.triangle.merge", .purple, "merged")
-            case "answered": self.init("text.bubble", .teal, "answered")
-            case "gone": self.init("archivebox", .secondary, "cleaned up")
-            case "working": self.init("circle.dotted", .blue, "working")
+            case "failed": self.init("xmark.octagon.fill", .failed, session.exitCode.map { "failed · exit \($0)" } ?? "failed")
+            case "committed": self.init("circle.lefthalf.filled", .working, session.commits == 1 ? "1 commit" : "\(session.commits) commits")
+            case "pr-open": self.init("arrow.triangle.pull", .done, session.pr.map { "PR #\($0.number)" } ?? "PR open")
+            case "pr-closed": self.init("xmark.circle", .neutral, "PR closed")
+            case "merged": self.init("arrow.triangle.merge", .done, "merged")
+            case "answered": self.init("text.bubble", .done, "answered")
+            case "gone": self.init("archivebox", .neutral, "cleaned up")
+            case "working": self.init("circle.dotted", .working, "working")
             // Not followed any more (too old, or tracking is off): nothing new is known about it.
-            default: self.init("moon.zzz", .secondary, "idle")
+            default: self.init("moon.zzz", .neutral, "idle")
             }
         }
     }
 
-    private init(_ symbol: String, _ color: Color, _ word: String) {
+    private init(_ symbol: String, _ tone: Tone, _ word: String) {
         self.symbol = symbol
-        self.color = color
+        self.tone = tone
         self.word = word
+    }
+}
+
+/// A small round mark in a tone's colour, ringed with a tint of it.
+struct StatusDot: View {
+    @Environment(\.theme) private var theme
+    let tone: Tone
+
+    var body: some View {
+        Circle()
+            .fill(theme.fill(tone))
+            .frame(width: 9, height: 9)
+            .background(Circle().fill(theme.fill(tone).opacity(0.2)).padding(-3))
+            .accessibilityHidden(true)
+    }
+}
+
+/// A word in a capsule, tinted with a tone, or filled with it when it wants you.
+struct Pill: View {
+    @Environment(\.theme) private var theme
+    let text: String
+    let tone: Tone
+    var filled = false
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .monospacedDigit()
+            .lineLimit(1)
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(filled ? theme.fill(tone) : theme.fill(tone).opacity(0.14), in: Capsule())
+            .foregroundStyle(filled ? theme.onFill(tone) : theme.text(tone))
     }
 }
 
@@ -42,14 +74,23 @@ struct StatusPill: View {
 
     var body: some View {
         let look = SessionLook(session)
-        let filled = session.resultPending && !session.markedDone
-        Text(look.word)
+        Pill(text: look.word, tone: look.tone, filled: session.resultPending && !session.markedDone)
+    }
+}
+
+/// A prompt's name in its tag colour.
+struct PromptChip: View {
+    @Environment(\.theme) private var theme
+    let text: String
+    let promptKey: String
+
+    var body: some View {
+        Text(text)
             .font(.caption2.weight(.semibold))
-            .monospacedDigit()
             .lineLimit(1)
-            .padding(.horizontal, 7).padding(.vertical, 2)
-            .background(filled ? look.color : look.color.opacity(0.14), in: Capsule())
-            .foregroundStyle(filled ? Color.white : look.color)
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .foregroundStyle(theme.tagText(promptKey))
+            .background(theme.tagFill(promptKey), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
     }
 }
 
@@ -59,25 +100,7 @@ struct PromptTag: View {
 
     var body: some View {
         if !session.promptLabel.isEmpty {
-            Text(session.promptLabel)
-                .font(.caption2.weight(.medium))
-                .lineLimit(1)
-                .padding(.horizontal, 6).padding(.vertical, 1)
-                .foregroundStyle(color)
-                .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-        }
-    }
-
-    private var color: Color {
-        switch session.promptKey {
-        case "fix": return .orange
-        case "investigate": return .purple
-        case "review": return .teal
-        case "ask": return .blue
-        case "linear": return .indigo
-        case "jira": return .cyan
-        case "github": return .gray
-        default: return .secondary
+            PromptChip(text: session.promptLabel, promptKey: session.promptKey)
         }
     }
 }

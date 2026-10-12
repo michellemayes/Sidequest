@@ -3,9 +3,8 @@ import Foundation
 import Observation
 
 /// Which sessions the list shows.
-enum SessionFilter: Hashable {
+enum SessionFilter: Hashable, CaseIterable {
     case needsYou, working, done, all
-    case repo(String)
 
     var title: String {
         switch self {
@@ -13,9 +12,40 @@ enum SessionFilter: Hashable {
         case .working: return "Working"
         case .done: return "Done"
         case .all: return "All sessions"
-        case .repo(let name): return name
         }
     }
+
+    /// What the list's filter bar calls it.
+    var short: String { self == .all ? "All" : title }
+}
+
+/// The parts the list is grouped in, in the order it shows them.
+enum SessionGroup: CaseIterable, Identifiable {
+    case needsYou, working, done
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .needsYou: return "Needs you"
+        case .working: return "Working"
+        case .done: return "Done"
+        }
+    }
+
+    var tone: Tone {
+        switch self {
+        case .needsYou: return .needsYou
+        case .working: return .working
+        case .done: return .neutral
+        }
+    }
+}
+
+struct SessionSection: Identifiable {
+    var group: SessionGroup
+    var sessions: [AppSession]
+    var id: SessionGroup { group }
 }
 
 /// Something wrong, with the one thing that fixes it.
@@ -51,7 +81,9 @@ final class AppStore {
     /// Each headless session's conversation so far, by branch.
     private(set) var transcripts: [String: [TranscriptItem]] = [:]
     private(set) var structuredTranscripts: Set<String> = []
-    var filter: SessionFilter = .needsYou
+    var filter: SessionFilter = .all
+    /// One repo's sessions only; nil for every repo.
+    var repoFilter: String?
     /// The sessions picked in the list; the detail shows one when exactly one is.
     var selection: Set<AppSession.ID> = []
     var search = ""
@@ -213,28 +245,45 @@ final class AppStore {
     }
     var repos: [String] { Array(Set(sessions.map(\.repo).filter { !$0.isEmpty })).sorted() }
 
-    func count(_ filter: SessionFilter) -> Int { sessions.filter { matches($0, filter) }.count }
+    /// Where a session sits in the list: whatever needs you first, then what is still going, then the rest.
+    func group(of session: AppSession) -> SessionGroup {
+        if needsYou(session) { return .needsYou }
+        return session.isWorking ? .working : .done
+    }
+
+    /// How many sessions a filter shows, in the repo picked.
+    func count(_ filter: SessionFilter) -> Int { sessions.filter { inRepo($0) && matches($0, filter) }.count }
 
     var visibleSessions: [AppSession] {
         let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
         return sessions.filter { session in
-            matches(session, filter) && (needle.isEmpty
+            inRepo(session) && matches(session, filter) && (needle.isEmpty
                 || session.title.lowercased().contains(needle)
                 || session.branch.lowercased().contains(needle)
                 || session.channel.lowercased().contains(needle))
         }
     }
 
+    /// The visible sessions in their groups, leaving out empty ones.
+    var sections: [SessionSection] {
+        let visible = visibleSessions
+        return SessionGroup.allCases.compactMap { group in
+            let members = visible.filter { self.group(of: $0) == group }
+            return members.isEmpty ? nil : SessionSection(group: group, sessions: members)
+        }
+    }
+
     var selectedSession: AppSession? { selection.count == 1 ? sessions.first(where: { selection.contains($0.id) }) : nil }
     var selectedSessions: [AppSession] { sessions.filter { selection.contains($0.id) } }
 
+    private func inRepo(_ session: AppSession) -> Bool { repoFilter.map { session.repo == $0 } ?? true }
+
     private func matches(_ session: AppSession, _ filter: SessionFilter) -> Bool {
         switch filter {
-        case .needsYou: return needsYou(session)
-        case .working: return session.isWorking && !needsYou(session)
-        case .done: return session.isDone && !needsYou(session)
+        case .needsYou: return group(of: session) == .needsYou
+        case .working: return group(of: session) == .working
+        case .done: return group(of: session) == .done
         case .all: return true
-        case .repo(let name): return session.repo == name
         }
     }
 
@@ -242,6 +291,7 @@ final class AppStore {
     func reveal(branch: String) {
         guard let session = sessions.first(where: { $0.branch == branch }) else { return }
         filter = needsYou(session) ? .needsYou : .all
+        if repoFilter != nil && repoFilter != session.repo { repoFilter = nil }
         selection = [session.id]
         NSApp.activate()
     }

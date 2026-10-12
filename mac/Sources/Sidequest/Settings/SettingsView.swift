@@ -4,7 +4,8 @@ import SwiftUI
 
 /// Every option Sidequest has, one tab per part of it. Changes save at once,
 /// through the daemon, which checks them against the same schema as
-/// config.json and hands them to the Slack overlay.
+/// config.json and hands them to the Slack overlay. Appearance is the
+/// exception: the app's colours stay in this Mac's preferences.
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
 
@@ -18,6 +19,7 @@ struct SettingsView: View {
             } else {
                 TabView {
                     GeneralPane().tabItem { Label("General", systemImage: "gearshape") }
+                    AppearanceEditor().tabItem { Label("Appearance", systemImage: "paintpalette") }
                     AgentPane().tabItem { Label("Agent", systemImage: "sparkle") }
                     TerminalPane().tabItem { Label("Terminal", systemImage: "terminal") }
                     SlackPane().tabItem { Label("Slack", systemImage: "number") }
