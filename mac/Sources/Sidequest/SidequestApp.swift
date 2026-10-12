@@ -6,18 +6,22 @@ struct SidequestApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var store: AppStore
     @State private var updater: Updater
+    @State private var appearance: Appearance
 
     init() {
         let store = AppStore()
         _store = State(initialValue: store)
+        _appearance = State(initialValue: Appearance())
         _updater = State(initialValue: Updater(notifier: store.notifier))
     }
 
     var body: some Scene {
         Window("Sidequest", id: "main") {
             ContentView()
+                .themed()
                 .environment(store)
                 .environment(updater)
+                .environment(appearance)
                 .frame(minWidth: 900, minHeight: 560)
                 .task {
                     store.start()
@@ -36,8 +40,10 @@ struct SidequestApp: App {
 
         Settings {
             SettingsView()
+                .themed()
                 .environment(store)
                 .environment(updater)
+                .environment(appearance)
         }
     }
 }

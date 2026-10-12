@@ -1,29 +1,47 @@
 import AppKit
 import SwiftUI
 
-/// The main window: what to show on the left, the sessions in the middle, the one you picked on the right.
+/// The main window: your sessions on the left, grouped by what needs you, and the one you picked on the right.
 struct ContentView: View {
     @Environment(AppStore.self) private var store
     @Environment(Updater.self) private var updater
+    @Environment(Appearance.self) private var appearance
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.theme) private var theme
+    @State private var showAppearance = false
 
     var body: some View {
         @Bindable var store = store
         NavigationSplitView {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 260)
-        } content: {
             SessionListView()
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+                .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 440)
         } detail: {
-            if let session = store.selectedSession {
-                SessionDetailView(session: session)
-                    .id(session.id)
-            } else if store.selection.count > 1 {
-                SelectionDetailView()
-            } else {
-                EmptyDetailView()
+            Group {
+                if let session = store.selectedSession {
+                    SessionDetailView(session: session)
+                        .id(session.id)
+                } else if store.selection.count > 1 {
+                    SelectionDetailView()
+                } else {
+                    EmptyDetailView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(theme.detailSurface ?? Color.clear)
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { showAppearance.toggle() } label: {
+                    Label("Appearance", systemImage: "paintpalette")
+                }
+                .help("Choose the app's colours")
+                .popover(isPresented: $showAppearance, arrowEdge: .bottom) {
+                    AppearanceEditor()
+                        .frame(width: 380, height: 560)
+                        .themed()
+                        .environment(appearance)
+                }
             }
         }
         .onAppear {
@@ -105,122 +123,250 @@ struct EmptyDetailView: View {
     }
 }
 
-/// Needs you, working, done, all, then one entry per repo; your stats at the bottom.
-struct SidebarView: View {
+/// The sessions, grouped into what needs you, what is working and what is done, with a filter bar and a
+/// repo picker above them and your streak below.
+///
+/// The list keeps its own selection rather than the system's, so the picked row wears the accent you chose:
+/// a click picks one, ⌘-click adds or removes one, ⇧-click picks a run, and the arrow keys move.
+struct SessionListView: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
+    /// Where a ⇧-click run starts.
+    @State private var anchor: AppSession.ID?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        @Bindable var store = store
+        ScrollViewReader { proxy in
+            List {
+                ForEach(store.sections) { section in
+                    Section {
+                        ForEach(section.sessions) { session in
+                            row(session)
+                        }
+                    } header: {
+                        GroupHeader(group: section.group, count: section.sessions.count)
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(theme.listSurface == nil ? .automatic : .hidden)
+            .background(theme.listSurface ?? Color.clear)
+            .focusable()
+            .focusEffectDisabled()
+            .focused($focused)
+            .onKeyPress(.downArrow) { move(1, proxy); return .handled }
+            .onKeyPress(.upArrow) { move(-1, proxy); return .handled }
+        }
+        .overlay {
+            if store.visibleSessions.isEmpty {
+                ContentUnavailableView(store.filter == .needsYou ? "Nothing needs you" : "No sessions here",
+                                       systemImage: store.filter == .needsYou ? "checkmark.seal" : "tray")
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                ForEach(store.banners) { banner in
+                    BannerView(banner: banner)
+                }
+                VStack(spacing: 8) {
+                    FilterBar()
+                    RepoPicker()
+                }
+                .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 6)
+            }
+            .background(theme.listSurface.map { AnyShapeStyle($0) } ?? AnyShapeStyle(Material.bar))
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            StreakCard()
+        }
+        .navigationTitle(store.filter.title)
+        .searchable(text: $store.search, placement: .toolbar)
+    }
+
+    private func row(_ session: AppSession) -> some View {
+        let selected = store.selection.contains(session.id)
+        return SessionRow(session: session)
+            .contentShape(Rectangle())
+            .onTapGesture { click(session) }
+            .listRowBackground(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(selected ? theme.selection : Color.clear)
+                    .padding(.horizontal, 8)
+            )
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                Button {
+                    Task { await store.markDone([session], done: !session.markedDone) }
+                } label: {
+                    Label(session.markedDone ? "Not Done" : "Done",
+                          systemImage: session.markedDone ? "arrow.uturn.backward" : "checkmark")
+                }
+                .tint(session.markedDone ? Color.gray : Color.green)
+            }
+            .contextMenu {
+                if selected && store.selection.count > 1 {
+                    SelectionMenu(ids: store.selection)
+                } else {
+                    SessionMenu(session: session)
+                }
+            }
+            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction { click(session) }
+    }
+
+    /// The visible sessions top to bottom, as the arrow keys and ⇧-click walk them.
+    private var order: [AppSession.ID] { store.sections.flatMap { $0.sessions.map(\.id) } }
+
+    private func click(_ session: AppSession) {
+        focused = true
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) {
+            if store.selection.contains(session.id) { store.selection.remove(session.id) } else { store.selection.insert(session.id) }
+            anchor = session.id
+        } else if flags.contains(.shift), let anchor, let from = order.firstIndex(of: anchor), let to = order.firstIndex(of: session.id) {
+            store.selection = Set(order[min(from, to)...max(from, to)])
+        } else {
+            store.selection = [session.id]
+            anchor = session.id
+        }
+    }
+
+    private func move(_ step: Int, _ proxy: ScrollViewProxy) {
+        let ids = order
+        guard !ids.isEmpty else { return }
+        let current = (store.selection.count == 1 ? store.selection.first : anchor).flatMap { ids.firstIndex(of: $0) }
+        let next = current.map { min(max($0 + step, 0), ids.count - 1) } ?? (step > 0 ? 0 : ids.count - 1)
+        store.selection = [ids[next]]
+        anchor = ids[next]
+        proxy.scrollTo(ids[next])
+    }
+}
+
+/// A group's name in its tone, with how many it holds.
+struct GroupHeader: View {
+    @Environment(\.theme) private var theme
+    let group: SessionGroup
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(group.title.uppercased())
+                .foregroundStyle(group.tone == .neutral ? Color.secondary : theme.text(group.tone))
+            Text("\(count)").foregroundStyle(.secondary).monospacedDigit()
+        }
+        .font(.caption.weight(.semibold))
+        .tracking(0.4)
+    }
+}
+
+/// Needs you, Working, Done or All, each with its count.
+struct FilterBar: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(SessionFilter.allCases, id: \.self) { filter in
+                let on = store.filter == filter
+                Button { store.filter = filter } label: {
+                    HStack(spacing: 4) {
+                        Text(filter.short)
+                        Text("\(store.count(filter))")
+                            .monospacedDigit()
+                            .foregroundStyle(filter == .needsYou && store.count(filter) > 0 ? theme.text(.needsYou) : Color.secondary)
+                    }
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, minHeight: 24)
+                    .background(on ? Color(nsColor: .controlBackgroundColor) : Color.clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .shadow(color: on ? .black.opacity(0.12) : .clear, radius: 1, y: 0.5)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(on ? Color.primary : Color.secondary)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+/// Every repo, or one.
+struct RepoPicker: View {
     @Environment(AppStore.self) private var store
 
     var body: some View {
         @Bindable var store = store
-        List(selection: Binding(get: { store.filter }, set: { if let f = $0 { store.filter = f } })) {
-            Section {
-                row(.needsYou, icon: "exclamationmark.bubble.fill", tint: .orange, badge: true)
-                row(.working, icon: "circle.dotted", tint: .blue)
-                row(.done, icon: "checkmark.circle.fill", tint: .green)
-                row(.all, icon: "tray.full.fill", tint: .secondary)
-            }
-            if !store.repos.isEmpty {
-                Section("Repos") {
-                    ForEach(store.repos, id: \.self) { repo in
-                        row(.repo(repo), icon: "folder", tint: .secondary)
-                    }
+        if store.repos.count > 1 || store.repoFilter != nil {
+            Picker(selection: $store.repoFilter) {
+                Text("All repos").tag(String?.none)
+                Divider()
+                ForEach(store.repos, id: \.self) { repo in
+                    Text(repo).tag(Optional(repo))
                 }
+            } label: {
+                Label("Repo", systemImage: "folder").foregroundStyle(.secondary)
             }
+            .pickerStyle(.menu)
+            .controlSize(.small)
         }
-        .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom) {
-            if let stats = store.stats {
-                HStack(spacing: 8) {
+    }
+}
+
+/// Your day streak; a click shows the rest of your stats.
+struct StreakCard: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        if let stats = store.stats {
+            Button { store.showStats = true } label: {
+                HStack(spacing: 10) {
                     Image(systemName: "flame.fill")
                         .foregroundStyle(stats.streak > 0 ? Color.orange : Color.secondary)
                         .font(.title3)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(stats.streak == 1 ? "1-day streak" : "\(stats.streak)-day streak")
                             .font(.callout.weight(.semibold))
-                        Text("\(stats.today) today · \(stats.total) in all")
+                        Text("\(stats.today) today · best is \(stats.bestStreak == 1 ? "1 day" : "\(stats.bestStreak) days")")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
+                    Text("Stats").font(.caption).foregroundStyle(theme.accentText)
                 }
                 .padding(10)
-                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .padding(10)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.quaternary))
                 .contentShape(Rectangle())
-                .onTapGesture { store.showStats = true }
-                .help("Show stats")
             }
+            .buttonStyle(.plain)
+            .padding(10)
+            .help("Show stats")
         }
-    }
-
-    private func row(_ filter: SessionFilter, icon: String, tint: Color, badge: Bool = false) -> some View {
-        let count = store.count(filter)
-        let label: Text? = badge && count == 0 ? nil : Text("\(count)")
-        return Label {
-            Text(filter.title)
-        } icon: {
-            Image(systemName: icon).foregroundStyle(tint)
-        }
-        .badge(label)
-        .tag(filter)
     }
 }
 
-/// The sessions for the sidebar's choice, named for their Slack messages.
-struct SessionListView: View {
-    @Environment(AppStore.self) private var store
-
-    var body: some View {
-        @Bindable var store = store
-        VStack(spacing: 0) {
-            ForEach(store.banners) { banner in
-                BannerView(banner: banner)
-            }
-            List(store.visibleSessions, selection: $store.selection) { session in
-                SessionRow(session: session)
-                    .tag(session.id)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button {
-                            Task { await store.markDone([session], done: !session.markedDone) }
-                        } label: {
-                            Label(session.markedDone ? "Not Done" : "Done",
-                                  systemImage: session.markedDone ? "arrow.uturn.backward" : "checkmark")
-                        }
-                        .tint(session.markedDone ? Color.gray : Color.green)
-                    }
-            }
-            .contextMenu(forSelectionType: AppSession.ID.self) { ids in
-                SelectionMenu(ids: ids)
-            }
-            .overlay {
-                if store.visibleSessions.isEmpty {
-                    ContentUnavailableView(store.filter == .needsYou ? "Nothing needs you" : "No sessions here",
-                                           systemImage: store.filter == .needsYou ? "checkmark.seal" : "tray")
-                }
-            }
-        }
-        .navigationTitle(store.filter.title)
-        .searchable(text: $store.search, placement: .toolbar)
-    }
-}
-
+/// A session in the list: its state, its message, where it came from, and what it is waiting on.
 struct SessionRow: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     let session: AppSession
 
     var body: some View {
         let look = SessionLook(session)
+        let needsYou = store.needsYou(session)
+        let asking = !store.pendingApprovals(for: session).isEmpty
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: store.pendingApprovals(for: session).isEmpty ? look.symbol : "hand.raised.fill")
-                .foregroundStyle(store.pendingApprovals(for: session).isEmpty ? look.color : Color.orange)
-                .font(.body)
-                .frame(width: 18)
-                .padding(.top, 1)
+            StatusDot(tone: asking ? .needsYou : look.tone)
+                .padding(.top, 5)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(session.title)
-                        .font(.body.weight(store.needsYou(session) ? .semibold : .regular))
+                        .font(.body.weight(needsYou ? .semibold : .regular))
                         .lineLimit(2)
-                        .foregroundStyle(session.markedDone ? .secondary : .primary)
+                        .foregroundStyle(store.group(of: session) == .done ? Color.secondary : Color.primary)
                     Spacer(minLength: 4)
                     Text(Elapsed.short(since: session.created))
                         .font(.caption)
@@ -234,12 +380,29 @@ struct SessionRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    Spacer(minLength: 4)
-                    StatusPill(session: session)
+                }
+                if let hint {
+                    Text(hint)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(needsYou ? theme.text(asking ? .needsYou : look.tone) : Color.secondary)
+                        .lineLimit(1)
                 }
             }
         }
         .padding(.vertical, 5)
+    }
+
+    /// What it is waiting on, in a few words; nil when the state already says it all.
+    private var hint: String? {
+        if let approval = store.pendingApprovals(for: session).first { return "\(approval.tool) wants to run" }
+        if session.markedDone { return nil }
+        if session.resultPending { return session.pr.map { "Reply ready to review · PR #\($0.number)" } ?? "Reply ready to review" }
+        if session.state == "failed" { return session.exitCode.map { "Stopped with exit code \($0)" } ?? "Stopped with an error" }
+        if session.headless && session.running { return "Running in the background" }
+        if session.state == "committed" && session.pr == nil {
+            return session.commits == 1 ? "1 commit, no pull request yet" : "\(session.commits) commits, no pull request yet"
+        }
+        return nil
     }
 }
 

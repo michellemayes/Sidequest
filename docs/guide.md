@@ -194,10 +194,21 @@ It picks up your Slack theme and moves out of the way of Slack's own buttons.
 Sidequest also comes as a Mac app, a window you can keep open beside Slack. You
 still start sessions from Slack; the app is where you follow them:
 
-- **Sessions**: Needs you, Working and Done, or one repo at a time. Each is named
-  for the Slack message it came from, and shows how far it has got (commits, its
-  pull request, a reply waiting), with the agent's reply to edit and post, and a
-  box to send it a follow-up. The Dock icon counts what needs you.
+- **Sessions**: one list, grouped into Needs you, Working and Done, with a bar
+  to show just one group and a picker for one repo at a time. Each is named for
+  the Slack message it came from, and says what it is waiting on ("Reply ready to
+  review", "Stopped with exit code 1"). Pick one and what wants you comes first
+  (the agent's reply to edit and post, a question, a failure), then the message
+  and an activity timeline of how far it has got (commits, its pull request, the
+  reply, the merge), its details at the side, and a box to send it a follow-up.
+  The Dock icon counts what needs you.
+- **Appearance**: the palette button in the toolbar, or Settings › Appearance,
+  sets the accent, the colour of each status (Needs you, Working, Failed, Done)
+  and of each prompt's tag, and the list's and session pane's backgrounds:
+  standard, a tint of the accent, or a tint of a colour you pick. The selected
+  session is tinted with the accent. Text is shaded from your picks, and
+  backgrounds stay light in light mode and dark in dark mode, so everything stays
+  readable. The colours are kept in this Mac's preferences.
 - **Mark as Done** (⌘D, a right-click, or a swipe on the row) for the sessions
   nothing else says are finished, like a question answered in its terminal that
   will never get a reply or a pull request. It moves them out of Working and
@@ -212,7 +223,8 @@ still start sessions from Slack; the app is where you follow them:
   notification within the hour. Clicking it, or **Sidequest › Check for Updates…**,
   downloads the new version, checks its signature, and relaunches on it, all in the app.
 - **Headless sessions you can work on**: with `terminal` set to `headless`, a
-  session's window has three tabs. **Conversation** shows what the agent said and
+  session's window has four tabs. **Overview** is the same view as any other
+  session's, with the last few things the run did. **Conversation** shows what the agent said and
   did as it runs (from Claude Code's event stream; other agents show their log),
   with a box to tell it what to do next. **Changes** is the worktree's diff
   against its base. **Terminal** opens the agent right there, carrying on the

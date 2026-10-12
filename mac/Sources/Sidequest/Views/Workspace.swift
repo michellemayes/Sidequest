@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The tabs a headless session has: watch it, see what it changed, or take the wheel.
+/// The tabs a headless session has: where it has got to, watch it, see what it changed, or take the wheel.
 enum WorkspaceTab: String, CaseIterable, Identifiable {
+    case overview = "Overview"
     case conversation = "Conversation"
     case changes = "Changes"
     case terminal = "Terminal"
@@ -41,6 +42,7 @@ struct TranscriptView: View {
 }
 
 struct TranscriptRow: View {
+    @Environment(\.theme) private var theme
     let item: TranscriptItem
     @State private var expanded = false
 
@@ -52,8 +54,8 @@ struct TranscriptRow: View {
                 Text(item.text)
                     .textSelection(.enabled)
                     .padding(.horizontal, 11).padding(.vertical, 7)
-                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12))
-                    .foregroundStyle(.white)
+                    .background(theme.accent, in: RoundedRectangle(cornerRadius: 12))
+                    .foregroundStyle(theme.onAccent)
             }
         case "agent":
             Text(item.text).textSelection(.enabled)
@@ -80,6 +82,7 @@ struct TranscriptRow: View {
 /// A headless agent asking before a tool its limits would refuse.
 struct ApprovalCard: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
     let approval: Approval
 
     var body: some View {
@@ -102,8 +105,8 @@ struct ApprovalCard: View {
             }
         }
         .padding(12)
-        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor.opacity(0.6)))
+        .background(theme.fill(.needsYou).opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(theme.fill(.needsYou).opacity(0.5)))
     }
 }
 
