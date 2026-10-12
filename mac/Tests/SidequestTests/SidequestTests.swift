@@ -108,7 +108,7 @@ final class ThemeTests: XCTestCase {
     }
 
     func testAPaletteKeepsDefaultsForMissingOrBadColours() throws {
-        let palette = try JSONDecoder().decode(Palette.self, from: Data(#"{"accent":"#2563eb","working":"blue"}"#.utf8))
+        let palette = try JSONDecoder().decode(Palette.self, from: Data(##"{"accent":"#2563eb","working":"blue"}"##.utf8))
         XCTAssertEqual(palette.accent, "#2563eb")
         XCTAssertEqual(palette.working, Palette().working)
         XCTAssertEqual(palette.fix, Palette().fix)
