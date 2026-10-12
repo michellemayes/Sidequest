@@ -84,6 +84,10 @@ struct Palette: Codable, Equatable {
     var review = "#0f766e"
     /// Linear, GitHub and Jira prompts.
     var ticket = "#4338ca"
+    /// The list's background: "" for the standard one, "accent" for a tint of the accent, or a hex colour to tint it with.
+    var listSurface = ""
+    /// The session pane's background, the same way.
+    var detailSurface = ""
 
     init() {}
 
@@ -105,7 +109,16 @@ struct Palette: Codable, Equatable {
         ask = read(.ask, standard.ask)
         review = read(.review, standard.review)
         ticket = read(.ticket, standard.ticket)
+        func surface(_ key: CodingKeys) -> String {
+            guard let value = try? container.decodeIfPresent(String.self, forKey: key), Palette.isSurface(value) else { return "" }
+            return value
+        }
+        listSurface = surface(.listSurface)
+        detailSurface = surface(.detailSurface)
     }
+
+    /// "", "accent" or a hex colour.
+    static func isSurface(_ value: String) -> Bool { value.isEmpty || value == "accent" || RGB(hex: value) != nil }
 
     func rgb(_ key: KeyPath<Palette, String>) -> RGB {
         RGB(hex: self[keyPath: key]) ?? RGB(hex: Palette()[keyPath: key]) ?? .black
@@ -166,6 +179,36 @@ final class Appearance {
         )
     }
 
+    func setSurface(_ key: WritableKeyPath<Palette, String>, _ value: String) {
+        guard Palette.isSurface(value), palette[keyPath: key] != value else { return }
+        palette[keyPath: key] = value
+        save()
+    }
+
+    /// A background's picker: standard, a tint of the accent, or a tint of a colour of your own
+    /// (starting from the accent's, so the well opens on something sensible).
+    func surfaceKind(_ key: WritableKeyPath<Palette, String>) -> Binding<SurfaceKind> {
+        Binding(
+            get: { SurfaceKind(self.palette[keyPath: key]) },
+            set: { kind in
+                switch kind {
+                case .standard: self.setSurface(key, "")
+                case .accent: self.setSurface(key, "accent")
+                case .custom:
+                    if RGB(hex: self.palette[keyPath: key]) == nil { self.setSurface(key, self.palette.rgb(\.accent).hex) }
+                }
+            }
+        )
+    }
+
+    /// A background's colour well, for a custom tint.
+    func surfaceColor(_ key: WritableKeyPath<Palette, String>) -> Binding<Color> {
+        Binding(
+            get: { (RGB(hex: self.palette[keyPath: key]) ?? self.palette.rgb(\.accent)).color },
+            set: { color in if let rgb = RGB(color) { self.setSurface(key, rgb.hex) } }
+        )
+    }
+
     func reset() {
         palette = Palette()
         defaults.removeObject(forKey: Self.key)
@@ -176,13 +219,53 @@ final class Appearance {
     }
 }
 
+/// What a window background is tinted with.
+enum SurfaceKind: Hashable {
+    case standard, accent, custom
+
+    init(_ value: String) {
+        switch value {
+        case "": self = .standard
+        case "accent": self = .accent
+        default: self = .custom
+        }
+    }
+}
+
 /// The palette worked out for the light or dark appearance the window is in.
 struct Theme {
     var palette: Palette
     var scheme: ColorScheme
 
+    static let darkPage = RGB(red: 0.12, green: 0.12, blue: 0.13)
+
     /// What text sits on: the window's background, near enough.
-    private var page: RGB { scheme == .dark ? RGB(red: 0.12, green: 0.12, blue: 0.13) : .white }
+    private var page: RGB { scheme == .dark ? Self.darkPage : .white }
+
+    /// A background tinted with `base`: nearly white in light mode and nearly black in dark, whatever the
+    /// colour, so the window's own text keeps reading on it.
+    static func surface(from base: RGB, dark: Bool) -> RGB {
+        dark ? base.mixed(with: darkPage, 0.84) : base.mixed(with: .white, 0.92)
+    }
+
+    /// A background setting as a colour; nil for the standard background.
+    func surface(_ value: String) -> Color? {
+        let base: RGB
+        if value == "accent" {
+            base = palette.rgb(\.accent)
+        } else if let rgb = RGB(hex: value) {
+            base = rgb
+        } else {
+            return nil
+        }
+        return Self.surface(from: base, dark: scheme == .dark).color
+    }
+
+    var listSurface: Color? { surface(palette.listSurface) }
+    var detailSurface: Color? { surface(palette.detailSurface) }
+
+    /// The selected row in the list: a tint of the accent, in place of the system's highlight.
+    var selection: Color { accent.opacity(scheme == .dark ? 0.32 : 0.16) }
 
     var accent: Color { palette.rgb(\.accent).color }
     var accentText: Color { palette.rgb(\.accent).readable(on: page).color }
@@ -268,6 +351,16 @@ struct AppearanceEditor: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Section {
+                surface("List", \.listSurface)
+                surface("Session", \.detailSurface)
+            } header: {
+                Text("Window")
+            } footer: {
+                Text("A light tint in light mode and a dark one in dark mode, so text stays readable. The selected session is always tinted with the accent.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section("Status") {
                 status("Needs you", \.needsYou, .needsYou, sample: "reply ready", filled: true)
                 status("Working", \.working, .working, sample: "running")
@@ -290,6 +383,26 @@ struct AppearanceEditor: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func surface(_ label: String, _ key: WritableKeyPath<Palette, String>) -> some View {
+        let kind = SurfaceKind(appearance.palette[keyPath: key])
+        return HStack(spacing: 10) {
+            Picker(label, selection: appearance.surfaceKind(key)) {
+                Text("Standard").tag(SurfaceKind.standard)
+                Text("Accent tint").tag(SurfaceKind.accent)
+                Text("Custom tint").tag(SurfaceKind.custom)
+            }
+            if kind == .custom {
+                ColorPicker("\(label) tint", selection: appearance.surfaceColor(key), supportsOpacity: false)
+                    .labelsHidden()
+            }
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(theme.surface(appearance.palette[keyPath: key]) ?? Color(nsColor: .windowBackgroundColor))
+                .frame(width: 28, height: 18)
+                .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(.quaternary))
+                .accessibilityHidden(true)
+        }
     }
 
     private func status(_ label: String, _ key: WritableKeyPath<Palette, String>, _ tone: Tone, sample: String, filled: Bool = false) -> some View {

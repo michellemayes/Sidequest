@@ -114,6 +114,24 @@ final class ThemeTests: XCTestCase {
         XCTAssertEqual(palette.fix, Palette().fix)
     }
 
+    /// A tinted window background stays light in light mode and dark in dark mode, whatever it is tinted with.
+    func testWindowTintsKeepTextReadable() throws {
+        let nearBlack = RGB(red: 0.11, green: 0.1, blue: 0.13)
+        for hex in ["#000000", "#ffffff", "#ffd400", "#6d28d9", "#ff0000"] {
+            let base = try XCTUnwrap(RGB(hex: hex))
+            XCTAssertGreaterThanOrEqual(Theme.surface(from: base, dark: false).contrast(with: nearBlack), 7, hex)
+            XCTAssertGreaterThanOrEqual(Theme.surface(from: base, dark: true).contrast(with: .white), 7, hex)
+        }
+    }
+
+    func testWindowBackgroundsLoadOnlyWhatTheyUnderstand() throws {
+        let palette = try JSONDecoder().decode(Palette.self, from: Data(##"{"listSurface":"accent","detailSurface":"plaid"}"##.utf8))
+        XCTAssertEqual(palette.listSurface, "accent")
+        XCTAssertEqual(palette.detailSurface, "")
+        XCTAssertEqual(SurfaceKind(""), .standard)
+        XCTAssertEqual(SurfaceKind("#2563eb"), .custom)
+    }
+
     func testTicketPromptsShareATag() {
         let palette = Palette()
         XCTAssertEqual(palette.tag("jira"), palette.rgb(\.ticket))
@@ -134,6 +152,11 @@ final class ThemeTests: XCTestCase {
         appearance.set(\.done, "not a colour")
         XCTAssertEqual(Appearance(defaults: defaults).palette.accent, "#db2777")
         XCTAssertEqual(Appearance(defaults: defaults).palette.done, Palette().done)
+
+        appearance.setSurface(\.listSurface, "accent")
+        appearance.setSurface(\.detailSurface, "plaid")
+        XCTAssertEqual(Appearance(defaults: defaults).palette.listSurface, "accent")
+        XCTAssertEqual(Appearance(defaults: defaults).palette.detailSurface, "")
 
         appearance.reset()
         XCTAssertEqual(Appearance(defaults: defaults).palette, Palette())

@@ -204,8 +204,11 @@ still start sessions from Slack; the app is where you follow them:
   The Dock icon counts what needs you.
 - **Appearance**: the palette button in the toolbar, or Settings › Appearance,
   sets the accent, the colour of each status (Needs you, Working, Failed, Done)
-  and of each prompt's tag. Text is shaded from your picks so it stays readable
-  in light and dark mode. The colours are kept in this Mac's preferences.
+  and of each prompt's tag, and the list's and session pane's backgrounds:
+  standard, a tint of the accent, or a tint of a colour you pick. The selected
+  session is tinted with the accent. Text is shaded from your picks, and
+  backgrounds stay light in light mode and dark in dark mode, so everything stays
+  readable. The colours are kept in this Mac's preferences.
 - **Mark as Done** (⌘D, a right-click, or a swipe on the row) for the sessions
   nothing else says are finished, like a question answered in its terminal that
   will never get a reply or a pull request. It moves them out of Working and

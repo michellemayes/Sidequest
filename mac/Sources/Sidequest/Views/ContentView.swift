@@ -8,6 +8,7 @@ struct ContentView: View {
     @Environment(Appearance.self) private var appearance
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.theme) private var theme
     @State private var showAppearance = false
 
     var body: some View {
@@ -16,14 +17,18 @@ struct ContentView: View {
             SessionListView()
                 .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 440)
         } detail: {
-            if let session = store.selectedSession {
-                SessionDetailView(session: session)
-                    .id(session.id)
-            } else if store.selection.count > 1 {
-                SelectionDetailView()
-            } else {
-                EmptyDetailView()
+            Group {
+                if let session = store.selectedSession {
+                    SessionDetailView(session: session)
+                        .id(session.id)
+                } else if store.selection.count > 1 {
+                    SelectionDetailView()
+                } else {
+                    EmptyDetailView()
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(theme.detailSurface ?? Color.clear)
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -120,35 +125,38 @@ struct EmptyDetailView: View {
 
 /// The sessions, grouped into what needs you, what is working and what is done, with a filter bar and a
 /// repo picker above them and your streak below.
+///
+/// The list keeps its own selection rather than the system's, so the picked row wears the accent you chose:
+/// a click picks one, ⌘-click adds or removes one, ⇧-click picks a run, and the arrow keys move.
 struct SessionListView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.theme) private var theme
+    /// Where a ⇧-click run starts.
+    @State private var anchor: AppSession.ID?
+    @FocusState private var focused: Bool
 
     var body: some View {
         @Bindable var store = store
-        List(selection: $store.selection) {
-            ForEach(store.sections) { section in
-                Section {
-                    ForEach(section.sessions) { session in
-                        SessionRow(session: session)
-                            .tag(session.id)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button {
-                                    Task { await store.markDone([session], done: !session.markedDone) }
-                                } label: {
-                                    Label(session.markedDone ? "Not Done" : "Done",
-                                          systemImage: session.markedDone ? "arrow.uturn.backward" : "checkmark")
-                                }
-                                .tint(session.markedDone ? Color.gray : Color.green)
-                            }
+        ScrollViewReader { proxy in
+            List {
+                ForEach(store.sections) { section in
+                    Section {
+                        ForEach(section.sessions) { session in
+                            row(session)
+                        }
+                    } header: {
+                        GroupHeader(group: section.group, count: section.sessions.count)
                     }
-                } header: {
-                    GroupHeader(group: section.group, count: section.sessions.count)
                 }
             }
-        }
-        .listStyle(.sidebar)
-        .contextMenu(forSelectionType: AppSession.ID.self) { ids in
-            SelectionMenu(ids: ids)
+            .listStyle(.sidebar)
+            .scrollContentBackground(theme.listSurface == nil ? .automatic : .hidden)
+            .background(theme.listSurface ?? Color.clear)
+            .focusable()
+            .focusEffectDisabled()
+            .focused($focused)
+            .onKeyPress(.downArrow) { move(1, proxy); return .handled }
+            .onKeyPress(.upArrow) { move(-1, proxy); return .handled }
         }
         .overlay {
             if store.visibleSessions.isEmpty {
@@ -167,13 +175,70 @@ struct SessionListView: View {
                 }
                 .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 6)
             }
-            .background(.bar)
+            .background(theme.listSurface.map { AnyShapeStyle($0) } ?? AnyShapeStyle(Material.bar))
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             StreakCard()
         }
         .navigationTitle(store.filter.title)
         .searchable(text: $store.search, placement: .toolbar)
+    }
+
+    private func row(_ session: AppSession) -> some View {
+        let selected = store.selection.contains(session.id)
+        return SessionRow(session: session)
+            .contentShape(Rectangle())
+            .onTapGesture { click(session) }
+            .listRowBackground(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(selected ? theme.selection : Color.clear)
+                    .padding(.horizontal, 8)
+            )
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                Button {
+                    Task { await store.markDone([session], done: !session.markedDone) }
+                } label: {
+                    Label(session.markedDone ? "Not Done" : "Done",
+                          systemImage: session.markedDone ? "arrow.uturn.backward" : "checkmark")
+                }
+                .tint(session.markedDone ? Color.gray : Color.green)
+            }
+            .contextMenu {
+                if selected && store.selection.count > 1 {
+                    SelectionMenu(ids: store.selection)
+                } else {
+                    SessionMenu(session: session)
+                }
+            }
+            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction { click(session) }
+    }
+
+    /// The visible sessions top to bottom, as the arrow keys and ⇧-click walk them.
+    private var order: [AppSession.ID] { store.sections.flatMap { $0.sessions.map(\.id) } }
+
+    private func click(_ session: AppSession) {
+        focused = true
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) {
+            if store.selection.contains(session.id) { store.selection.remove(session.id) } else { store.selection.insert(session.id) }
+            anchor = session.id
+        } else if flags.contains(.shift), let anchor, let from = order.firstIndex(of: anchor), let to = order.firstIndex(of: session.id) {
+            store.selection = Set(order[min(from, to)...max(from, to)])
+        } else {
+            store.selection = [session.id]
+            anchor = session.id
+        }
+    }
+
+    private func move(_ step: Int, _ proxy: ScrollViewProxy) {
+        let ids = order
+        guard !ids.isEmpty else { return }
+        let current = (store.selection.count == 1 ? store.selection.first : anchor).flatMap { ids.firstIndex(of: $0) }
+        let next = current.map { min(max($0 + step, 0), ids.count - 1) } ?? (step > 0 ? 0 : ids.count - 1)
+        store.selection = [ids[next]]
+        anchor = ids[next]
+        proxy.scrollTo(ids[next])
     }
 }
 
