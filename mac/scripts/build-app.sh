@@ -14,7 +14,7 @@
 #                        identity also turns on the hardened runtime, for notarization
 #   UNIVERSAL            1 to build for both Apple silicon and Intel (default 1)
 #   BUNDLE_ENGINE        1 to carry the daemon and its own Node inside the app (default 1)
-#   NODE_VERSION         the Node.js release bundled with it (default 22.14.0)
+#   NODE_VERSION         the Node.js release bundled with it (default 22.23.4)
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -28,7 +28,7 @@ SPARKLE_PUBLIC_KEY="${SPARKLE_PUBLIC_KEY:-}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 UNIVERSAL="${UNIVERSAL:-1}"
 BUNDLE_ENGINE="${BUNDLE_ENGINE:-1}"
-NODE_VERSION="${NODE_VERSION:-22.14.0}"
+NODE_VERSION="${NODE_VERSION:-22.23.4}"
 repo_root="$(cd "$here/.." && pwd)"
 
 arch_flags=()
