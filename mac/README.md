@@ -45,7 +45,7 @@ team as the running copy (any valid signature, for an ad hoc build), swaps it in
 the app quits, and reopens on it. With Sparkle's keys set, Sparkle does this instead,
 checking each update's EdDSA signature too:
 
-1. Download Sparkle 2.6.4 and run `bin/generate_keys`. It stores the private key in
+1. Download Sparkle 2.9.6 and run `bin/generate_keys`. It stores the private key in
    your login keychain and prints the public key.
 2. Export the private key: `bin/generate_keys -x sparkle_private_key`.
 3. In the repository's Settings → Secrets and variables → Actions, add:

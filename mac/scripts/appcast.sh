@@ -9,7 +9,7 @@
 set -euo pipefail
 
 : "${VERSION:?}" "${BUILD:?}" "${ZIP:?}" "${REPOSITORY:?}"
-SPARKLE_VERSION="2.6.4"
+SPARKLE_VERSION="2.9.6"
 
 length="$(stat -f %z "$ZIP")"
 signature=""

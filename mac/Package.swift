@@ -11,7 +11,7 @@ let package = Package(
         .executable(name: "Sidequest", targets: ["Sidequest"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.6.4"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6"),
         // The terminal tab a headless session opens in. 1.19.0 added a build tool
         // plugin, and a universal build (which goes through Xcode's build system)
         // cannot resolve it: "missing target with GUID PACKAGE-TARGET:SwiftTermBuildInfoPlugin".
