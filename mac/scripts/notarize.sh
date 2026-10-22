@@ -41,7 +41,18 @@ if [ "$status" -ne 0 ] || [ "$verdict" != "Accepted" ]; then
 fi
 
 echo "==> staple"
-xcrun stapler staple "$app"
-xcrun stapler validate "$app"
+# stapler fetches the ticket from Apple's CloudKit, which can drop the
+# connection or not have the ticket yet just after it's accepted; try again.
+for attempt in 1 2 3 4 5; do
+  if xcrun stapler staple "$app" && xcrun stapler validate "$app"; then
+    break
+  fi
+  if [ "$attempt" -eq 5 ]; then
+    echo "Stapling failed after $attempt attempts" >&2
+    exit 1
+  fi
+  echo "Stapling failed (attempt $attempt); trying again in $((attempt * 15))s" >&2
+  sleep $((attempt * 15))
+done
 spctl --assess --type execute --verbose=2 "$app"
 echo "Notarized $app"
