@@ -30,6 +30,7 @@
       "exitCode": null,
       "doneAt": null,
       "needsYou": true,
+      "stale": false,
       "headless": false,
       "running": false
     },
@@ -59,6 +60,7 @@
       "exitCode": 1,
       "doneAt": null,
       "needsYou": true,
+      "stale": false,
       "headless": false,
       "running": false
     },
@@ -88,6 +90,7 @@
       "exitCode": null,
       "doneAt": "2026-10-08T10:02:00.000Z",
       "needsYou": false,
+      "stale": false,
       "headless": false,
       "running": false
     }

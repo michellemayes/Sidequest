@@ -6,6 +6,7 @@ import {
   computeStats,
   loadHistory,
   recordSession,
+  recordStatuses,
   type HistoryEntry,
 } from "../src/session/history.js";
 import { pageConfig } from "../src/config/pageConfig.js";
@@ -96,6 +97,25 @@ describe("history store", () => {
       "fix/thing-2",
       "fix/thing-3",
     ]);
+  });
+
+  it("keeps each session's last status, and leaves the file alone when nothing moved", async () => {
+    await recordSession(entry(0));
+    await recordSession(entry(1));
+    const pr = { number: 7, url: "https://x/7", state: "OPEN" as const };
+    const statuses = new Map([
+      ["fix/thing-0", { state: "pr-open" as const, commits: 2, dirty: true, pr, resultMs: 5, resultPending: true, exitCode: null }],
+    ]);
+    await recordStatuses(statuses);
+    const history = await loadHistory();
+    expect(history.find((h) => h.branch === "fix/thing-0")?.lastStatus).toEqual({ state: "pr-open", commits: 2, pr });
+    expect(history.find((h) => h.branch === "fix/thing-1")?.lastStatus).toBeUndefined();
+
+    const file = join(home, "history.json");
+    const before = (await lstat(file)).mtimeMs;
+    await new Promise((r) => setTimeout(r, 20));
+    await recordStatuses(statuses);
+    expect((await lstat(file)).mtimeMs).toBe(before);
   });
 
   it("treats a corrupt file as an empty history rather than failing", async () => {

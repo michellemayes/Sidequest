@@ -14,6 +14,7 @@ import { mkdir, open, readFile, rename } from "node:fs/promises";
 import { dirname } from "node:path";
 import { historyFile } from "../config/paths.js";
 import { log } from "../util/log.js";
+import type { SessionStatus } from "./status.js";
 
 export const HISTORY_LIMIT = 1000;
 
@@ -58,7 +59,17 @@ export interface HistoryEntry {
    * so for it. A follow-up clears it, since that is more work.
    */
   doneAt?: string;
+  /**
+   * Where the watcher last saw the session get to. It only follows the recent
+   * ones, so without this a session that answered or opened a pull request
+   * would fall back to not known, and read as still working, the day it got
+   * too old to follow. Missing on older entries.
+   */
+  lastStatus?: RecordedStatus;
 }
+
+/** The part of a session's status worth keeping once nobody is looking any more. */
+export type RecordedStatus = Pick<SessionStatus, "state" | "commits" | "pr">;
 
 export interface Stats {
   total: number;
@@ -160,6 +171,38 @@ export function updateSession(branch: string, patch: Partial<HistoryEntry>): Pro
     }
     return history;
   });
+}
+
+/**
+ * Note each followed session's status on its entry, so it outlives the
+ * watcher following it. Writes only when one has changed, since the watcher
+ * calls this on every change and most of them are to something else.
+ */
+export async function recordStatuses(statuses: Map<string, SessionStatus>): Promise<void> {
+  const changed = (entry: HistoryEntry): RecordedStatus | null => {
+    const status = statuses.get(entry.branch);
+    if (!status) return null;
+    const next: RecordedStatus = { state: status.state, commits: status.commits, pr: status.pr };
+    return sameRecorded(entry.lastStatus, next) ? null : next;
+  };
+  if (!(await loadHistory()).some((entry) => changed(entry))) return;
+  await rewrite((history) =>
+    history.map((entry) => {
+      const next = changed(entry);
+      return next ? { ...entry, lastStatus: next } : entry;
+    }),
+  );
+}
+
+function sameRecorded(a: RecordedStatus | undefined, b: RecordedStatus): boolean {
+  return (
+    a !== undefined &&
+    a.state === b.state &&
+    a.commits === b.commits &&
+    (a.pr?.number ?? null) === (b.pr?.number ?? null) &&
+    (a.pr?.state ?? null) === (b.pr?.state ?? null) &&
+    (a.pr?.url ?? null) === (b.pr?.url ?? null)
+  );
 }
 
 function rewrite(change: (history: HistoryEntry[]) => HistoryEntry[]): Promise<HistoryEntry[]> {

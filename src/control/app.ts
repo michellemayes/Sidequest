@@ -39,6 +39,11 @@ export const PROTOCOL_VERSION = 1;
 /** Sessions the app lists, newest first. The watcher follows two weeks; this is more than that usually holds. */
 const APP_SESSION_LIMIT = 200;
 const TITLE_MAX = 120;
+/**
+ * How long a session can go unfinished before it leaves Working by itself.
+ * As long as the watcher follows one: past that, it has been left, not forgotten.
+ */
+export const STALE_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
 
 /** What the app's handlers need from the running daemon. The Attacher is one. */
 export interface AppHost {
@@ -83,6 +88,8 @@ export interface AppSession {
   doneAt: string | null;
   /** A reply waiting for you, or a run that failed, on a session you have not marked done. */
   needsYou: boolean;
+  /** Not marked done and started over STALE_AFTER_MS ago, so the app files it with Done rather than Working. */
+  stale: boolean;
   /** Runs with no terminal, so the app is where you watch and work on it. */
   headless: boolean;
   /** A headless run is going right now. */
@@ -122,17 +129,20 @@ export function sessionTitle(entry: HistoryEntry): string {
 export function appSessions(
   history: HistoryEntry[],
   statuses: Map<string, SessionStatus>,
-  options: { postResults: Config["settings"]["postResults"]; limit?: number },
+  options: { postResults: Config["settings"]["postResults"]; limit?: number; now?: number },
 ): AppSession[] {
   const seen = new Set<string>();
   const out: AppSession[] = [];
+  const now = options.now ?? Date.now();
   for (let i = history.length - 1; i >= 0 && out.length < (options.limit ?? APP_SESSION_LIMIT); i -= 1) {
     const entry = history[i]!;
     const key = entry.worktreePath || entry.branch;
     if (seen.has(key)) continue;
     seen.add(key);
-    const status = statuses.get(entry.branch);
-    const resultPending = Boolean(status?.resultPending) && options.postResults === "ask";
+    // One too old for the watcher to follow keeps what it last saw.
+    const live = statuses.get(entry.branch);
+    const status = live ?? entry.lastStatus;
+    const resultPending = Boolean(live?.resultPending) && options.postResults === "ask";
     out.push({
       id: entry.worktreePath ? entry.worktreePath.split("/").pop() ?? entry.branch : entry.branch,
       branch: entry.branch,
@@ -152,13 +162,14 @@ export function appSessions(
       permalink: entry.permalink ?? "",
       state: status?.state ?? "unknown",
       commits: status?.commits ?? 0,
-      dirty: status?.dirty ?? false,
+      dirty: live?.dirty ?? false,
       pr: status?.pr ?? null,
-      resultMs: status?.resultMs ?? null,
+      resultMs: live?.resultMs ?? null,
       resultPending,
-      exitCode: status?.exitCode ?? null,
+      exitCode: live?.exitCode ?? null,
       doneAt: entry.doneAt ?? null,
       needsYou: !entry.doneAt && (resultPending || status?.state === "failed"),
+      stale: !entry.doneAt && now - Date.parse(entry.createdAt) > STALE_AFTER_MS,
       headless: false,
       running: false,
     });

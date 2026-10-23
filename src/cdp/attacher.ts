@@ -4,7 +4,7 @@ import { answer, sessionReply, type AskRequest, type AttacherEvent, type Request
 import { SettingsSyncer } from "./syncer.js";
 import { pageConfig } from "../config/pageConfig.js";
 import { loadConfig } from "../config/store.js";
-import { loadHistory, updateSession, type HistoryEntry } from "../session/history.js";
+import { loadHistory, recordStatuses, updateSession, type HistoryEntry } from "../session/history.js";
 import { readResult } from "../session/result.js";
 import { StatusWatcher, type SessionStatus } from "../session/status.js";
 import { noticesFor, showNotice, type Notice } from "../session/notices.js";
@@ -287,6 +287,10 @@ export class Attacher {
         const before = this.statuses;
         this.statuses = statuses;
         this.options.onStatuses?.(statuses);
+        // Kept on the history, so a session the watcher stops following keeps its state.
+        void recordStatuses(statuses).catch((err) => {
+          this.emit({ type: "history-error", message: describeError(err).message });
+        });
         void this.announce(before, statuses, since).catch((err) => {
           this.emit({ type: "notify-error", message: describeError(err).message });
         });

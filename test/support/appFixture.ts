@@ -44,7 +44,7 @@ export function fixtureSessions(): { sessions: ReturnType<typeof appSessions>; s
     ["ask/why-are-refunds-slow-20261008-0915", { state: "working", commits: 0, dirty: false, pr: null, resultMs: null, resultPending: false, exitCode: null }],
   ]);
   return {
-    sessions: appSessions(history, statuses, { postResults: "ask" }),
+    sessions: appSessions(history, statuses, { postResults: "ask", now: Date.parse("2026-10-09T16:00:00.000Z") }),
     stats: { total: 3, today: 2, streak: 6, bestStreak: 9, firstToday: 0 },
   };
 }

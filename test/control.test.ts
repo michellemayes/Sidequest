@@ -198,6 +198,25 @@ describe("appSessions", () => {
     expect(list[2]).toMatchObject({ state: "failed", exitCode: 1, needsYou: true });
   });
 
+  it("keeps the last status of a session too old for the watcher to follow", () => {
+    const pr = { number: 4, url: "https://x/4", state: "OPEN" as const };
+    const aged = entry(1, { lastStatus: { state: "pr-open", commits: 3, pr } });
+    const [session] = appSessions([aged], new Map(), { postResults: "ask" });
+    expect(session).toMatchObject({ state: "pr-open", commits: 3, pr, needsYou: false, resultPending: false });
+    // What the watcher sees now still wins.
+    const live = new Map([["claude/fix-1", status({ state: "merged", commits: 3, pr: { ...pr, state: "MERGED" } })]]);
+    expect(appSessions([aged], live, { postResults: "ask" })[0]).toMatchObject({ state: "merged" });
+  });
+
+  it("lets a session left unfinished for over two weeks out of Working, unless you marked it done", () => {
+    const created = Date.parse(entry(1).createdAt);
+    const at = (days: number) => created + days * 24 * 60 * 60 * 1000;
+    const history = [entry(1), entry(2, { doneAt: "2026-10-02T00:00:00.000Z" })];
+    const stale = (now: number) => appSessions(history, new Map(), { postResults: "ask", now }).map((s) => [s.branch, s.stale]);
+    expect(stale(at(13))).toEqual([["claude/fix-2", false], ["claude/fix-1", false]]);
+    expect(stale(at(15))).toEqual([["claude/fix-2", false], ["claude/fix-1", true]]);
+  });
+
   it("does not ask you about a reply that posts itself", () => {
     const statuses = new Map([["claude/fix-1", status({ resultPending: true })]]);
     expect(appSessions([entry(1)], statuses, { postResults: "auto" })[0]).toMatchObject({ resultPending: false, needsYou: false });

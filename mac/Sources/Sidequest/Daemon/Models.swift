@@ -38,6 +38,8 @@ struct AppSession: Codable, Identifiable, Hashable {
     /// When you marked it done yourself; nil until you do (and from an engine too old to know).
     var doneAt: String?
     var needsYou: Bool
+    /// Unfinished and over two weeks old, so it is filed with Done rather than Working. Nil from an engine too old to say.
+    var stale: Bool? = nil
     /// Runs with no terminal: the app is where you watch and work on it.
     var headless: Bool
     /// A headless run is going right now.
@@ -49,7 +51,8 @@ struct AppSession: Codable, Identifiable, Hashable {
     var markedDone: Bool { doneAt != nil }
 
     /// Still being worked on: nothing to show yet, or commits but no pull request.
-    var isWorking: Bool { !markedDone && (state == "working" || state == "committed" || state == "unknown") }
+    /// One left unfinished for over two weeks is not still being worked on.
+    var isWorking: Bool { !markedDone && stale != true && (state == "working" || state == "committed" || state == "unknown") }
     var isDone: Bool { markedDone || ["answered", "pr-open", "pr-closed", "merged", "gone"].contains(state) }
 }
 
