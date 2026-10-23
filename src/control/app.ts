@@ -131,8 +131,10 @@ export function appSessions(
     const key = entry.worktreePath || entry.branch;
     if (seen.has(key)) continue;
     seen.add(key);
-    const status = statuses.get(entry.branch);
-    const resultPending = Boolean(status?.resultPending) && options.postResults === "ask";
+    // One too old for the watcher to follow keeps what it last saw.
+    const live = statuses.get(entry.branch);
+    const status = live ?? entry.lastStatus;
+    const resultPending = Boolean(live?.resultPending) && options.postResults === "ask";
     out.push({
       id: entry.worktreePath ? entry.worktreePath.split("/").pop() ?? entry.branch : entry.branch,
       branch: entry.branch,
@@ -152,11 +154,11 @@ export function appSessions(
       permalink: entry.permalink ?? "",
       state: status?.state ?? "unknown",
       commits: status?.commits ?? 0,
-      dirty: status?.dirty ?? false,
+      dirty: live?.dirty ?? false,
       pr: status?.pr ?? null,
-      resultMs: status?.resultMs ?? null,
+      resultMs: live?.resultMs ?? null,
       resultPending,
-      exitCode: status?.exitCode ?? null,
+      exitCode: live?.exitCode ?? null,
       doneAt: entry.doneAt ?? null,
       needsYou: !entry.doneAt && (resultPending || status?.state === "failed"),
       headless: false,

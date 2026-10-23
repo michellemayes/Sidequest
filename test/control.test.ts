@@ -198,6 +198,16 @@ describe("appSessions", () => {
     expect(list[2]).toMatchObject({ state: "failed", exitCode: 1, needsYou: true });
   });
 
+  it("keeps the last status of a session too old for the watcher to follow", () => {
+    const pr = { number: 4, url: "https://x/4", state: "OPEN" as const };
+    const aged = entry(1, { lastStatus: { state: "pr-open", commits: 3, pr } });
+    const [session] = appSessions([aged], new Map(), { postResults: "ask" });
+    expect(session).toMatchObject({ state: "pr-open", commits: 3, pr, needsYou: false, resultPending: false });
+    // What the watcher sees now still wins.
+    const live = new Map([["claude/fix-1", status({ state: "merged", commits: 3, pr: { ...pr, state: "MERGED" } })]]);
+    expect(appSessions([aged], live, { postResults: "ask" })[0]).toMatchObject({ state: "merged" });
+  });
+
   it("does not ask you about a reply that posts itself", () => {
     const statuses = new Map([["claude/fix-1", status({ resultPending: true })]]);
     expect(appSessions([entry(1)], statuses, { postResults: "auto" })[0]).toMatchObject({ resultPending: false, needsYou: false });
