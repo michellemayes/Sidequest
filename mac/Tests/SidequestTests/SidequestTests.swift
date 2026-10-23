@@ -29,6 +29,14 @@ final class ModelsTests: XCTestCase {
         XCTAssertFalse(asked.isWorking)
         XCTAssertFalse(asked.needsYou)
         XCTAssertEqual(reply.stats.streak, 6)
+
+        // Left unfinished for over two weeks, it is filed with Done rather than Working.
+        var left = fix
+        left.state = "working"
+        XCTAssertEqual(left.stale, false)
+        XCTAssertTrue(left.isWorking)
+        left.stale = true
+        XCTAssertFalse(left.isWorking)
     }
 
     func testComparesVersions() {
