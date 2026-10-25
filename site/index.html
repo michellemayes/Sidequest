@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sidequest: Slack message in, fix on a branch out</title>
+<meta name="description" content="Hover a Slack message, click Fix, and your coding agent is already on it in its own git worktree. No Slack app, no bot token, nothing leaves your machine.">
+<meta property="og:title" content="Sidequest">
+<meta property="og:description" content="Slack message in, fix on a branch out. One click.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#6d28d9">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<!--
+  The marketing page. Plain HTML and CSS with a few lines of script, no build
+  step and nothing loaded from elsewhere. site/build.sh copies it into _site/
+  with the images it shares with the README (the demo GIF, the menu still and
+  the icon), and .github/workflows/pages.yml publishes that to GitHub Pages.
+  Copy here should stay true to docs/guide.md: if a feature changes there,
+  change it here.
+-->
+<style>
+  :root {
+    --bg: #fbfaff;
+    --bg-2: #f3f0fb;
+    --card: #ffffff;
+    --ink: #17141f;
+    --ink-2: #5b5668;
+    --ink-3: #8a8597;
+    --line: rgba(23, 20, 31, .1);
+    --accent: #6d28d9;
+    --accent-2: #a78bfa;
+    --accent-ink: #5b21b6;
+    --accent-soft: rgba(109, 40, 217, .08);
+    --fix: #c2410c;
+    --investigate: #7e22ce;
+    --ask: #1d4ed8;
+    --review: #0f766e;
+    --ticket: #4338ca;
+    --working: #1d64d8;
+    --done: #0f766e;
+    --shadow: 0 1px 2px rgba(23, 20, 31, .06), 0 12px 40px rgba(46, 16, 101, .1);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f0d15;
+      --bg-2: #16131f;
+      --card: #1c1827;
+      --ink: #f2effa;
+      --ink-2: #b5aec6;
+      --ink-3: #8a839b;
+      --line: rgba(242, 239, 250, .1);
+      --accent: #a78bfa;
+      --accent-2: #c4b5fd;
+      --accent-ink: #c4b5fd;
+      --accent-soft: rgba(167, 139, 250, .12);
+      --fix: #fb923c;
+      --investigate: #c084fc;
+      --ask: #60a5fa;
+      --review: #2dd4bf;
+      --ticket: #818cf8;
+      --working: #60a5fa;
+      --done: #2dd4bf;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 16px 48px rgba(0, 0, 0, .45);
+      color-scheme: dark;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 17px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  img { max-width: 100%; display: block; }
+  code, kbd, .mono { font-family: var(--mono); font-size: .88em; }
+  kbd {
+    display: inline-block; min-width: 1.5em; padding: 0 .4em; border-radius: 5px; text-align: center;
+    background: var(--card); border: 1px solid var(--line); box-shadow: 0 1px 0 var(--line);
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+  section { padding: 96px 0; }
+  .eyebrow {
+    display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--accent-ink); margin-bottom: 12px;
+  }
+  h1, h2, h3 { line-height: 1.12; letter-spacing: -.02em; margin: 0; }
+  h2 { font-size: clamp(30px, 4.2vw, 44px); font-weight: 750; }
+  h3 { font-size: 20px; font-weight: 650; letter-spacing: -.01em; }
+  .lede { font-size: 19px; color: var(--ink-2); max-width: 640px; margin: 16px 0 0; }
+  .center { text-align: center; }
+  .center .lede { margin-left: auto; margin-right: auto; }
+
+  /* ---------------------------------------------------------------- Nav */
+  nav {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: saturate(1.6) blur(14px); -webkit-backdrop-filter: saturate(1.6) blur(14px);
+    border-bottom: 1px solid var(--line);
+  }
+  nav .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; text-decoration: none; letter-spacing: -.01em; }
+  .brand img { width: 28px; height: 28px; }
+  .navlinks { display: flex; gap: 24px; margin-left: auto; font-size: 15px; }
+  .navlinks a { text-decoration: none; color: var(--ink-2); }
+  .navlinks a:hover { color: var(--ink); }
+  .navlinks a.btn-primary { color: #fff; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 22px; border-radius: 12px;
+    font-weight: 600; font-size: 16px; text-decoration: none; border: 1px solid transparent; cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary {
+    background: linear-gradient(135deg, #8b5cf6, #6d28d9); color: #fff;
+    box-shadow: 0 6px 20px rgba(109, 40, 217, .35), inset 0 1px 0 rgba(255,255,255,.2);
+  }
+  .btn-ghost { background: var(--card); border-color: var(--line); color: var(--ink); }
+  .btn-sm { height: 36px; padding: 0 14px; font-size: 14px; border-radius: 10px; }
+
+  /* ---------------------------------------------------------------- Hero */
+  .hero { position: relative; padding: 88px 0 72px; overflow: hidden; }
+  .hero::before {
+    content: ""; position: absolute; inset: 0 -10%; z-index: -1;
+    background:
+      radial-gradient(600px 380px at 22% 18%, rgba(167, 139, 250, .35), transparent 70%),
+      radial-gradient(520px 340px at 82% 8%, rgba(236, 72, 153, .16), transparent 70%),
+      radial-gradient(700px 420px at 50% 70%, rgba(109, 40, 217, .14), transparent 70%);
+  }
+  .hero h1 { font-size: clamp(40px, 7vw, 76px); font-weight: 800; letter-spacing: -.035em; max-width: 900px; margin: 0 auto; }
+  .hero h1 .grad {
+    background: linear-gradient(120deg, #a78bfa 0%, #7c3aed 45%, #db2777 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero .lede { font-size: 21px; max-width: 680px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px; border-radius: 999px; font-size: 14px;
+    background: var(--card); border: 1px solid var(--line); color: var(--ink-2); margin-bottom: 28px; box-shadow: var(--shadow);
+  }
+  .pill b { background: var(--accent-soft); color: var(--accent-ink); border-radius: 999px; padding: 2px 10px; font-weight: 600; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 36px; }
+  .install {
+    position: relative; width: 100%; max-width: 560px; margin: 24px auto 0; padding: 14px 16px; border-radius: 12px; text-align: left;
+    background: var(--card); border: 1px solid var(--line); font-family: var(--mono); font-size: 14px; line-height: 1.7; color: var(--ink-2);
+  }
+  .install pre { margin: 0; padding-right: 64px; font: inherit; overflow-x: auto; }
+  .install .prompt { color: var(--accent); user-select: none; }
+  .install .copy { position: absolute; top: 10px; right: 10px; }
+  .copy {
+    flex: none; border: 1px solid var(--line); background: var(--bg-2); color: var(--ink-2); border-radius: 8px;
+    font: 600 12px/1 -apple-system, BlinkMacSystemFont, sans-serif; padding: 7px 10px; cursor: pointer;
+  }
+  .copy:hover { color: var(--ink); }
+  .fineprint { font-size: 14px; color: var(--ink-3); margin-top: 14px; }
+
+  .window {
+    margin: 64px auto 0; max-width: 1040px; border-radius: 16px; overflow: hidden; background: #1d1824;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 40px 100px rgba(46, 16, 101, .35), 0 12px 30px rgba(0,0,0,.2);
+  }
+  .window img { width: 100%; height: auto; aspect-ratio: 1440 / 855; }
+
+  /* ---------------------------------------------------------------- Strip */
+  .strip { padding: 28px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--bg-2); }
+  .strip ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 12px 40px; }
+  .strip li { display: flex; align-items: center; gap: 10px; font-weight: 600; color: var(--ink-2); font-size: 15px; }
+  .strip li::before { content: "✦"; color: var(--accent); }
+
+  /* ---------------------------------------------------------------- Prompts */
+  .grid { display: grid; gap: 20px; }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); margin-top: 48px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 26px; box-shadow: var(--shadow);
+  }
+  .prompt-card { position: relative; overflow: hidden; }
+  .prompt-card::after {
+    content: ""; position: absolute; inset: 0 0 auto; height: 3px; background: var(--c);
+  }
+  .tag {
+    display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; color: var(--c);
+    background: color-mix(in srgb, var(--c) 12%, transparent); padding: 4px 12px 4px 6px; border-radius: 999px; margin-bottom: 16px;
+  }
+  .tag kbd { font-size: 12px; color: var(--c); border-color: color-mix(in srgb, var(--c) 30%, transparent); background: transparent; box-shadow: none; }
+  .card p { margin: 10px 0 0; color: var(--ink-2); font-size: 15.5px; }
+  .tickets {
+    margin-top: 20px; padding: 20px 26px; line-height: 1.8;
+    border: 1px dashed color-mix(in srgb, var(--ticket) 45%, transparent); border-radius: 18px; color: var(--ink-2); font-size: 15.5px;
+  }
+  .tickets b { color: var(--ink); }
+  .tickets .mono { color: var(--ticket); }
+
+  /* ---------------------------------------------------------------- Feature rows */
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
+  .row + .row { margin-top: 112px; }
+  .row.flip > :first-child { order: 2; }
+  .row ul { padding: 0; margin: 24px 0 0; list-style: none; display: grid; gap: 12px; }
+  .row li { position: relative; padding-left: 26px; color: var(--ink-2); }
+  .row li::before { content: "✓"; position: absolute; left: 2px; color: var(--accent); font-weight: 700; }
+
+  .stage {
+    position: relative; border-radius: 22px; padding: 36px; min-height: 320px; display: grid; place-items: center;
+    background:
+      radial-gradient(420px 260px at 20% 10%, rgba(167, 139, 250, .25), transparent 70%),
+      radial-gradient(380px 240px at 90% 100%, rgba(219, 39, 119, .12), transparent 70%),
+      var(--bg-2);
+    border: 1px solid var(--line);
+  }
+
+  /* A Slack message, drawn small. */
+  .msg {
+    width: 100%; max-width: 440px; background: #fff; color: #1d1c1d; border-radius: 12px; padding: 16px 18px;
+    box-shadow: 0 8px 30px rgba(23, 20, 31, .14); font: 15px/1.47 Lato, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    display: grid; grid-template-columns: 36px 1fr; gap: 10px;
+  }
+  .avatar { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, #f59e0b, #db2777); }
+  .msg .who { font-weight: 900; }
+  .msg .who time { font-weight: 400; color: #616061; font-size: 12px; margin-left: 6px; }
+  .msg .text { margin: 2px 0 0; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; height: 26px; padding: 0 10px; border-radius: 13px;
+    font-size: 13px; font-weight: 700; color: #5b21b6; background: #f3effe; border: 1px solid #ddd2fb; cursor: pointer;
+    transition: color .3s ease, background .3s ease, border-color .3s ease;
+  }
+  .chip .state { font-weight: 400; color: #616061; transition: opacity .25s ease; }
+  .chip.merged { color: #0f766e; background: #ecfdf8; border-color: #b6ecdd; }
+  .timeline { display: flex; gap: 6px; margin-top: 18px; justify-content: center; }
+  .timeline i { width: 26px; height: 4px; border-radius: 2px; background: var(--line); transition: background .3s ease; }
+  .timeline i.on { background: var(--accent); }
+
+  /* The reply card. */
+  .reply {
+    width: 100%; max-width: 440px; background: #fff; color: #1d1c1d; border-radius: 14px; overflow: hidden;
+    box-shadow: 0 8px 30px rgba(23, 20, 31, .14); font: 14.5px/1.5 Lato, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+  .reply header { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #eee; font-weight: 700; }
+  .reply header img { width: 20px; height: 20px; }
+  .reply header small { margin-left: auto; font-weight: 400; color: #616061; }
+  .reply .body { padding: 14px 16px; }
+  .reply .body p { margin: 0 0 8px; }
+  .reply .body code { background: #f4f4f4; border: 1px solid #e6e6e6; border-radius: 3px; padding: 0 3px; color: #c01343; font-size: 12.5px; }
+  .reply .sig { color: #616061; font-style: italic; font-size: 13px; }
+  .reply footer { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; background: #fafafa; border-top: 1px solid #eee; }
+  .reply footer span { border-radius: 6px; padding: 6px 12px; font-weight: 700; font-size: 13px; border: 1px solid #ddd; }
+  .reply footer .post { background: #007a5a; color: #fff; border-color: #007a5a; }
+
+  /* ---------------------------------------------------------------- How it works */
+  .steps { counter-reset: step; grid-template-columns: repeat(4, 1fr); margin-top: 48px; }
+  .step { position: relative; padding-top: 58px; }
+  .step::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; top: 22px; left: 26px; width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; font-size: 14px;
+  }
+  .step code { color: var(--accent-ink); }
+
+  /* ---------------------------------------------------------------- Agents */
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+  .chips span {
+    padding: 8px 14px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); font-size: 15px; font-weight: 500;
+  }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 48px; }
+
+  /* ---------------------------------------------------------------- Mac app mock */
+  .mac {
+    width: 100%; max-width: 460px; border-radius: 12px; overflow: hidden; background: var(--card); border: 1px solid var(--line);
+    box-shadow: 0 20px 50px rgba(23, 20, 31, .18); font-size: 13.5px;
+  }
+  .mac .bar { display: flex; align-items: center; gap: 7px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--bg-2); }
+  .mac .bar i { width: 11px; height: 11px; border-radius: 50%; }
+  .mac .bar b { margin-left: 10px; font-size: 13px; }
+  .mac .seg { display: flex; gap: 4px; margin-left: auto; font-size: 11.5px; }
+  .mac .seg span { padding: 2px 8px; border-radius: 6px; color: var(--ink-2); }
+  .mac .seg .sel { background: var(--card); color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
+  .mac h4 { margin: 0; padding: 12px 14px 4px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--g); }
+  .mac .item { display: grid; grid-template-columns: 8px 1fr auto; gap: 10px; align-items: center; padding: 8px 14px; }
+  .mac .item.sel { background: var(--accent-soft); }
+  .mac .item i { width: 8px; height: 8px; border-radius: 50%; background: var(--g); }
+  .mac .item .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mac .item .s { color: var(--ink-3); font-size: 12px; }
+  .mac .item .k { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 5px; color: var(--c); background: color-mix(in srgb, var(--c) 12%, transparent); }
+
+  /* ---------------------------------------------------------------- Trust */
+  .trust { background: var(--bg-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .trust .grid { grid-template-columns: repeat(3, 1fr); margin-top: 48px; }
+  .icon {
+    width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; margin-bottom: 16px;
+    background: var(--accent-soft); color: var(--accent-ink);
+  }
+
+  /* ---------------------------------------------------------------- Final CTA */
+  .final {
+    text-align: center; border-radius: 28px; padding: 72px 24px; color: #fff; position: relative; overflow: hidden;
+    background: radial-gradient(500px 300px at 20% 0%, rgba(255,255,255,.18), transparent 70%), linear-gradient(135deg, #7c3aed, #4c1d95 60%, #831843);
+  }
+  .final h2 { color: #fff; }
+  .final p { color: rgba(255,255,255,.82); font-size: 19px; margin: 14px auto 0; max-width: 560px; }
+  .final .btn-ghost { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.25); color: #fff; }
+  .final .btn-primary { background: #fff; color: #4c1d95; box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+
+  footer.site { padding: 40px 0 56px; color: var(--ink-3); font-size: 14px; }
+  footer.site .wrap { display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: center; }
+  footer.site a { color: var(--ink-2); text-decoration: none; }
+  footer.site a:hover { color: var(--ink); }
+  footer.site .brand { color: var(--ink); font-size: 15px; margin-right: auto; }
+  footer.site .brand img { width: 22px; height: 22px; }
+
+  /* ---------------------------------------------------------------- Small screens */
+  @media (max-width: 960px) {
+    .grid-4, .steps { grid-template-columns: repeat(2, 1fr); }
+    .row, .two { grid-template-columns: 1fr; gap: 40px; }
+    .row.flip > :first-child { order: 0; }
+    .trust .grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    .wrap { padding: 0 16px; }
+    section { padding: 72px 0; }
+    .navlinks a:not(.btn) { display: none; }
+    .grid-4, .steps { grid-template-columns: 1fr; }
+    .hero { padding-top: 56px; }
+    .hero .lede { font-size: 18px; }
+    .stage { padding: 20px; min-height: 0; }
+    .window { margin-top: 44px; border-radius: 10px; }
+    .install { font-size: 12.5px; }
+    .pill { font-size: 13px; text-align: left; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .btn, .chip, .timeline i { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="icon.svg" alt="">Sidequest</a>
+    <div class="navlinks">
+      <a href="#prompts">Prompts</a>
+      <a href="#how">How it works</a>
+      <a href="#mac">Mac app</a>
+      <a href="https://github.com/michellemayes/Sidequest">GitHub</a>
+      <a class="btn btn-primary btn-sm" href="https://github.com/michellemayes/Sidequest/releases/latest">Download</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero center" id="top">
+  <div class="wrap">
+    <div class="pill"><b>New</b> A Mac app beside Slack, signed and self-updating</div>
+    <h1>Slack message in.<br><span class="grad">Fix on a branch out.</span></h1>
+    <p class="lede">Someone posts a bug. You hover it and hit <strong>Sidequest → Fix</strong>. Seconds later your coding agent is on it in its own git worktree, with the message, the thread and the screenshots as its prompt.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="https://github.com/michellemayes/Sidequest/releases/latest">
+        <svg width="16" height="18" viewBox="0 0 16 18" fill="currentColor" aria-hidden="true"><path d="M13.3 9.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9-.7 0-1.8-.9-3-.8C3.8 4.4 2.4 5.3 1.6 6.6c-1.6 2.8-.4 6.9 1.2 9.1.8 1.1 1.7 2.3 2.9 2.3 1.1 0 1.6-.7 3-.7s1.8.7 3 .7 2-1.1 2.8-2.2c.9-1.3 1.2-2.5 1.3-2.6-.1 0-2.5-1-2.5-3.6zM11 2.9c.6-.8 1.1-1.8 1-2.9-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.8-1 2.8 1 .1 2.1-.5 2.7-1.3z"/></svg>
+        Download for Mac
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/michellemayes/Sidequest">View on GitHub</a>
+    </div>
+    <div class="install" data-copy="git clone https://github.com/michellemayes/Sidequest.git && cd Sidequest && npm install && npm run build && npm link && sidequest setup">
+      <pre><span class="prompt">$ </span>git clone https://github.com/michellemayes/Sidequest.git
+<span class="prompt">$ </span>cd Sidequest &amp;&amp; npm install &amp;&amp; npm run build &amp;&amp; npm link
+<span class="prompt">$ </span>sidequest setup</pre>
+      <button class="copy" type="button">Copy</button>
+    </div>
+    <p class="fineprint">Or build it yourself. Free and open source (MIT). macOS, Node 20+, git, and Claude Code or the agent you already use.</p>
+
+    <div class="window">
+      <img src="demo.gif" width="1440" height="855" alt="Sidequest demo: pick Fix on a Slack message, watch Claude Code fix it in a Warp tab on a new worktree, and find the branch linked back in Slack">
+    </div>
+  </div>
+</header>
+
+<div class="strip">
+  <div class="wrap">
+    <ul>
+      <li>No Slack app</li>
+      <li>No bot token</li>
+      <li>No admin approval</li>
+      <li>Your main checkout is never touched</li>
+    </ul>
+  </div>
+</div>
+
+<section id="prompts">
+  <div class="wrap center">
+    <span class="eyebrow">Four one-click prompts</span>
+    <h2>Pick what the agent should do.</h2>
+    <p class="lede">Hover any message, open <strong>Sidequest</strong>, and click a prompt or press its number. Each one gets the message, the thread, the sender and any attached files.</p>
+  </div>
+  <div class="wrap">
+    <div class="grid grid-4">
+      <div class="card prompt-card" style="--c: var(--investigate)">
+        <span class="tag"><kbd>1</kbd> Investigate</span>
+        <h3>Find out why</h3>
+        <p>Reproduces the problem, traces it to the code, explains it and recommends a fix. Changes nothing.</p>
+      </div>
+      <div class="card prompt-card" style="--c: var(--fix)">
+        <span class="tag"><kbd>2</kbd> Fix</span>
+        <h3>Ship the fix</h3>
+        <p>Finds the root cause, makes the smallest fix, adds a test, gets lint and tests passing, and commits.</p>
+      </div>
+      <div class="card prompt-card" style="--c: var(--review)">
+        <span class="tag"><kbd>3</kbd> Review</span>
+        <h3>Check the PR</h3>
+        <p>Reviews the pull request, branch or diff the message points at, bugs first. Changes nothing.</p>
+      </div>
+      <div class="card prompt-card" style="--c: var(--ask)">
+        <span class="tag"><kbd>4</kbd> Ask</span>
+        <h3>Ask the code</h3>
+        <p>Type a question right in the menu. The agent reads the relevant code and answers it.</p>
+      </div>
+    </div>
+    <div class="tickets">
+      <b>Linked a ticket?</b>&ensp;      Messages that link Linear, GitHub or Jira get a prompt that fixes that ticket on a branch named for it, like
+      <span class="mono">linear/data-3051-…</span>, <span class="mono">issue/123-…</span> or <span class="mono">jira/ABC-123-…</span>.
+      Add prompts of your own in one line of config.
+    </div>
+  </div>
+</section>
+
+<section style="padding-top: 0">
+  <div class="wrap">
+    <div class="row">
+      <div>
+        <span class="eyebrow">Live status on the message</span>
+        <h2>The message tells you where it's got to.</h2>
+        <p class="lede">A small mark under the message keeps up with the session: working, commits, the pull request, the merge. Click it to jump straight back into the session.</p>
+        <ul>
+          <li>Hover for the details: uncommitted changes, the PR's link.</li>
+          <li>Pull requests are looked up with <code>gh</code> when it's signed in.</li>
+          <li>The menu leads with <strong>Back to Fix</strong>, so you never cut a duplicate branch.</li>
+        </ul>
+      </div>
+      <div class="stage">
+        <div style="width: 100%; max-width: 440px">
+          <div class="msg">
+            <div class="avatar" aria-hidden="true"></div>
+            <div>
+              <div class="who">Priya Shah <time>2:20 PM</time></div>
+              <p class="text">Checkout totals are wrong when a gift card covers part of an order. We charge VAT on the full cart before the gift card comes off 😬</p>
+              <span class="chip" id="chip">✦ Fix <span class="state">· working 12m</span></span>
+            </div>
+          </div>
+          <div class="timeline" aria-hidden="true"><i class="on"></i><i></i><i></i><i></i></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row flip">
+      <div>
+        <span class="eyebrow">Replies you approve</span>
+        <h2>The agent drafts. You post.</h2>
+        <p class="lede">When it's done, the agent writes a short answer for the thread: what it found, or what it changed and why. You read it in Slack's formatting, edit it, and post it as you.</p>
+        <ul>
+          <li>Nothing goes out without your click.</li>
+          <li>Every reply says which agent wrote it, so the thread knows.</li>
+          <li>Send a follow-up or open a draft PR from the same menu.</li>
+        </ul>
+      </div>
+      <div class="stage">
+        <div class="reply">
+          <header><img src="icon.svg" alt="">Fix's reply <small>reply ready</small></header>
+          <div class="body">
+            <p>Found it: VAT was worked out on the full cart before the gift card came off. <code>src/pricing/totals.ts</code> now takes the gift card off first, with a test for the €60 cart and €50 gift card from the repro.</p>
+            <p>PR: <span style="color:#1264a3">#123</span></p>
+            <p class="sig">🤖 Written by Claude Code, an AI agent, via Sidequest</p>
+          </div>
+          <footer><span>Don't post</span><span class="post">Post in thread ⌘↵</span></footer>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how" style="background: var(--bg-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line)">
+  <div class="wrap center">
+    <span class="eyebrow">How it works</span>
+    <h2>It rides on the Slack app you already have open.</h2>
+    <p class="lede">Slack's desktop app is built on Electron. Sidequest adds a small overlay to it over the DevTools Protocol, and a local daemon does the rest.</p>
+  </div>
+  <div class="wrap">
+    <div class="grid steps">
+      <div class="card step">
+        <h3>A fresh worktree</h3>
+        <p><code>git worktree add</code> on a new branch from <code>origin/main</code>, so your own checkout stays exactly as you left it.</p>
+      </div>
+      <div class="card step">
+        <h3>A full prompt</h3>
+        <p>The message, its thread, the permalink and any screenshots or logs are written into the worktree for the agent.</p>
+      </div>
+      <div class="card step">
+        <h3>Your agent starts</h3>
+        <p>In a new terminal tab, in the background, or in the Claude or ChatGPT desktop app. Your call.</p>
+      </div>
+      <div class="card step">
+        <h3>Slack keeps up</h3>
+        <p>The daemon watches commits, the pull request and the agent's reply, and the message's mark follows along.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap center">
+    <span class="eyebrow">Your agent, your terminal</span>
+    <h2>Bring the tools you already use.</h2>
+    <p class="lede">Switch with one command. Run any prompt with a different agent, say Review with Codex while Fix stays on Claude Code.</p>
+  </div>
+  <div class="wrap">
+    <div class="two">
+      <div class="card">
+        <h3>Agents</h3>
+        <div class="chips">
+          <span>Claude Code</span><span>Codex</span><span>Gemini CLI</span><span>Aider</span><span>Cursor Agent</span>
+          <span>Qwen Code</span><span>opencode</span><span>Copilot CLI</span><span>Goose</span>
+        </div>
+        <p><code>sidequest agents codex</code></p>
+      </div>
+      <div class="card">
+        <h3>Where sessions open</h3>
+        <div class="chips">
+          <span>Warp</span><span>iTerm2</span><span>Ghostty</span><span>Terminal</span><span>tmux</span>
+          <span>Headless</span><span>Claude app</span><span>ChatGPT app</span>
+        </div>
+        <p><code>sidequest terminal ghostty</code></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="mac" style="padding-top: 0">
+  <div class="wrap">
+    <div class="row">
+      <div>
+        <span class="eyebrow">The Mac app</span>
+        <h2>Keep every session in view, beside Slack.</h2>
+        <p class="lede">Start sessions from Slack, follow them in the app. Sessions are grouped by what needs you, and the Dock icon counts what's waiting.</p>
+        <ul>
+          <li>Edit and post the agent's reply, or send a follow-up, right from the session.</li>
+          <li>Headless sessions get a live conversation, the diff, and a terminal.</li>
+          <li>Signed, notarized and self-updating. It carries its own engine, so it's the only thing to install.</li>
+        </ul>
+        <div class="cta" style="justify-content: flex-start; margin-top: 28px">
+          <a class="btn btn-primary" href="https://github.com/michellemayes/Sidequest/releases/latest">Download the Mac app</a>
+        </div>
+      </div>
+      <div class="stage">
+        <div class="mac" role="img" aria-label="The Sidequest Mac app's session list, grouped into Needs you, Working and Done">
+          <div class="bar">
+            <i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i>
+            <b>Sidequest</b>
+            <div class="seg"><span class="sel">All</span><span>Needs you</span><span>Working</span><span>Done</span></div>
+          </div>
+          <h4 style="--g: var(--accent)">Needs you · 1</h4>
+          <div class="item sel" style="--g: var(--accent); --c: var(--fix)">
+            <i></i><div><div class="t">Checkout totals are wrong with a gift card</div><div class="s">Reply ready to review</div></div><span class="k">Fix</span>
+          </div>
+          <h4 style="--g: var(--working)">Working · 2</h4>
+          <div class="item" style="--g: var(--working); --c: var(--investigate)">
+            <i></i><div><div class="t">Search results flicker on slow networks</div><div class="s">working 4m</div></div><span class="k">Investigate</span>
+          </div>
+          <div class="item" style="--g: var(--working); --c: var(--ticket)">
+            <i></i><div><div class="t">DATA-3051 Export drops the last row</div><div class="s">2 commits</div></div><span class="k">Linear</span>
+          </div>
+          <h4 style="--g: var(--done)">Done · 1</h4>
+          <div class="item" style="--g: var(--done); --c: var(--review)">
+            <i></i><div><div class="t">Can someone look at the billing PR?</div><div class="s">PR #118 merged</div></div><span class="k">Review</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="trust">
+  <div class="wrap center">
+    <span class="eyebrow">Private by default</span>
+    <h2>Nothing leaves your machine unless you post it.</h2>
+  </div>
+  <div class="wrap">
+    <div class="grid">
+      <div class="card">
+        <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+        <h3>No Slack app to install</h3>
+        <p>No bot token and no admin approval. Sidequest reads the message from the Slack window you already have open.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="8" r="3"/><path d="M6 9v6M18 11c0 4-6 3-9 6"/></svg></div>
+        <h3>Your checkout stays put</h3>
+        <p>Every session works in its own worktree and commits on its own branch. Sessions commit; they don't push until you ask.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="m9 10 2 2 4-4"/></svg></div>
+        <h3>You approve every reply</h3>
+        <p>The agent's answer waits for you to read, edit and post. Reactions and auto-posting are off unless you turn them on.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="final">
+      <h2>Your next bug report is one click from a branch.</h2>
+      <p>Install the Mac app, link a channel to a repo, and hover a message.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/michellemayes/Sidequest/releases/latest">Download for Mac</a>
+        <a class="btn btn-ghost" href="https://github.com/michellemayes/Sidequest/blob/main/docs/guide.md">Read the guide</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="icon.svg" alt="">Sidequest</a>
+    <a href="https://github.com/michellemayes/Sidequest/blob/main/docs/guide.md">Guide</a>
+    <a href="https://github.com/michellemayes/Sidequest/blob/main/docs/guide.md#security">Security</a>
+    <a href="https://github.com/michellemayes/Sidequest/releases">Releases</a>
+    <a href="https://github.com/michellemayes/Sidequest">GitHub</a>
+    <span>MIT licensed</span>
+  </div>
+</footer>
+
+<script>
+  // Copy the install command.
+  for (const box of document.querySelectorAll('[data-copy]')) {
+    const button = box.querySelector('.copy');
+    button.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(box.dataset.copy);
+        button.textContent = 'Copied';
+      } catch {
+        button.textContent = 'Press ⌘C';
+      }
+      setTimeout(() => { button.textContent = 'Copy'; }, 1600);
+    });
+  }
+
+  // Walk the message's mark through a session's life, the way it does in Slack.
+  const chip = document.getElementById('chip');
+  const bars = document.querySelectorAll('.timeline i');
+  const states = ['working 12m', '2 commits', 'PR #123', 'merged'];
+  let at = 0;
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    setInterval(() => {
+      at = (at + 1) % states.length;
+      chip.querySelector('.state').textContent = '· ' + states[at];
+      chip.classList.toggle('merged', states[at] === 'merged');
+      bars.forEach((bar, i) => bar.classList.toggle('on', i <= at));
+    }, 1800);
+  }
+</script>
+</body>
+</html>
