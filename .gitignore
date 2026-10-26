@@ -10,3 +10,4 @@ dist.next/
 dist.old/
 mac/.build/
 mac/build/
+_site/
