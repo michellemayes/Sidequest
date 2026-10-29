@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sidequest link preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@700;800;900&display=swap" rel="stylesheet">
+<!--
+  The link preview image (og.png) that Slack, iMessage, X and the rest show
+  when someone shares the site. It is drawn after the hero in index.html, so
+  keep the two in step. og.png is committed; after changing this file, render
+  it again at 1200x630 from the repository root:
+
+    npx playwright screenshot --viewport-size=1200,630 --wait-for-timeout=1000 \
+      "file://$PWD/site/og.html" site/og.png
+
+  Everything sits near the middle because Slack crops the image to a square
+  thumbnail beside the link.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 34px;
+    color: #f5f2fb; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background:
+      radial-gradient(560px 360px at 14% 0%, rgba(167, 139, 250, .34), transparent 70%),
+      radial-gradient(520px 340px at 92% 8%, rgba(124, 58, 237, .3), transparent 70%),
+      radial-gradient(900px 420px at 50% 110%, rgba(124, 58, 237, .42), transparent 70%),
+      #17121f;
+  }
+  .brand { display: flex; align-items: center; gap: 16px; font: 800 44px/1 Rubik, sans-serif; letter-spacing: -.02em; }
+  .brand img { width: 64px; height: 64px; }
+  h1 { font: 900 88px/.98 Rubik, sans-serif; letter-spacing: -.04em; text-align: center; }
+  h1 span { display: block; background: linear-gradient(100deg, #c4b5fd, #a78bfa 45%, #8b5cf6); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .tags { display: flex; gap: 14px; }
+  .tag { font-size: 26px; font-weight: 600; line-height: 1; padding: 10px 18px; border-radius: 10px; color: var(--k); background: color-mix(in srgb, var(--k) 22%, #17121f); border: 1px solid color-mix(in srgb, var(--k) 45%, transparent); }
+</style>
+</head>
+<body>
+  <div class="brand"><img src="../assets/icon.svg" alt="">Sidequest</div>
+  <h1>Slack message in.<span>Fix on a branch out.</span></h1>
+  <div class="tags">
+    <!-- The prompt colours, lifted so they read on the dark page. -->
+    <span class="tag" style="--k: #fb923c">Fix</span>
+    <span class="tag" style="--k: #c084fc">Investigate</span>
+    <span class="tag" style="--k: #2dd4bf">Review</span>
+    <span class="tag" style="--k: #60a5fa">Ask</span>
+  </div>
+</body>
+</html>
