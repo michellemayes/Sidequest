@@ -4,49 +4,73 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sidequest: Slack message in, fix on a branch out</title>
-<meta name="description" content="Hover a Slack message, click Fix, and your coding agent is already on it in its own git worktree. No Slack app, no bot token, nothing leaves your machine.">
+<meta name="description" content="Hover a Slack message, click Fix, and your coding agent is already on it in its own git worktree. Follow every session in the Sidequest Mac app.">
 <meta property="og:title" content="Sidequest">
 <meta property="og:description" content="Slack message in. Fix on a branch out. One click.">
 <meta property="og:type" content="website">
-<meta name="theme-color" content="#1b1129">
+<meta property="og:url" content="https://slack-sidequest.vercel.app/">
+<meta property="og:site_name" content="Sidequest">
+<!-- The preview image is drawn from og.html; see the note there to render it again. -->
+<meta property="og:image" content="https://slack-sidequest.vercel.app/og.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Sidequest: Slack message in. Fix on a branch out.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Sidequest">
+<meta name="twitter:description" content="Slack message in. Fix on a branch out. One click.">
+<meta name="twitter:image" content="https://slack-sidequest.vercel.app/og.png">
+<meta name="twitter:image:alt" content="Sidequest: Slack message in. Fix on a branch out.">
+<meta name="theme-color" content="#17121f">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;700;800;900&display=swap" rel="stylesheet">
 <script defer src="https://cdn.vercel-insights.com/v1/script.js"></script>
 <!--
-  The marketing page. Plain HTML and CSS with a few lines of script and no
-  build step; the only thing loaded from elsewhere is the Rubik font, with
-  system fonts behind it. site/build.sh copies it into _site/ with the images
-  it shares with the README (the demo GIF and the icon), and Vercel serves
-  _site/ (see vercel.json).
+  The marketing page. Plain HTML and CSS with a little script and no build
+  step; the only thing loaded from elsewhere is the Rubik font for headings,
+  with system fonts behind it. site/build.sh copies it into _site/ with the
+  images it shares with the README (the demo GIF and the icon), and Vercel
+  serves _site/ (see vercel.json).
 
-  Every feature named here should stay true to docs/guide.md: if one
-  changes there, change it here.
+  The app pictures (.app and everything under it) are drawn after the Mac
+  app's own views in mac/Sources/Sidequest/Views: ContentView.swift for the
+  list, SessionDetailView.swift for a session, Style.swift for the pills and
+  tags, and Theme.swift's Palette for the colours. Keep them in step when the
+  app changes, and keep every claim true to docs/guide.md.
 -->
 <style>
   :root {
-    --night: #1b1129;
-    --night-2: #241736;
-    --night-3: #2f1f47;
-    --plum: #3c2a5c;
-    --ink: #f6f2ff;
-    --ink-2: #cbc0e3;
-    --ink-3: #9c8fb8;
-    --line: rgba(246, 242, 255, .12);
-    --violet: #8f6cff;
-    --pink: #ff5c8a;
-    --yellow: #ffc83d;
-    --orange: #ff7a45;
-    --lime: #a7e06a;
-    --sky: #6cc4ff;
-    --paper: #fffaf0;
-    --paper-ink: #24182f;
-    --fix: #ff7a45;
-    --investigate: #c08bff;
-    --review: #4fd1b0;
-    --ask: #6cc4ff;
-    --display: Rubik, ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    /* The page. */
+    --night: #17121f;
+    --night-2: #201930;
+    --night-3: #2a2140;
+    --plum: #3a2d57;
+    --ink: #f5f2fb;
+    --ink-2: #c9c0dc;
+    --ink-3: #988db0;
+    --line: rgba(245, 242, 251, .12);
+    --paper: #faf8fd;
+    --paper-ink: #1f1830;
+    --paper-ink-2: #5d5470;
+    --lavender: #c4b5fd;
+
+    /* The app's default palette (mac/Sources/Sidequest/Views/Theme.swift). The swatches under the
+       hero change --accent and --needs-you, the way Settings › Appearance does. */
+    --accent: #6d28d9;
+    --needs-you: #6d28d9;
+    --working: #1d64d8;
+    --failed: #b42318;
+    --done: #0f766e;
+    --fix: #c2410c;
+    --investigate: #7e22ce;
+    --ask: #1d4ed8;
+    --review: #0f766e;
+    --ticket: #4338ca;
+
+    --display: Rubik, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
     --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
     color-scheme: dark;
   }
@@ -55,34 +79,24 @@
   html { scroll-behavior: smooth; overflow-x: clip; }
   body {
     margin: 0; background: var(--night); color: var(--ink); overflow-x: clip;
-    font: 17px/1.6 var(--display);
-    -webkit-font-smoothing: antialiased;
+    font: 17px/1.6 var(--system); -webkit-font-smoothing: antialiased;
   }
   a { color: inherit; }
   img { max-width: 100%; display: block; }
-  code, kbd, .mono { font-family: var(--mono); font-size: .86em; }
+  code, .mono { font-family: var(--mono); font-size: .86em; }
   .wrap { max-width: 1140px; margin: 0 auto; padding: 0 24px; position: relative; }
   section { padding: 110px 0; position: relative; }
-  h1, h2, h3 { line-height: 1.05; letter-spacing: -.02em; margin: 0; font-weight: 800; }
-  h2 { font-size: clamp(34px, 5vw, 56px); }
-  h3 { font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+  h1, h2, h3 { margin: 0; font-family: var(--display); line-height: 1.05; letter-spacing: -.02em; font-weight: 800; }
+  h2 { font-size: clamp(34px, 5vw, 54px); }
+  h3 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; }
   .lede { font-size: 19px; color: var(--ink-2); max-width: 620px; margin: 18px 0 0; }
   .center { text-align: center; }
   .center .lede { margin-left: auto; margin-right: auto; }
-
-  /* A mono label above each heading. */
   .eyebrow {
     display: inline-flex; align-items: center; gap: 8px; margin-bottom: 18px;
-    font: 600 13px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--yellow);
+    font: 600 13px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--lavender);
   }
-  .eyebrow::before { content: "✦"; color: var(--pink); font-size: 14px; }
-
-  /* A hand-drawn highlighter under a word. */
-  .scribble { position: relative; white-space: nowrap; z-index: 0; }
-  .scribble::after {
-    content: ""; position: absolute; left: -4%; right: -4%; bottom: -.02em; height: .38em; z-index: -1;
-    background: var(--hl, var(--pink)); opacity: .9; border-radius: 40% 60% 55% 45% / 60% 40% 60% 40%; transform: rotate(-1.5deg);
-  }
+  .eyebrow::before { content: "✦"; color: #a78bfa; }
 
   /* ---------------------------------------------------------------- Buttons */
   .btn {
@@ -90,142 +104,239 @@
     font: 700 17px/1 var(--display); text-decoration: none; cursor: pointer; border: 2px solid var(--paper-ink);
     transition: transform .12s ease, box-shadow .12s ease;
   }
-  .btn-primary { background: var(--yellow); color: var(--paper-ink); box-shadow: 4px 4px 0 var(--pink); }
+  .btn-primary { background: #7c3aed; color: #fff; box-shadow: 4px 4px 0 var(--lavender); }
   .btn-ghost { background: transparent; color: var(--ink); border-color: var(--ink-2); box-shadow: 4px 4px 0 var(--plum); }
   .btn:hover { transform: translate(-2px, -2px); }
-  .btn-primary:hover { box-shadow: 6px 6px 0 var(--pink); }
-  .btn-ghost:hover { box-shadow: 6px 6px 0 var(--violet); }
-  .btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--pink); }
-  .btn-sm { height: 40px; padding: 0 16px; font-size: 15px; border-radius: 11px; box-shadow: 3px 3px 0 var(--pink); }
+  .btn-primary:hover { box-shadow: 6px 6px 0 var(--lavender); }
+  .btn-ghost:hover { box-shadow: 6px 6px 0 #7c3aed; }
+  .btn-sm { height: 40px; padding: 0 16px; font-size: 15px; border-radius: 11px; box-shadow: 3px 3px 0 var(--lavender); }
+  .paper .btn-primary { box-shadow: 4px 4px 0 var(--paper-ink); }
 
   /* ---------------------------------------------------------------- Nav */
   nav {
-    position: sticky; top: 0; z-index: 20;
-    background: color-mix(in srgb, var(--night) 80%, transparent);
-    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-    border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--night) 82%, transparent);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--line);
   }
   nav .wrap { display: flex; align-items: center; gap: 28px; height: 68px; }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 21px; text-decoration: none; letter-spacing: -.02em; }
+  .brand { display: flex; align-items: center; gap: 10px; font: 800 21px/1 var(--display); text-decoration: none; letter-spacing: -.02em; }
   .brand img { width: 32px; height: 32px; }
   .navlinks { display: flex; align-items: center; gap: 26px; margin-left: auto; font-size: 15px; font-weight: 500; }
   .navlinks a:not(.btn) { text-decoration: none; color: var(--ink-2); }
-  .navlinks a:not(.btn):hover { color: var(--yellow); }
+  .navlinks a:not(.btn):hover { color: #fff; }
 
   /* ---------------------------------------------------------------- Hero */
-  .hero { padding: 88px 0 140px; overflow: hidden; position: relative; }
+  .hero { padding: 84px 0 120px; overflow: hidden; }
   .hero::before {
     content: ""; position: absolute; inset: 0; z-index: -1;
     background:
-      radial-gradient(700px 420px at 15% 10%, rgba(143, 108, 255, .4), transparent 70%),
-      radial-gradient(600px 400px at 90% 20%, rgba(255, 92, 138, .25), transparent 70%),
-      radial-gradient(900px 500px at 50% 95%, rgba(143, 108, 255, .3), transparent 70%),
+      radial-gradient(700px 420px at 18% 8%, rgba(167, 139, 250, .32), transparent 70%),
+      radial-gradient(600px 400px at 88% 16%, rgba(124, 58, 237, .28), transparent 70%),
+      radial-gradient(1000px 520px at 50% 78%, rgba(124, 58, 237, .3), transparent 70%),
       var(--night);
   }
   .hero-copy { text-align: center; max-width: 860px; margin: 0 auto; }
-  .hero-copy .lede { margin-left: auto; margin-right: auto; }
-  .hero-copy .cta { justify-content: center; }
   .hero h1 { font-size: clamp(40px, 6.6vw, 80px); font-weight: 900; letter-spacing: -.04em; line-height: .98; }
-  .hero h1 .line2 { color: var(--yellow); display: block; }
-  .hero .lede { font-size: 21px; margin-top: 26px; }
+  .hero h1 .line2 { display: block; background: linear-gradient(100deg, #c4b5fd, #a78bfa 45%, #8b5cf6); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero .lede { font-size: 21px; margin: 26px auto 0; }
   .cta { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 36px; }
+  .hero .cta { justify-content: center; }
   .fineprint { font-size: 14px; color: var(--ink-3); margin-top: 18px; }
   .fineprint a { color: var(--ink-2); }
 
-  .window {
-    margin: 72px auto 0; max-width: 1060px; border-radius: 18px; overflow: hidden; background: #160e22;
-    border: 2px solid var(--paper-ink); box-shadow: 10px 10px 0 var(--violet), 0 40px 120px rgba(0, 0, 0, .55);
+  /* The hero's app window is drawn at a fixed 1120px and scaled to fit (see the script). */
+  .stage-scale { margin: 64px auto 0; max-width: 1120px; position: relative; }
+  .stage-scale > .app { position: absolute; top: 0; left: 0; width: 1120px; transform-origin: top left; }
+  .swatches { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px 14px; margin-top: 30px; font-size: 14px; color: var(--ink-3); }
+  .swatches button {
+    width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; background: var(--c); cursor: pointer; padding: 0;
+    box-shadow: 0 0 0 2px var(--night); transition: transform .15s ease;
   }
-  .window img { width: 100%; height: auto; aspect-ratio: 1440 / 855; }
-  .window-caption { text-align: center; margin-top: 26px; font: 500 14px/1.4 var(--mono); color: var(--ink-3); }
-  .window-caption b { color: var(--yellow); font-weight: 600; }
+  .swatches button:hover { transform: scale(1.12); }
+  .swatches button[aria-pressed="true"] { border-color: #fff; }
 
-  /* Slanted section edges. */
+  /* ---------------------------------------------------------------- The app, drawn in HTML */
+  .app {
+    --tint: color-mix(in srgb, var(--accent) 16%, transparent);
+    font: 13px/1.35 var(--system); color: #1d1b22; text-align: left; letter-spacing: 0;
+    background: #fff; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .5), 0 0 0 2px rgba(255, 255, 255, .08), 0 40px 120px rgba(0, 0, 0, .55), 12px 12px 0 #7c3aed;
+  }
+  .app * { font-family: inherit; }
+  .app .mono { font-family: var(--mono); font-size: 11.5px; }
+  .app .muted { color: #86828f; }
+  .app-body { display: grid; grid-template-columns: 330px 1fr; height: 660px; }
+  .side { background: #f4f3f7; border-right: 1px solid #e3e1e8; display: flex; flex-direction: column; }
+  .side-top { padding: 12px 12px 6px; }
+  .titlebar { display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 14px; }
+  .lights { display: flex; gap: 8px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .2); }
+  .titlebar b { font-size: 15px; font-weight: 700; margin-left: 14px; }
+  .filter { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: rgba(120, 118, 128, .14); }
+  .filter span { flex: 1; text-align: center; font-weight: 500; font-size: 12.5px; padding: 4px 0; border-radius: 6px; color: #6d6977; white-space: nowrap; }
+  .filter span em { font-style: normal; margin-left: 4px; color: #8f8b99; }
+  .filter span em.hot { color: var(--needs-you); }
+  .filter .on { background: #fff; color: #1d1b22; box-shadow: 0 .5px 1px rgba(0, 0, 0, .12); }
+  .rows { flex: 1; overflow: hidden; padding: 4px 0; }
+  .group { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 10px 20px 4px; color: #86828f; }
+  .group.needs { color: var(--needs-you); }
+  .group.working { color: var(--working); }
+  .group em { font-style: normal; color: #86828f; margin-left: 4px; }
+  .row-s { display: grid; grid-template-columns: 9px 1fr; gap: 10px; margin: 0 8px; padding: 7px 12px; border-radius: 8px; }
+  .row-s.sel { background: var(--tint); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--t); box-shadow: 0 0 0 3px color-mix(in srgb, var(--t) 20%, transparent); margin-top: 5px; }
+  .row-s .top { display: flex; gap: 6px; align-items: baseline; }
+  .row-s .title { flex: 1; font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .row-s .title.strong { font-weight: 600; }
+  .row-s .title.done { color: #86828f; }
+  .row-s .age { font-size: 11px; color: #86828f; font-variant-numeric: tabular-nums; }
+  .row-s .meta { display: flex; gap: 6px; align-items: center; margin-top: 4px; font-size: 11px; color: #86828f; white-space: nowrap; }
+  .row-s .hint { margin-top: 3px; font-size: 11px; font-weight: 500; color: #86828f; }
+  .row-s .hint.hot { color: var(--needs-you); }
+  .tag { display: inline-block; font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 4px; color: var(--k); background: color-mix(in srgb, var(--k) 14%, transparent); white-space: nowrap; }
+  .pill { display: inline-block; font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; color: var(--t); background: color-mix(in srgb, var(--t) 14%, transparent); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .pill.filled { color: #fff; background: var(--t); }
+  .streak { margin: 10px; padding: 10px; border-radius: 10px; background: #fff; border: 1px solid #e3e1e8; display: flex; gap: 10px; align-items: center; }
+  .streak b { display: block; font-size: 13px; }
+  .streak small { font-size: 11px; color: #86828f; }
+  .streak .stats { margin-left: auto; font-size: 11px; color: var(--accent); }
+
+  .main { display: flex; flex-direction: column; min-width: 0; }
+  .toolbar { height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid #e9e7ee; }
+  .toolbar .agent { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #86828f; }
+  .toolbar .agent i { width: 7px; height: 7px; border-radius: 50%; background: #86828f; }
+  .toolbar .search { margin-left: auto; width: 200px; height: 26px; border-radius: 7px; background: rgba(120, 118, 128, .12); display: flex; align-items: center; gap: 6px; padding: 0 9px; color: #86828f; font-size: 12px; }
+  .toolbar .icon-btn { width: 28px; height: 26px; border-radius: 7px; display: grid; place-items: center; color: #6d6977; }
+  .head { display: flex; gap: 16px; padding: 18px 24px 14px; border-bottom: 1px solid #e9e7ee; }
+  .head h4 { margin: 8px 0 6px; font-size: 21px; font-weight: 600; line-height: 1.22; letter-spacing: -.01em; }
+  .head .meta { font-size: 13px; color: #86828f; }
+  .head .actions { display: flex; gap: 8px; align-items: flex-start; flex: none; }
+  .mbtn { height: 24px; padding: 0 10px; border-radius: 6px; font-size: 12.5px; font-weight: 500; display: inline-flex; align-items: center; gap: 5px; background: #fff; color: #1d1b22; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .16), 0 .5px 1px rgba(0, 0, 0, .1); white-space: nowrap; }
+  .mbtn.primary { background: var(--accent); color: #fff; box-shadow: 0 .5px 1px rgba(0, 0, 0, .2); }
+  .detail { flex: 1; overflow: hidden; display: grid; grid-template-columns: 1fr 210px; gap: 26px; padding: 18px 24px; }
+  .col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+  .reply-card { border-radius: 12px; border: 1.5px solid color-mix(in srgb, var(--needs-you) 45%, transparent); background: color-mix(in srgb, var(--needs-you) 5%, #fff); overflow: hidden; }
+  .reply-card .bar { display: flex; gap: 10px; align-items: center; padding: 9px 14px; font-size: 11px; color: #86828f; }
+  .reply-card .bar b { color: var(--needs-you); letter-spacing: .06em; font-size: 11px; }
+  .reply-card .bar span { white-space: nowrap; }
+  .reply-card .bar span:last-child { margin-left: auto; }
+  .panel .reply-card .bar span:last-child { display: none; }
+  .reply-card .editor { background: #fff; border-block: 1px solid #ebe9f0; padding: 12px 14px; font-size: 13px; line-height: 1.5; }
+  .reply-card .editor p { margin: 0 0 8px; }
+  .reply-card .editor p:last-child { margin: 0; }
+  .reply-card .editor code { font-size: 11.5px; background: #f3f2f6; border-radius: 3px; padding: 0 3px; }
+  .reply-card .foot { display: flex; gap: 8px; align-items: center; padding: 9px 14px; font-size: 11px; color: #86828f; }
+  .reply-card .foot .mbtn:first-of-type { margin-left: auto; }
+
+  .card-q { border-radius: 10px; background: #f7f6fa; border: 1px solid #e6e4ec; padding: 12px 14px; }
+  .card-q .who { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .card-q .av { width: 22px; height: 22px; border-radius: 6px; background: #a9a5b3; color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 12px; }
+  .card-q .who b { font-size: 13px; }
+  .card-q .who .link { margin-left: auto; font-size: 11px; color: var(--accent); }
+
+  .timeline h5 { margin: 4px 0 10px; font-size: 13px; font-weight: 700; }
+  .step { display: grid; grid-template-columns: 12px 1fr auto; gap: 12px; position: relative; padding-bottom: 12px; }
+  .step::before { content: ""; position: absolute; left: 5px; top: 15px; bottom: -3px; width: 2px; background: var(--line-c, #dcd9e2); }
+  .step:last-child::before { display: none; }
+  .step .m { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #c9c5d1; margin-top: 2px; background: #fff; }
+  .step.reached .m { border-color: var(--accent); background: var(--accent); }
+  .step.current .m { border-color: var(--accent); }
+  .step.reached { --line-c: var(--accent); }
+  .step b { display: block; font-size: 12.5px; font-weight: 600; }
+  .step.pending b { color: #86828f; }
+  .step.current b { color: var(--accent); }
+  .step span { font-size: 12px; color: #86828f; }
+  .step time { font-size: 11px; color: #86828f; font-variant-numeric: tabular-nums; }
+
+  .rail h6 { margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #86828f; }
+  .facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; font-size: 11.5px; margin-bottom: 20px; }
+  .facts dt { color: #86828f; }
+  .facts dd { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .opens { display: grid; gap: 7px; font-size: 12.5px; }
+  .opens span { display: flex; gap: 8px; align-items: center; }
+  .opens svg { color: var(--accent); flex: none; }
+  .composer { display: flex; gap: 8px; padding: 10px 24px; border-top: 1px solid #e9e7ee; }
+  .composer .field { flex: 1; height: 24px; border-radius: 6px; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .2); padding: 0 8px; display: flex; align-items: center; color: #a29eab; font-size: 12.5px; }
+
+  /* ---------------------------------------------------------------- Strip */
+  .strip { background: #ede9fe; color: #2e1065; border-block: 2px solid var(--paper-ink); position: relative; z-index: 2; }
+  .strip ul { list-style: none; margin: 0 auto; padding: 18px 24px; max-width: 1140px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 40px; }
+  .strip li { font: 700 17px/1.3 var(--display); display: flex; align-items: center; gap: 10px; }
+  .strip li::before { content: "✦"; color: #7c3aed; }
+
+  /* ---------------------------------------------------------------- Paper sections */
+  .paper { background: var(--paper); color: var(--paper-ink); color-scheme: light; }
+  .paper .lede { color: var(--paper-ink-2); }
+  .paper .eyebrow { color: #6d28d9; }
+  .paper .eyebrow::before { color: #a78bfa; }
   .slant-top { clip-path: polygon(0 60px, 100% 0, 100% 100%, 0 100%); margin-top: -60px; padding-top: 170px; }
   .slant-both { clip-path: polygon(0 60px, 100% 0, 100% calc(100% - 60px), 0 100%); margin-top: -60px; padding: 170px 0; }
 
-  /* ---------------------------------------------------------------- Strip */
-  .strip { background: var(--yellow); color: var(--paper-ink); border-block: 2px solid var(--paper-ink); position: relative; z-index: 2; }
-  .strip ul { list-style: none; margin: 0 auto; padding: 18px 24px; max-width: 1140px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 40px; }
-  .strip li { font: 700 17px/1.3 var(--display); display: flex; align-items: center; gap: 10px; }
-  .strip li::before { content: "✦"; color: var(--pink); }
-
-  /* ---------------------------------------------------------------- Prompts */
-  .paper { background: var(--paper); color: var(--paper-ink); }
-  .paper .lede { color: #5e4f6e; }
-  .paper .eyebrow { color: #7c3aed; }
+  /* The four prompts, tagged the way the app tags them. */
   .grid-4 { display: grid; gap: 22px; grid-template-columns: repeat(4, 1fr); margin-top: 56px; }
   .prompt-card {
-    position: relative; background: #fff; border: 2px solid var(--paper-ink); border-radius: 20px; padding: 26px 24px 24px;
-    box-shadow: 6px 6px 0 var(--c); transition: transform .2s cubic-bezier(.3, 1.6, .5, 1), box-shadow .2s ease;
+    position: relative; background: #fff; border: 2px solid var(--paper-ink); border-radius: 18px; padding: 24px;
+    box-shadow: 6px 6px 0 var(--k); transition: transform .15s ease, box-shadow .15s ease;
   }
-  .prompt-card:hover { transform: translateY(-4px); box-shadow: 8px 10px 0 var(--c); }
+  .prompt-card:hover { transform: translateY(-4px); box-shadow: 8px 10px 0 var(--k); }
+  .prompt-card .tag { font: 600 13px/1.4 var(--system); padding: 2px 9px; border-radius: 6px; margin-bottom: 14px; }
   .prompt-card .key {
-    position: absolute; top: 18px; right: 18px; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center;
-    font: 700 15px/1 var(--mono); background: var(--paper); border: 2px solid var(--paper-ink); box-shadow: 0 3px 0 var(--paper-ink);
+    position: absolute; top: 18px; right: 18px; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+    font: 700 14px/1 var(--mono); background: var(--paper); border: 2px solid var(--paper-ink); box-shadow: 0 3px 0 var(--paper-ink);
   }
-  .prompt-card .name { display: inline-block; font: 700 12px/1 var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--paper-ink); background: var(--c); padding: 5px 8px; border-radius: 6px; margin-bottom: 10px; }
-  .prompt-card p { margin: 10px 0 0; color: #5e4f6e; font-size: 15.5px; }
-  .tickets {
-    margin-top: 40px; padding: 22px 26px; border-radius: 18px; background: #f3ecff; border: 2px dashed #b9a5e6; color: #5e4f6e; font-size: 16px; line-height: 1.9;
-  }
+  .prompt-card p { margin: 10px 0 0; color: var(--paper-ink-2); font-size: 15.5px; }
+  .tickets { margin-top: 40px; padding: 22px 26px; border-radius: 18px; background: #f1ecfd; border: 2px dashed #b9a5e6; color: var(--paper-ink-2); font-size: 16px; line-height: 1.9; }
   .tickets b { color: var(--paper-ink); }
-  .tickets .mono { background: #fff; border: 1px solid #ddd0f5; padding: 2px 6px; border-radius: 6px; color: #5b21b6; white-space: nowrap; }
+  .tickets .mono { background: #fff; border: 1px solid #ddd0f5; padding: 2px 6px; border-radius: 6px; color: #4338ca; white-space: nowrap; }
 
   /* ---------------------------------------------------------------- Feature rows */
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 72px; align-items: center; }
-  .row + .row { margin-top: 140px; }
+  .row { display: grid; grid-template-columns: 1fr 1.1fr; gap: 64px; align-items: center; }
+  .row + .row { margin-top: 130px; }
   .row.flip > :first-child { order: 2; }
   .row ul { padding: 0; margin: 26px 0 0; list-style: none; display: grid; gap: 14px; }
   .row li { position: relative; padding-left: 34px; color: var(--ink-2); }
   .row li::before {
     content: "✓"; position: absolute; left: 0; top: 2px; width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center;
-    background: var(--lime); color: var(--paper-ink); font-weight: 800; font-size: 13px;
+    background: #a78bfa; color: var(--paper-ink); font-weight: 800; font-size: 13px;
   }
-  .row code { color: var(--yellow); }
+  .row code { color: var(--lavender); }
+  .row .app code { color: inherit; }
   .stage {
-    position: relative; border-radius: 26px; padding: 56px 36px 44px; min-height: 340px; display: grid; place-items: center;
-    background: radial-gradient(400px 260px at 30% 0%, rgba(143, 108, 255, .35), transparent 70%), var(--night-3);
-    border: 2px solid var(--plum);
+    position: relative; border-radius: 24px; padding: 36px; display: grid; gap: 18px; justify-items: center;
+    background: radial-gradient(420px 260px at 30% 0%, rgba(124, 58, 237, .35), transparent 70%), var(--night-3); border: 2px solid var(--plum);
   }
+  /* A piece of the app, on its own. */
+  .panel { width: 100%; max-width: 480px; border-radius: 12px; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .4), 0 16px 50px rgba(0, 0, 0, .4); overflow: hidden; }
+  .panel .app { box-shadow: none; border-radius: 0; }
+  .panel-pad { padding: 16px 18px; }
 
-  /* A Slack message, drawn small. */
+  /* A Slack message, drawn small, with Sidequest's mark under it. */
   .msg {
-    width: 100%; max-width: 440px; background: #fff; color: #1d1c1d; border-radius: 14px; padding: 16px 18px;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, .35); font: 15px/1.47 Lato, "Helvetica Neue", Helvetica, Arial, sans-serif;
-    display: grid; grid-template-columns: 36px 1fr; gap: 10px; position: relative;
+    width: 100%; max-width: 480px; background: #fff; color: #1d1c1d; border-radius: 12px; padding: 14px 16px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .35); font: 14.5px/1.47 Lato, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    display: grid; grid-template-columns: 36px 1fr; gap: 10px;
   }
-  .avatar { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, #ffc83d, #ff5c8a); display: grid; place-items: center; font-size: 20px; }
+  .avatar { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, #f59e0b, #db2777); }
   .msg .who { font-weight: 900; }
   .msg .who time { font-weight: 400; color: #616061; font-size: 12px; margin-left: 6px; }
   .msg .text { margin: 2px 0 0; }
-  .chip {
-    display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; height: 28px; padding: 0 12px; border-radius: 14px;
-    font-size: 13px; font-weight: 700; color: #5b21b6; background: #f3effe; border: 1px solid #ddd2fb;
-    transition: color .3s ease, background .3s ease, border-color .3s ease;
-  }
+  .chip { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; height: 26px; padding: 0 11px; border-radius: 13px; font-size: 13px; font-weight: 700; color: #5b21b6; background: #f3effe; border: 1px solid #ddd2fb; }
   .chip .state { font-weight: 400; color: #616061; }
   .chip.merged { color: #0f766e; background: #ecfdf8; border-color: #b6ecdd; }
-  .chip.pop { animation: pop .35s cubic-bezier(.3, 1.8, .5, 1); }
-  @keyframes pop { 40% { transform: scale(1.15); } }
 
-  /* The reply card. */
-  .reply {
-    width: 100%; max-width: 440px; background: #fff; color: #1d1c1d; border-radius: 16px; overflow: hidden;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, .35); font: 14.5px/1.5 Lato, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  }
-  .reply header { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #eee; font-weight: 700; }
-  .reply header img { width: 20px; height: 20px; }
-  .reply header small { margin-left: auto; font-weight: 700; font-size: 11px; color: #5b21b6; background: #f3effe; padding: 2px 8px; border-radius: 10px; }
-  .reply .body { padding: 14px 16px; }
-  .reply .body p { margin: 0 0 8px; }
-  .reply .body code { background: #f4f4f4; border: 1px solid #e6e6e6; border-radius: 3px; padding: 0 3px; color: #c01343; font-size: 12.5px; }
-  .reply .sig { color: #616061; font-style: italic; font-size: 13px; }
-  .reply footer { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px; background: #fafafa; border-top: 1px solid #eee; }
-  .reply footer span { border-radius: 6px; padding: 6px 12px; font-weight: 700; font-size: 13px; border: 1px solid #ddd; }
-  .reply footer .post { background: #007a5a; color: #fff; border-color: #007a5a; }
+  /* Headless: the session's tabs. */
+  .seg { display: flex; padding: 2px; gap: 2px; border-radius: 7px; background: rgba(120, 118, 128, .14); max-width: 380px; }
+  .seg span { flex: 1; text-align: center; font-size: 12px; font-weight: 500; padding: 3px 0; border-radius: 5px; color: #4b4754; }
+  .seg .on { background: #fff; color: #1d1b22; box-shadow: 0 .5px 1px rgba(0, 0, 0, .14); }
+  .live { margin-top: 14px; border-radius: 12px; padding: 12px 14px; background: color-mix(in srgb, var(--working) 6%, #fff); border: 1px solid color-mix(in srgb, var(--working) 25%, transparent); }
+  .live .hd { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--working); margin-bottom: 10px; }
+  .live .hd .mbtn { margin-left: auto; height: 22px; font-size: 11.5px; }
+  .live .item { display: flex; gap: 8px; align-items: baseline; margin-top: 6px; font-size: 12px; white-space: nowrap; overflow: hidden; }
+  .live .item .tag { --k: var(--working); }
 
-  /* ---------------------------------------------------------------- How it works: a dotted trail */
+  /* ---------------------------------------------------------------- How it works */
+  .gif { margin: 56px auto 0; max-width: 1000px; border-radius: 16px; overflow: hidden; border: 2px solid var(--paper-ink); box-shadow: 10px 10px 0 #7c3aed, 0 30px 90px rgba(0, 0, 0, .5); }
+  .gif img { width: 100%; height: auto; aspect-ratio: 1440 / 855; }
   .trail { display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px; margin-top: 64px; position: relative; }
   .trail::before { content: ""; position: absolute; top: 34px; left: 12%; right: 12%; border-top: 3px dashed var(--plum); }
   .stop { position: relative; text-align: center; padding: 0 6px; }
@@ -234,86 +345,63 @@
     background: var(--night-3); border: 2px solid var(--b); box-shadow: 4px 4px 0 var(--b);
   }
   .stop p { color: var(--ink-2); font-size: 15.5px; margin: 10px 0 0; }
-  .stop code { color: var(--yellow); }
+  .stop code { color: var(--lavender); }
 
   /* ---------------------------------------------------------------- Agents and terminals */
   .party { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 56px; }
   .party-card { border-radius: 22px; padding: 30px; background: var(--night-2); border: 2px solid var(--plum); }
   .chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
-  .chips span {
-    padding: 8px 14px; border-radius: 999px; font-size: 15px; font-weight: 500; background: var(--night-3); border: 1.5px solid var(--plum);
-  }
+  .chips span { padding: 8px 14px; border-radius: 999px; font-size: 15px; font-weight: 500; background: var(--night-3); border: 1.5px solid var(--plum); }
   .party-card .cmd { margin: 22px 0 0; font: 500 14px/1 var(--mono); color: var(--ink-3); }
-  .party-card .cmd b { color: var(--lime); font-weight: 500; }
-
-  /* ---------------------------------------------------------------- Mac app mock */
-  .mac {
-    width: 100%; max-width: 460px; border-radius: 14px; overflow: hidden; background: #fff; color: #1d1a23;
-    border: 2px solid var(--paper-ink); box-shadow: 8px 8px 0 var(--pink); font-size: 13.5px;
-  }
-  .mac .bar { display: flex; align-items: center; gap: 7px; padding: 10px 12px; border-bottom: 1px solid #ece8f3; background: #f6f3fb; }
-  .mac .bar i { width: 11px; height: 11px; border-radius: 50%; }
-  .mac .bar b { margin-left: 10px; font-size: 13px; }
-  .mac .seg { display: flex; gap: 4px; margin-left: auto; font-size: 11.5px; }
-  .mac .seg span { padding: 2px 8px; border-radius: 6px; color: #6b6378; }
-  .mac .seg .sel { background: #fff; color: #1d1a23; box-shadow: 0 0 0 1px #e2dcec; }
-  .mac h4 { margin: 0; padding: 12px 14px 4px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--g); }
-  .mac .item { display: grid; grid-template-columns: 8px 1fr auto; gap: 10px; align-items: center; padding: 8px 14px; }
-  .mac .item.sel { background: #f1ebff; }
-  .mac .item i { width: 8px; height: 8px; border-radius: 50%; background: var(--g); }
-  .mac .item .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .mac .item .s { color: #8a8297; font-size: 12px; }
-  .mac .item .k { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 5px; color: var(--c); background: color-mix(in srgb, var(--c) 12%, transparent); }
+  .party-card .cmd b { color: var(--lavender); font-weight: 500; }
 
   /* ---------------------------------------------------------------- Trust */
   .trust-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 56px; }
   .nope { background: #fff; border: 2px solid var(--paper-ink); border-radius: 20px; padding: 28px; box-shadow: 6px 6px 0 var(--paper-ink); }
-  .nope p { color: #5e4f6e; margin: 10px 0 0; font-size: 15.5px; }
+  .nope p { color: var(--paper-ink-2); margin: 10px 0 0; font-size: 15.5px; }
 
   /* ---------------------------------------------------------------- Final CTA */
   .final {
     text-align: center; border-radius: 32px; padding: 84px 24px; position: relative; overflow: hidden;
-    background: var(--violet); color: #fff; border: 2px solid var(--paper-ink); box-shadow: 10px 10px 0 var(--yellow);
+    background: linear-gradient(135deg, #8b5cf6, #6d28d9); color: #fff; border: 2px solid var(--paper-ink); box-shadow: 10px 10px 0 var(--lavender);
   }
-  .final::before {
-    content: ""; position: absolute; inset: 0; opacity: .25;
-    background-image: radial-gradient(circle at 1px 1px, #fff 1.4px, transparent 0); background-size: 22px 22px;
-  }
+  .final::before { content: ""; position: absolute; inset: 0; opacity: .2; background-image: radial-gradient(circle at 1px 1px, #fff 1.4px, transparent 0); background-size: 22px 22px; }
   .final > * { position: relative; }
-  .final h2 { font-size: clamp(36px, 5.6vw, 64px); font-weight: 900; }
+  .final h2 { font-size: clamp(36px, 5.6vw, 62px); font-weight: 900; }
   .final p { color: rgba(255, 255, 255, .92); font-size: 20px; margin: 16px auto 0; max-width: 560px; }
   .final .cta { justify-content: center; }
-  .final .btn-ghost { color: #fff; border-color: var(--paper-ink); background: rgba(27, 17, 41, .25); box-shadow: 4px 4px 0 var(--paper-ink); }
+  .final .btn-primary { background: #fff; color: #4c1d95; box-shadow: 4px 4px 0 var(--paper-ink); }
+  .final .btn-ghost { color: #fff; border-color: var(--paper-ink); background: rgba(23, 18, 31, .2); box-shadow: 4px 4px 0 var(--paper-ink); }
 
   footer.site { padding: 48px 0 64px; color: var(--ink-3); font-size: 14px; }
   footer.site .wrap { display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: center; }
   footer.site a { color: var(--ink-2); text-decoration: none; }
-  footer.site a:hover { color: var(--yellow); }
+  footer.site a:hover { color: #fff; }
   footer.site .brand { color: var(--ink); font-size: 17px; margin-right: auto; }
   footer.site .brand img { width: 26px; height: 26px; }
 
   /* ---------------------------------------------------------------- Small screens */
   @media (max-width: 960px) {
-    .row, .party { grid-template-columns: 1fr; }
+    .row, .party { grid-template-columns: 1fr; gap: 48px; }
+    .row.flip > :first-child { order: 0; }
     .grid-4 { grid-template-columns: repeat(2, 1fr); }
     .trail { grid-template-columns: repeat(2, 1fr); row-gap: 48px; }
     .trail::before { display: none; }
-    .row { gap: 48px; }
-    .row.flip > :first-child { order: 0; }
     .trust-grid { grid-template-columns: 1fr; }
   }
   @media (max-width: 640px) {
     .wrap { padding: 0 16px; }
     section { padding: 80px 0; }
     .navlinks a:not(.btn) { display: none; }
-    .hero { padding: 40px 0 120px; }
+    .hero { padding: 48px 0 100px; }
     .hero .lede { font-size: 18px; }
     .grid-4, .trail { grid-template-columns: 1fr; }
-    .stage { padding: 52px 16px 28px; min-height: 0; }
-    .window { margin-top: 48px; border-radius: 12px; box-shadow: 6px 6px 0 var(--violet); }
+    .stage { padding: 20px 14px; }
+    .app, .gif { box-shadow: 0 0 0 1px rgba(0, 0, 0, .5), 0 20px 60px rgba(0, 0, 0, .5), 6px 6px 0 #7c3aed; }
+    .swatches span { flex-basis: 100%; text-align: center; }
     .strip li { font-size: 15px; }
     .strip ul { gap: 8px 22px; padding: 14px 16px; }
-    .final { padding: 60px 20px; box-shadow: 6px 6px 0 var(--yellow); }
+    .final { padding: 60px 20px; box-shadow: 6px 6px 0 var(--lavender); }
   }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
@@ -323,13 +411,27 @@
 </head>
 <body>
 
+<!-- Icons drawn after the SF Symbols the app uses. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-check" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.2 8.2l1.9 1.9 3.8-4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-dots" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12.5" cy="8" r="1.3" fill="currentColor"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+  <symbol id="i-palette" viewBox="0 0 16 16"><path d="M8 1.8a6.2 6.2 0 1 0 0 12.4c1 0 1.4-.6 1.1-1.4-.4-1 .2-1.9 1.3-1.9h1.4A2.4 2.4 0 0 0 14.2 8.5 6.4 6.4 0 0 0 8 1.8z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="5" cy="7" r="1" fill="currentColor"/><circle cx="7.6" cy="4.8" r="1" fill="currentColor"/><circle cx="10.6" cy="5.6" r="1" fill="currentColor"/></symbol>
+  <symbol id="i-flame" viewBox="0 0 16 16"><path d="M8.3 1c.4 2.4 3.9 3.6 3.9 7.6A4.2 4.2 0 0 1 8 13a4.1 4.1 0 0 1-4.2-4.1c0-1.9 1-3 1.8-3.8.1 1.2.7 2 1.5 2.3C6.6 5.4 7.6 3 8.3 1z" fill="currentColor"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M4.5 6l2 2-2 2M8 10.5h3.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-pull" viewBox="0 0 16 16"><circle cx="4" cy="3.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="4" cy="12.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="12" cy="12.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M4 5.1v5.8M12 10.9V6.5a2 2 0 0 0-2-2H7.5m1.4-1.6L7.3 4.5l1.6 1.6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-hash" viewBox="0 0 16 16"><path d="M6 2.5L5 13.5M11 2.5l-1 11M2.5 6h11M2 10.5h11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.8 4.5a1.5 1.5 0 0 1 1.5-1.5h3l1.5 1.6h4.9a1.5 1.5 0 0 1 1.5 1.5v5.9a1.5 1.5 0 0 1-1.5 1.5H3.3a1.5 1.5 0 0 1-1.5-1.5z" fill="none" stroke="currentColor" stroke-width="1.2"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5" y="5" width="8.5" height="9" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M3 10.5V3.6A1.6 1.6 0 0 1 4.6 2h5.9" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+</svg>
+
 <nav>
   <div class="wrap">
     <a class="brand" href="#top"><img src="icon.svg" alt="">Sidequest</a>
     <div class="navlinks">
       <a href="#prompts">Prompts</a>
-      <a href="#how">How it works</a>
       <a href="#mac">Mac app</a>
+      <a href="#how">How it works</a>
       <a href="https://github.com/michellemayes/Sidequest">GitHub</a>
       <a class="btn btn-primary btn-sm" href="https://github.com/michellemayes/Sidequest/releases/latest">Download</a>
     </div>
@@ -339,23 +441,148 @@
 <header class="hero" id="top">
   <div class="wrap">
     <div class="hero-copy">
-        <span class="eyebrow">For Slack and your coding agent</span>
-        <h1>Slack message in.<span class="line2">Fix on a <span class="scribble">branch</span> out.</span></h1>
-        <p class="lede">Someone posts a bug. You hover it and hit <strong>Sidequest → Fix</strong>. Seconds later your coding agent is on it in its own git worktree, with the message, the thread and the screenshots as its prompt.</p>
-        <div class="cta">
-          <a class="btn btn-primary" href="https://github.com/michellemayes/Sidequest/releases/latest">
-            <svg width="16" height="18" viewBox="0 0 16 18" fill="currentColor" aria-hidden="true"><path d="M13.3 9.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9-.7 0-1.8-.9-3-.8C3.8 4.4 2.4 5.3 1.6 6.6c-1.6 2.8-.4 6.9 1.2 9.1.8 1.1 1.7 2.3 2.9 2.3 1.1 0 1.6-.7 3-.7s1.8.7 3 .7 2-1.1 2.8-2.2c.9-1.3 1.2-2.5 1.3-2.6-.1 0-2.5-1-2.5-3.6zM11 2.9c.6-.8 1.1-1.8 1-2.9-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.8-1 2.8 1 .1 2.1-.5 2.7-1.3z"/></svg>
-            Download for Mac
-          </a>
-          <a class="btn btn-ghost" href="https://github.com/michellemayes/Sidequest#try-it">Build it yourself</a>
-        </div>
-        <p class="fineprint">Free and open source (MIT). macOS, with <a href="https://claude.com/claude-code">Claude Code</a> or the agent you already use.</p>
+      <span class="eyebrow">For Slack and your coding agent</span>
+      <h1>Slack message in.<span class="line2">Fix on a branch out.</span></h1>
+      <p class="lede">Someone posts a bug. You hover it and hit <strong>Sidequest → Fix</strong>. Seconds later your coding agent is on it in its own git worktree. The Mac app shows you every session, and what each one needs from you.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/michellemayes/Sidequest/releases/latest">
+          <svg width="16" height="18" viewBox="0 0 16 18" fill="currentColor" aria-hidden="true"><path d="M13.3 9.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9-.7 0-1.8-.9-3-.8C3.8 4.4 2.4 5.3 1.6 6.6c-1.6 2.8-.4 6.9 1.2 9.1.8 1.1 1.7 2.3 2.9 2.3 1.1 0 1.6-.7 3-.7s1.8.7 3 .7 2-1.1 2.8-2.2c.9-1.3 1.2-2.5 1.3-2.6-.1 0-2.5-1-2.5-3.6zM11 2.9c.6-.8 1.1-1.8 1-2.9-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.8-1 2.8 1 .1 2.1-.5 2.7-1.3z"/></svg>
+          Download for Mac
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/michellemayes/Sidequest#try-it">Build it yourself</a>
+      </div>
+      <p class="fineprint">Free and open source (MIT). Signed, notarized and self-updating. Works with <a href="https://claude.com/claude-code">Claude Code</a> or the agent you already use.</p>
     </div>
 
-    <div class="window">
-      <img src="demo.gif" width="1440" height="855" alt="Sidequest demo: pick Fix on a Slack message, watch Claude Code fix it in a Warp tab on a new worktree, and find the branch linked back in Slack">
+    <!-- The main window: ContentView's list on the left, SessionDetailView on the right. -->
+    <div class="stage-scale" id="hero-app">
+      <div class="app" role="img" aria-label="The Sidequest Mac app: sessions grouped into Needs you, Working and Done on the left, and a Fix session with its reply ready to review on the right">
+        <div class="app-body">
+          <aside class="side">
+            <div class="titlebar">
+              <div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+              <b>All sessions</b>
+            </div>
+            <div class="side-top">
+              <div class="filter"><span>Needs you<em class="hot">1</em></span><span>Working<em>2</em></span><span>Done<em>1</em></span><span class="on">All<em>4</em></span></div>
+            </div>
+            <div class="rows">
+              <div class="group needs">Needs you<em>1</em></div>
+              <div class="row-s sel">
+                <i class="dot" style="--t: var(--needs-you)"></i>
+                <div>
+                  <div class="top"><span class="title strong">Checkout totals are wrong when a gift card covers part of an order</span><span class="age">12m</span></div>
+                  <div class="meta"><span class="tag" style="--k: var(--fix)">Fix</span>storefront · #bugs-storefront</div>
+                  <div class="hint hot">Reply ready to review · PR #123</div>
+                </div>
+              </div>
+              <div class="group working">Working<em>2</em></div>
+              <div class="row-s">
+                <i class="dot" style="--t: var(--working)"></i>
+                <div>
+                  <div class="top"><span class="title">Search results flicker on slow networks</span><span class="age">4m</span></div>
+                  <div class="meta"><span class="tag" style="--k: var(--investigate)">Investigate</span>web · #eng-platform</div>
+                </div>
+              </div>
+              <div class="row-s">
+                <i class="dot" style="--t: var(--working)"></i>
+                <div>
+                  <div class="top"><span class="title">DATA-3051 Export drops the last row</span><span class="age">38m</span></div>
+                  <div class="meta"><span class="tag" style="--k: var(--ticket)">Linear DATA-3051</span>reports · #data</div>
+                  <div class="hint">2 commits, no pull request yet</div>
+                </div>
+              </div>
+              <div class="group">Done<em>1</em></div>
+              <div class="row-s">
+                <i class="dot" style="--t: var(--done)"></i>
+                <div>
+                  <div class="top"><span class="title done">Can someone look at the billing PR before the release?</span><span class="age">2h</span></div>
+                  <div class="meta"><span class="tag" style="--k: var(--review)">Review</span>billing · #payments</div>
+                </div>
+              </div>
+            </div>
+            <div class="streak">
+              <svg width="20" height="20" style="color:#f97316"><use href="#i-flame"/></svg>
+              <div><b>5-day streak</b><small>3 today · best is 9 days</small></div>
+              <span class="stats">Stats</span>
+            </div>
+          </aside>
+
+          <div class="main">
+            <div class="toolbar">
+              <span class="agent"><i></i>Claude Code in Warp</span>
+              <span class="search"><svg width="13" height="13"><use href="#i-search"/></svg>Search</span>
+              <span class="icon-btn"><svg width="16" height="16"><use href="#i-palette"/></svg></span>
+            </div>
+            <div class="head">
+              <div style="flex: 1; min-width: 0">
+                <span class="tag" style="--k: var(--fix)">Fix</span>
+                <span class="pill filled" style="--t: var(--needs-you)">reply ready</span>
+                <h4>Checkout totals are wrong when a gift card covers part of an order</h4>
+                <div class="meta">storefront · #bugs-storefront · started 12 minutes ago</div>
+              </div>
+              <div class="actions">
+                <span class="mbtn"><svg width="13" height="13"><use href="#i-check"/></svg>Mark as Done</span>
+                <span class="mbtn primary">Review Reply</span>
+                <span class="mbtn"><svg width="13" height="13"><use href="#i-dots"/></svg></span>
+              </div>
+            </div>
+            <div class="detail">
+              <div class="col">
+                <div class="reply-card">
+                  <div class="bar"><b>YOUR TURN</b><span>Reply to the thread, as you</span><span>Written by Claude Code</span></div>
+                  <div class="editor">
+                    <p>Found it: VAT was worked out on the full cart before the gift card came off. <code>src/pricing/totals.ts</code> now takes the gift card off first, with a test for the €60 cart and €50 gift card from the repro.</p>
+                    <p>PR #123</p>
+                  </div>
+                  <div class="foot"><span>Posts in #bugs-storefront under @priya's message</span><span class="mbtn">Don't Post</span><span class="mbtn primary">Post in Thread</span></div>
+                </div>
+                <div class="card-q">
+                  <div class="who"><span class="av">P</span><b>@priya</b><span class="muted">in #bugs-storefront</span><span class="link">View in Slack</span></div>
+                  Checkout totals are wrong when a gift card covers part of an order. We charge VAT on the full cart before the gift card comes off, so customers get overcharged 😬
+                </div>
+                <div class="timeline">
+                  <h5>Activity</h5>
+                  <div class="step reached"><i class="m"></i><div><b>Started from Slack</b><span>Fix, from @priya in #bugs-storefront</span></div><time>2:20 PM</time></div>
+                  <div class="step reached"><i class="m"></i><div><b>Worktree ready</b><span>fix/checkout-total-is-wrong, cut from main</span></div><span></span></div>
+                  <div class="step reached"><i class="m"></i><div><b>2 commits</b><span>Nothing left uncommitted</span></div><span></span></div>
+                </div>
+              </div>
+              <div class="rail">
+                <h6>Details</h6>
+                <dl class="facts">
+                  <dt>Branch</dt><dd class="mono">fix/checkout-total-is-wrong</dd>
+                  <dt>Cut from</dt><dd class="mono">main</dd>
+                  <dt>Changes</dt><dd>2 commits · clean</dd>
+                  <dt>Agent</dt><dd>Claude Code</dd>
+                  <dt>Repo</dt><dd>storefront</dd>
+                </dl>
+                <h6>Open</h6>
+                <div class="opens">
+                  <span><svg width="15" height="15"><use href="#i-terminal"/></svg>In Terminal</span>
+                  <span><svg width="15" height="15"><use href="#i-pull"/></svg>Pull Request #123</span>
+                  <span><svg width="15" height="15"><use href="#i-hash"/></svg>Message in Slack</span>
+                  <span><svg width="15" height="15"><use href="#i-folder"/></svg>Worktree in Finder</span>
+                  <span><svg width="15" height="15"><use href="#i-copy"/></svg>Copy Branch Name</span>
+                </div>
+              </div>
+            </div>
+            <div class="composer"><span class="field">Follow up: tell the session what to do next…</span><span class="mbtn">Send</span></div>
+          </div>
+        </div>
+      </div>
     </div>
-    <p class="window-caption">The real thing: <b>Fix</b> on a Slack message → Claude Code in a fresh worktree → the branch back on the message.</p>
+
+    <!-- The swatches Settings › Appearance offers (AppearanceEditor.swatches in Theme.swift). -->
+    <div class="swatches" role="group" aria-label="Accent colour">
+      <span>Pick an accent, like in Settings › Appearance:</span>
+      <button type="button" style="--c:#6d28d9" data-accent="#6d28d9" aria-label="Violet" aria-pressed="true"></button>
+      <button type="button" style="--c:#2563eb" data-accent="#2563eb" aria-label="Blue" aria-pressed="false"></button>
+      <button type="button" style="--c:#db2777" data-accent="#db2777" aria-label="Pink" aria-pressed="false"></button>
+      <button type="button" style="--c:#ea580c" data-accent="#ea580c" aria-label="Orange" aria-pressed="false"></button>
+      <button type="button" style="--c:#15803d" data-accent="#15803d" aria-label="Green" aria-pressed="false"></button>
+      <button type="button" style="--c:#4b5563" data-accent="#4b5563" aria-label="Graphite" aria-pressed="false"></button>
+    </div>
   </div>
 </header>
 
@@ -376,27 +603,27 @@
   </div>
   <div class="wrap">
     <div class="grid-4">
-      <div class="prompt-card" style="--c: var(--investigate)">
+      <div class="prompt-card" style="--k: var(--investigate)">
         <span class="key">1</span>
-        <span class="name">Investigate</span>
+        <span class="tag">Investigate</span>
         <h3>Find out why</h3>
         <p>Reproduces the problem, traces it to the code, explains it and recommends a fix. Changes nothing.</p>
       </div>
-      <div class="prompt-card" style="--c: var(--fix)">
+      <div class="prompt-card" style="--k: var(--fix)">
         <span class="key">2</span>
-        <span class="name">Fix</span>
+        <span class="tag">Fix</span>
         <h3>Ship the fix</h3>
         <p>Finds the root cause, makes the smallest fix, adds a test, gets lint and tests passing, and commits.</p>
       </div>
-      <div class="prompt-card" style="--c: var(--review)">
+      <div class="prompt-card" style="--k: var(--review)">
         <span class="key">3</span>
-        <span class="name">Review</span>
+        <span class="tag">Review</span>
         <h3>Check the PR</h3>
         <p>Reviews the pull request, branch or diff the message points at, bugs first. Changes nothing.</p>
       </div>
-      <div class="prompt-card" style="--c: var(--ask)">
+      <div class="prompt-card" style="--k: var(--ask)">
         <span class="key">4</span>
-        <span class="name">Ask</span>
+        <span class="tag">Ask</span>
         <h3>Ask the code</h3>
         <p>Type a question in the menu. The agent reads the relevant code and answers it.</p>
       </div>
@@ -409,28 +636,36 @@
   </div>
 </section>
 
-<section>
+<section id="mac">
   <div class="wrap">
     <div class="row">
       <div>
         <span class="eyebrow">Live status</span>
-        <h2>Status, right on the <span class="scribble" style="--hl: var(--violet)">message</span>.</h2>
-        <p class="lede">A small mark under the message keeps up with the session: working, commits, pull request, merged. Click it to jump straight back into the session.</p>
+        <h2>Slack and the app keep up with every session.</h2>
+        <p class="lede">A small mark under the message follows the session from working to merged, and the app's activity timeline fills in as it goes. Click either to jump back in.</p>
         <ul>
-          <li>Hover it for the details: uncommitted changes, the PR's link.</li>
+          <li>Commits, the pull request, the reply and the merge, each as it happens.</li>
           <li>Pull requests are looked up with <code>gh</code> when it's signed in.</li>
-          <li>The menu leads with <strong>Back to Fix</strong>, so you never cut a duplicate branch.</li>
+          <li>The Dock icon counts the sessions that need you.</li>
         </ul>
       </div>
       <div class="stage">
-        <div style="width: 100%; max-width: 440px">
-          <div class="msg">
-            <div class="avatar" aria-hidden="true"></div>
-            <div>
-              <div class="who">Priya Shah <time>2:20 PM</time></div>
-              <p class="text">Checkout totals are wrong when a gift card covers part of an order. We charge VAT on the full cart before the gift card comes off 😬</p>
-              <span class="chip" id="chip">✦ Fix <span class="state">· working 12m</span></span>
-            </div>
+        <div class="msg">
+          <div class="avatar" aria-hidden="true"></div>
+          <div>
+            <div class="who">Priya Shah <time>2:20 PM</time></div>
+            <p class="text">Checkout totals are wrong when a gift card covers part of an order 😬</p>
+            <span class="chip" id="chip">✦ Fix <span class="state">· working 12m</span></span>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="app panel-pad timeline" id="timeline" role="img" aria-label="The session's activity timeline in the Mac app">
+            <h5>Activity</h5>
+            <div class="step reached"><i class="m"></i><div><b>Started from Slack</b><span>Fix, from @priya in #bugs-storefront</span></div><time>2:20 PM</time></div>
+            <div class="step reached"><i class="m"></i><div><b>Worktree ready</b><span>fix/checkout-total-is-wrong, cut from main</span></div><span></span></div>
+            <div class="step" data-at="1"><i class="m"></i><div><b>2 commits</b><span>Nothing left uncommitted</span></div><span></span></div>
+            <div class="step" data-at="2"><i class="m"></i><div><b>Pull request #123 opened</b><span>On main</span></div><span></span></div>
+            <div class="step" data-at="3"><i class="m"></i><div><b>Merged</b><span>Into main</span></div><span></span></div>
           </div>
         </div>
       </div>
@@ -439,23 +674,53 @@
     <div class="row flip">
       <div>
         <span class="eyebrow">Replies you approve</span>
-        <h2>The agent drafts. <span style="color: var(--yellow)">You hit post.</span></h2>
-        <p class="lede">When it's done, the agent writes a short answer for the thread: what it found, or what it changed and why. You read it in Slack's formatting, edit it, and post it as you.</p>
+        <h2>The agent drafts. You post.</h2>
+        <p class="lede">When it's done, the agent writes a short answer for the thread: what it found, or what it changed and why. Edit it in the app or in Slack, and post it as you.</p>
         <ul>
-          <li>Nothing goes out without your click.</li>
+          <li>Nothing goes out without your click (<code>⌘↵</code> posts it).</li>
           <li>Every reply says which agent wrote it, so the thread knows.</li>
-          <li>Send a follow-up, or open a draft PR, from the same menu.</li>
+          <li>Send a follow-up from the box under the session.</li>
         </ul>
       </div>
       <div class="stage">
-        <div class="reply">
-          <header><img src="icon.svg" alt="">Fix's reply <small>reply ready</small></header>
-          <div class="body">
-            <p>Found it: VAT was worked out on the full cart before the gift card came off. <code>src/pricing/totals.ts</code> now takes the gift card off first, with a test for the €60 cart and €50 gift card from the repro.</p>
-            <p>PR: <span style="color:#1264a3">#123</span></p>
-            <p class="sig">🤖 Written by Claude Code, an AI agent, via Sidequest</p>
+        <div class="panel">
+          <div class="app" style="padding: 16px" role="img" aria-label="The reply card in the Mac app, waiting for you to post it">
+            <div class="reply-card">
+              <div class="bar"><b>YOUR TURN</b><span>Reply to the thread, as you</span><span>Written by Claude Code</span></div>
+              <div class="editor">
+                <p>Found it: VAT was worked out on the full cart before the gift card came off. <code>src/pricing/totals.ts</code> now takes the gift card off first, with a test for the €60 cart and €50 gift card from the repro.</p>
+                <p>PR #123</p>
+              </div>
+              <div class="foot"><span>Posts in #bugs-storefront</span><span class="mbtn">Don't Post</span><span class="mbtn primary">Post in Thread</span></div>
+            </div>
           </div>
-          <footer><span>Don't post</span><span class="post">Post in thread ⌘↵</span></footer>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <span class="eyebrow">Headless sessions</span>
+        <h2>No terminal? Watch and steer it in the app.</h2>
+        <p class="lede">Run sessions in the background and each one gets four tabs: an overview, the agent's conversation as it happens, the diff, and a terminal that carries the conversation on.</p>
+        <ul>
+          <li><strong>Stop</strong> ends a run and <strong>Run Again</strong> starts it over.</li>
+          <li>Tell it what to do next from the box at the bottom.</li>
+          <li>Questions the agent needs answered show up as cards for you to approve.</li>
+        </ul>
+      </div>
+      <div class="stage">
+        <div class="panel">
+          <div class="app" style="padding: 16px 18px" role="img" aria-label="A headless session in the Mac app, running in the background">
+            <div class="seg"><span class="on">Overview</span><span>Conversation</span><span>Changes</span><span>Terminal</span></div>
+            <div class="live">
+              <div class="hd"><i class="dot" style="--t: var(--working); margin: 0"></i>Running in the background<span class="mbtn">Open Conversation</span></div>
+              <div class="item"><span class="tag">Read</span><span class="mono">src/pricing/totals.ts</span></div>
+              <div class="item"><span class="tag">Edit</span><span class="mono">src/pricing/totals.ts</span></div>
+              <div class="item"><span class="tag">Bash</span><span class="mono">npm test -- pricing</span></div>
+            </div>
+            <div class="composer" style="padding: 12px 0 0; border: 0"><span class="field">Tell it what to do next…</span><span class="mbtn">Send</span></div>
+          </div>
         </div>
       </div>
     </div>
@@ -469,26 +734,29 @@
     <p class="lede">Slack's desktop app is built on Electron. Sidequest adds a small overlay to it over the DevTools Protocol, and a daemon on your Mac does the rest.</p>
   </div>
   <div class="wrap">
+    <div class="gif">
+      <img src="demo.gif" width="1440" height="855" loading="lazy" alt="Sidequest demo: pick Fix on a Slack message, watch Claude Code fix it in a Warp tab on a new worktree, and find the branch linked back in Slack">
+    </div>
     <div class="trail">
-      <div class="stop" style="--b: var(--lime)">
+      <div class="stop" style="--b: #a78bfa">
         <div class="badge">1</div>
         <h3>A fresh worktree</h3>
         <p><code>git worktree add</code> on a new branch, so your own checkout stays exactly as you left it.</p>
       </div>
-      <div class="stop" style="--b: var(--yellow)">
+      <div class="stop" style="--b: #f97316">
         <div class="badge">2</div>
         <h3>A full prompt</h3>
         <p>The message, its thread, the permalink and any attached files, written into the worktree.</p>
       </div>
-      <div class="stop" style="--b: var(--pink)">
+      <div class="stop" style="--b: #60a5fa">
         <div class="badge">3</div>
         <h3>Your agent starts</h3>
         <p>In a new terminal tab, in the background, or in the Claude or ChatGPT desktop app.</p>
       </div>
-      <div class="stop" style="--b: var(--sky)">
+      <div class="stop" style="--b: #2dd4bf">
         <div class="badge">4</div>
-        <h3>Slack keeps up</h3>
-        <p>Commits, the pull request and the agent's reply show up right on the message.</p>
+        <h3>You follow along</h3>
+        <p>Commits, the pull request and the agent's reply show up on the message and in the app.</p>
       </div>
     </div>
   </div>
@@ -522,50 +790,6 @@
   </div>
 </section>
 
-<section id="mac" style="padding-top: 20px">
-  <div class="wrap">
-    <div class="row">
-      <div>
-        <span class="eyebrow">The Mac app</span>
-        <h2>Keep every session in view, beside Slack.</h2>
-        <p class="lede">Start sessions from Slack, follow them in the app. Sessions are sorted by what needs you, and the Dock icon counts what's waiting.</p>
-        <ul>
-          <li>Edit and post the agent's reply, or send a follow-up, without leaving the session.</li>
-          <li>Headless sessions get a live conversation, the diff, and a terminal.</li>
-          <li>Signed, notarized and self-updating. It carries its own engine, so it's the only thing to install.</li>
-        </ul>
-        <div class="cta">
-          <a class="btn btn-primary" href="https://github.com/michellemayes/Sidequest/releases/latest">Download the Mac app</a>
-        </div>
-      </div>
-      <div class="stage" style="background: radial-gradient(400px 260px at 70% 100%, rgba(255, 92, 138, .3), transparent 70%), var(--night-3)">
-        <div class="mac" role="img" aria-label="The Sidequest Mac app's session list, grouped into Needs you, Working and Done">
-          <div class="bar">
-            <i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i>
-            <b>Sidequest</b>
-            <div class="seg"><span class="sel">All</span><span>Needs you</span><span>Working</span><span>Done</span></div>
-          </div>
-          <h4 style="--g: #6d28d9">Needs you · 1</h4>
-          <div class="item sel" style="--g: #6d28d9; --c: #c2410c">
-            <i></i><div><div class="t">Checkout totals are wrong with a gift card</div><div class="s">Reply ready to review</div></div><span class="k">Fix</span>
-          </div>
-          <h4 style="--g: #1d64d8">Working · 2</h4>
-          <div class="item" style="--g: #1d64d8; --c: #7e22ce">
-            <i></i><div><div class="t">Search results flicker on slow networks</div><div class="s">working 4m</div></div><span class="k">Investigate</span>
-          </div>
-          <div class="item" style="--g: #1d64d8; --c: #4338ca">
-            <i></i><div><div class="t">DATA-3051 Export drops the last row</div><div class="s">2 commits</div></div><span class="k">Linear</span>
-          </div>
-          <h4 style="--g: #0f766e">Done · 1</h4>
-          <div class="item" style="--g: #0f766e; --c: #0f766e">
-            <i></i><div><div class="t">Can someone look at the billing PR?</div><div class="s">PR #118 merged</div></div><span class="k">Review</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <section class="paper slant-top">
   <div class="wrap center">
     <span class="eyebrow">Private by default</span>
@@ -593,7 +817,7 @@
   <div class="wrap">
     <div class="final">
       <h2>Go on. Take the sidequest.</h2>
-      <p>Install the Mac app, link a channel to a repo, and hover a message. Your next bug report is one click from a branch.</p>
+      <p>Install the Mac app. It carries its own engine and walks you through linking a channel to a repo.</p>
       <div class="cta">
         <a class="btn btn-primary" href="https://github.com/michellemayes/Sidequest/releases/latest">Download for Mac</a>
         <a class="btn btn-ghost" href="https://github.com/michellemayes/Sidequest/blob/main/docs/guide.md">Read the guide</a>
@@ -614,17 +838,45 @@
 </footer>
 
 <script>
-  // Walk the message's mark through a session's life, the way it does in Slack.
+  // Draw the hero's app window at its real size and scale it to the page.
+  const stage = document.getElementById('hero-app');
+  const app = stage.querySelector('.app');
+  function fit() {
+    const scale = Math.min(1, stage.clientWidth / app.offsetWidth);
+    app.style.transform = `scale(${scale})`;
+    stage.style.height = app.offsetHeight * scale + 'px';
+  }
+  new ResizeObserver(fit).observe(stage);
+  fit();
+
+  // The accent swatches recolour the app pictures, as Settings › Appearance does. The default
+  // palette uses the accent for Needs you too, so that follows along.
+  for (const button of document.querySelectorAll('[data-accent]')) {
+    button.addEventListener('click', () => {
+      document.documentElement.style.setProperty('--accent', button.dataset.accent);
+      document.documentElement.style.setProperty('--needs-you', button.dataset.accent);
+      for (const other of document.querySelectorAll('[data-accent]')) other.setAttribute('aria-pressed', String(other === button));
+    });
+  }
+
+  // Walk the message's mark and the app's timeline through a session's life, together.
   const chip = document.getElementById('chip');
+  const steps = document.querySelectorAll('#timeline [data-at]');
   const states = ['working 12m', '2 commits', 'PR #123', 'merged'];
+  function show(at) {
+    chip.querySelector('.state').textContent = '· ' + states[at];
+    chip.classList.toggle('merged', at === states.length - 1);
+    for (const step of steps) {
+      const n = Number(step.dataset.at);
+      step.classList.toggle('reached', n <= at);
+      step.classList.toggle('current', n === at + 1);
+      step.classList.toggle('pending', n > at + 1);
+    }
+  }
+  show(0);
   if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
     let at = 0;
-    setInterval(() => {
-      at = (at + 1) % states.length;
-      chip.querySelector('.state').textContent = '· ' + states[at];
-      chip.classList.toggle('merged', states[at] === 'merged');
-      chip.classList.remove('pop'); void chip.offsetWidth; chip.classList.add('pop');
-    }, 2000);
+    setInterval(() => { at = (at + 1) % states.length; show(at); }, 2200);
   }
 </script>
 </body>
