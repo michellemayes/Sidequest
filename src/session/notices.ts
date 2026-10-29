@@ -4,7 +4,8 @@
  * The toast in Slack only reaches you while you are looking at Slack, and a
  * session that runs for twenty minutes is exactly when you are not: you are
  * in the terminal, the editor, another meeting. So when a session moves on
- * in a way worth stopping for — a reply waiting to be read, a pull request
+ * in a way worth stopping for — a reply waiting to be read, a question it
+ * stopped to ask, a pull request
  * opened or merged, a headless run that failed — the daemon also says so in
  * a macOS notification. Only the move is news: a session already in that
  * state when the daemon started is not announced again.
@@ -52,6 +53,8 @@ export function noticesFor(
         notices.push({ title: `${label} opened PR #${next.pr.number}`, body: where, branch });
       } else if (next.state === "merged") {
         notices.push({ title: `${label} merged`, body: next.pr ? `PR #${next.pr.number} · ${where}` : where, branch });
+      } else if (next.state === "asking") {
+        notices.push({ title: `${label} is waiting on you`, body: `It stopped to ask you something. ${where}`, branch });
       } else if (next.state === "failed") {
         notices.push({
           title: `${label} failed`,

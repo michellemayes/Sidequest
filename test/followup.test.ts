@@ -13,7 +13,7 @@ import {
   safeFileName,
   saveAttachments,
 } from "../src/session/attachments.js";
-import { MAX_RESULT_CHARS, resultInstructions, resultReply, toSlack } from "../src/session/result.js";
+import { clearQuestion, MAX_RESULT_CHARS, resultInstructions, resultReply, toSlack } from "../src/session/result.js";
 import { parsePullRequest, StatusWatcher, type SessionStatus } from "../src/session/status.js";
 import { loadHistory, recordSession, updateSession, type HistoryEntry } from "../src/session/history.js";
 
@@ -131,10 +131,18 @@ describe("result replies", () => {
   });
 
   it("asks the agent for a reply unless results are off", () => {
-    expect(resultInstructions("off")).toBe("");
+    expect(resultInstructions("off")).not.toContain("result.md");
     expect(resultInstructions("ask")).toContain(".sidequest/result.md");
     expect(resultInstructions("ask")).toContain("offers it to me");
     expect(resultInstructions("auto")).toContain("as soon as you write it");
+  });
+
+  it("always tells the agent to leave its question where the app can see it", () => {
+    for (const mode of ["off", "ask", "auto"] as const) {
+      expect(resultInstructions(mode)).toContain(".sidequest/question.md");
+    }
+    // No more telling it to leave the reply out, which agents read back to you as having written it.
+    expect(resultInstructions("ask")).not.toMatch(/Leave it out/);
   });
 });
 
@@ -270,6 +278,26 @@ describe("StatusWatcher", () => {
     history[0] = { ...entry, resultPostedMs: status.resultMs! };
     await w.refresh();
     expect(w.snapshot().get("fix/thing")!.resultPending).toBe(false);
+  });
+
+  it("shows an agent waiting on your answer, until a reply comes after it", async () => {
+    const w = watcher(() => [entry]);
+    const dir = join(worktree, ".sidequest");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "question.md"), "Clear the QA RED and open the PR?\n");
+    const asked = Math.floor(now / 1000);
+    await utimes(join(dir, "question.md"), asked, asked);
+    await w.refresh();
+    expect(w.snapshot().get("fix/thing")).toMatchObject({ state: "asking", questionMs: asked * 1000 });
+
+    await writeFile(join(dir, "result.md"), "Opened the PR.\n");
+    await utimes(join(dir, "result.md"), asked + 10, asked + 10);
+    await w.refresh();
+    expect(w.snapshot().get("fix/thing")!.state).toBe("answered");
+
+    await clearQuestion(worktree);
+    await w.refresh();
+    expect(w.snapshot().get("fix/thing")).toMatchObject({ state: "answered", questionMs: null });
   });
 
   it("says when the worktree is gone, and stops looking", async () => {

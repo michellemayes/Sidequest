@@ -10,6 +10,7 @@ const status = (patch: Partial<SessionStatus> = {}): SessionStatus => ({
   pr: null,
   resultMs: null,
   resultPending: false,
+  questionMs: null,
   exitCode: null,
   ...patch,
 });
@@ -51,6 +52,12 @@ describe("desktop notices", () => {
       "Fix merged",
       "Fix failed",
     ]);
+  });
+
+  it("announces an agent that stopped to ask you something", () => {
+    const after = new Map([["a", status({ state: "asking", questionMs: 1 })]]);
+    const notices = noticesFor(new Map([["a", status()]]), after, [entry("a")], { postResults: "auto", since });
+    expect(notices).toEqual([expect.objectContaining({ title: "Fix is waiting on you", branch: "a" })]);
   });
 
   it("says nothing about what was already so when the daemon started", () => {

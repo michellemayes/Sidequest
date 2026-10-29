@@ -101,6 +101,7 @@ function statusText(status) {
   const bits = [];
   switch (status.state) {
     case 'working': bits.push('working'); break;
+    case 'asking': bits.push('waiting on you'); break;
     case 'answered': bits.push('answered'); break;
     case 'committed': bits.push(`${status.commits} commit${status.commits === 1 ? '' : 's'}`); break;
     case 'pr-open': bits.push(status.pr ? `PR #${status.pr.number}` : 'PR open'); break;

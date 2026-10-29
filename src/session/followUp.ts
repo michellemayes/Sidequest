@@ -17,7 +17,7 @@ import { armFollowUp, autorunPaths, FOLLOWUP_FILE, SESSION_DIR } from "../warp/a
 import { openUri } from "../util/openUri.js";
 import { UserFacingError } from "../util/errors.js";
 import { openSession, type FoundSession, type ReopenResult } from "./reopen.js";
-import { resultInstructions } from "./result.js";
+import { clearQuestion, resultInstructions } from "./result.js";
 
 export interface FollowUp {
   /** What you typed. */
@@ -60,6 +60,8 @@ export async function followUpSession(
   }
   const prompt = renderFollowUp(followUp, config.settings.postResults);
   const worktree = found.worktree.path;
+  // A follow-up is your answer to whatever the agent stopped to ask.
+  await clearQuestion(worktree);
   const agent = resolveAgent(agentConfigFor(config.settings.agent, agentId), config.settings);
 
   if (agent.app) {

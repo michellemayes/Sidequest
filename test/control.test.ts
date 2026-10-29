@@ -155,7 +155,7 @@ function entry(n: number, extra: Partial<HistoryEntry> = {}): HistoryEntry {
 }
 
 function status(extra: Partial<SessionStatus> = {}): SessionStatus {
-  return { state: "working", commits: 0, dirty: false, pr: null, resultMs: null, resultPending: false, exitCode: null, ...extra };
+  return { state: "working", commits: 0, dirty: false, pr: null, resultMs: null, resultPending: false, questionMs: null, exitCode: null, ...extra };
 }
 
 describe("appSessions", () => {
@@ -215,6 +215,13 @@ describe("appSessions", () => {
     const stale = (now: number) => appSessions(history, new Map(), { postResults: "ask", now }).map((s) => [s.branch, s.stale]);
     expect(stale(at(13))).toEqual([["claude/fix-2", false], ["claude/fix-1", false]]);
     expect(stale(at(15))).toEqual([["claude/fix-2", false], ["claude/fix-1", true]]);
+  });
+
+  it("puts a session waiting on your answer under what needs you", () => {
+    const statuses = new Map([["claude/fix-1", status({ state: "asking", questionMs: 5 })]]);
+    expect(appSessions([entry(1)], statuses, { postResults: "auto" })[0]).toMatchObject({ state: "asking", needsYou: true });
+    expect(appSessions([entry(1, { doneAt: "2026-10-09T12:00:00.000Z" })], statuses, { postResults: "ask" })[0])
+      .toMatchObject({ needsYou: false });
   });
 
   it("does not ask you about a reply that posts itself", () => {
