@@ -7,13 +7,19 @@
  * offers it on the message or posts it in the thread. The agent writes
  * Markdown; Slack reads its own mrkdwn, so the text is converted on the way.
  */
-import { readFile, stat } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { PostResults } from "../config/schema.js";
 import { SESSION_DIR } from "../warp/autorun.js";
 import { escapeSlack } from "../util/slack.js";
 
 export const RESULT_FILE = "result.md";
+/**
+ * Where an agent that stopped to ask you something says so. Without it a
+ * session waiting on you looks, from outside, exactly like one still at
+ * work, and nothing in the app says to go and answer it.
+ */
+export const QUESTION_FILE = "question.md";
 
 /** Longer than this and it belongs in the session, not in a thread. */
 export const MAX_RESULT_CHARS = 3000;
@@ -22,16 +28,29 @@ export function resultPath(worktreePath: string): string {
   return join(worktreePath, SESSION_DIR, RESULT_FILE);
 }
 
-/** The closing section every prompt gets, unless results are off. */
+export function questionPath(worktreePath: string): string {
+  return join(worktreePath, SESSION_DIR, QUESTION_FILE);
+}
+
+/**
+ * The closing section every prompt gets: where to leave the reply for the
+ * thread (unless results are off), and, always, where to say it is waiting
+ * on me, which is what puts the session under Needs you in the app.
+ */
 export function resultInstructions(mode: PostResults): string {
-  if (mode === "off") return "";
+  const question = `\`${SESSION_DIR}/${QUESTION_FILE}\``;
+  const asking = `
+
+## If you stop to ask me something
+Before you stop to ask me a question or wait on a decision, write the question to ${question} (git ignores it) in a sentence or two, so Sidequest can show me that you are waiting on me. Delete ${question} once you have my answer and carry on. In your message to me, only say you wrote a file if you actually did.`;
+  if (mode === "off") return asking;
   const who = mode === "auto"
     ? "Sidequest posts it in the Slack thread as me as soon as you write it"
     : "Sidequest offers it to me to post in the Slack thread as me";
   return `
 
 ## When you are done
-Write a short reply for the Slack thread this came from to \`${SESSION_DIR}/${RESULT_FILE}\` (git ignores it): what you found or what you changed and why, in a few sentences of Markdown, written for whoever asked. ${who}, so do not sign it or address me. Leave it out if you stopped to ask me something; write it again if we pick the work back up and the answer changes.`;
+Write a short reply for the Slack thread this came from to \`${SESSION_DIR}/${RESULT_FILE}\` (git ignores it): what you found or what you changed and why, in a few sentences of Markdown, written for whoever asked. ${who}, so do not sign it or address me. Do not write it while you are only stopping to ask me something (see below); write it again if we pick the work back up and the answer changes.${asking}`;
 }
 
 export interface ResultFile {
@@ -60,6 +79,35 @@ export async function resultMtime(worktreePath: string): Promise<number | null> 
   } catch {
     return null;
   }
+}
+
+/** Only the question's timestamp, like resultMtime. */
+export async function questionMtime(worktreePath: string): Promise<number | null> {
+  try {
+    const info = await stat(questionPath(worktreePath));
+    return info.size > 0 ? info.mtimeMs : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Longer than this and the rest is in the agent's own message. */
+const MAX_QUESTION_CHARS = 600;
+
+/** What the agent is waiting on you for, trimmed for a card; null when it is not. */
+export async function readQuestion(worktreePath: string): Promise<string | null> {
+  try {
+    const text = (await readFile(questionPath(worktreePath), "utf8")).trim();
+    if (!text) return null;
+    return text.length > MAX_QUESTION_CHARS ? `${text.slice(0, MAX_QUESTION_CHARS - 1).trimEnd()}…` : text;
+  } catch {
+    return null;
+  }
+}
+
+/** Take a question away once it has been answered, by a follow-up from Sidequest, say. */
+export async function clearQuestion(worktreePath: string): Promise<void> {
+  await rm(questionPath(worktreePath), { force: true });
 }
 
 /**

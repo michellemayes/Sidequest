@@ -65,6 +65,14 @@ reply links it. Every reply ends with a line saying which agent wrote it
 it didn't come from you by hand. If the agent rewrites the file later (say you
 ask it to change the reply), a new toast says it was updated.
 
+**When the agent stops to ask you something.** A question for you isn't a reply
+for the thread, so the agent doesn't write `result.md` then. It writes the
+question to `.sidequest/question.md` instead, and the session moves to **Needs
+you** in the Mac app, reading **waiting on you**, with the question on its page
+and a notification. Answer it where the agent is running. The agent deletes the
+file once it has your answer, a reply it writes later takes over, and a
+follow-up from Sidequest clears it too.
+
 Replies you haven't posted or dropped yet don't get lost when the toast goes or
 the message scrolls away: a **💬** count on the channel pill, beside the channel
 name, opens the sessions panel with every waiting reply at the top. The panel

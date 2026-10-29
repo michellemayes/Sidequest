@@ -39,9 +39,9 @@ export function fixtureSessions(): { sessions: ReturnType<typeof appSessions>; s
     base,
   ];
   const statuses = new Map<string, SessionStatus>([
-    ["claude/fix-checkout-total", { state: "pr-open", commits: 2, dirty: false, pr: { number: 128, url: "https://github.com/acme/storefront/pull/128", state: "OPEN" }, resultMs: 1760020000000, resultPending: true, exitCode: null }],
-    ["investigate/webhook-502s", { state: "failed", commits: 0, dirty: false, pr: null, resultMs: null, resultPending: false, exitCode: 1 }],
-    ["ask/why-are-refunds-slow-20261008-0915", { state: "working", commits: 0, dirty: false, pr: null, resultMs: null, resultPending: false, exitCode: null }],
+    ["claude/fix-checkout-total", { state: "pr-open", commits: 2, dirty: false, pr: { number: 128, url: "https://github.com/acme/storefront/pull/128", state: "OPEN" }, resultMs: 1760020000000, resultPending: true, questionMs: null, exitCode: null }],
+    ["investigate/webhook-502s", { state: "failed", commits: 0, dirty: false, pr: null, resultMs: null, resultPending: false, questionMs: null, exitCode: 1 }],
+    ["ask/why-are-refunds-slow-20261008-0915", { state: "working", commits: 0, dirty: false, pr: null, resultMs: null, resultPending: false, questionMs: null, exitCode: null }],
   ]);
   return {
     sessions: appSessions(history, statuses, { postResults: "ask", now: Date.parse("2026-10-09T16:00:00.000Z") }),

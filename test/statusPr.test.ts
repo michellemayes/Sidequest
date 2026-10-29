@@ -157,4 +157,13 @@ describe("a headless run that failed", () => {
     expect(stateOf(2, null, null, 1)).toBe("committed");
     expect(stateOf(0, null, 123, 1)).toBe("answered");
   });
+
+  it("is waiting on you while its question is newer than any reply", () => {
+    expect(stateOf(0, null, null, null, 100)).toBe("asking");
+    expect(stateOf(2, null, 50, null, 100)).toBe("asking");
+    expect(stateOf(2, { number: 1, url: "u", state: "OPEN" }, null, null, 100)).toBe("asking");
+    // A reply written after the question answers it.
+    expect(stateOf(0, null, 200, null, 100)).toBe("answered");
+    expect(stateOf(2, { number: 1, url: "u", state: "MERGED" }, null, null, 100)).toBe("merged");
+  });
 });

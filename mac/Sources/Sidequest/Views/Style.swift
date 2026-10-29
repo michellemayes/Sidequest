@@ -15,6 +15,7 @@ struct SessionLook {
             self.init("circle.dotted", .working, "running \(Elapsed.short(since: session.created))")
         } else {
             switch session.state {
+            case "asking": self.init("questionmark.bubble.fill", .needsYou, "waiting on you")
             case "failed": self.init("xmark.octagon.fill", .failed, session.exitCode.map { "failed · exit \($0)" } ?? "failed")
             case "committed": self.init("circle.lefthalf.filled", .working, session.commits == 1 ? "1 commit" : "\(session.commits) commits")
             case "pr-open": self.init("arrow.triangle.pull", .done, session.pr.map { "PR #\($0.number)" } ?? "PR open")

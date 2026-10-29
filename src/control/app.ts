@@ -23,7 +23,7 @@ import { loadSyncState } from "../config/sync.js";
 import { headlessPaths } from "../terminals/headless.js";
 import { readTail } from "../daemon.js";
 import { computeStats, loadHistory, updateSession, type HistoryEntry } from "../session/history.js";
-import { readResult } from "../session/result.js";
+import { readQuestion, readResult } from "../session/result.js";
 import type { SessionStatus } from "../session/status.js";
 import { TERMINAL_DEFINITIONS } from "../terminals/registry.js";
 import { builtCommit, installRoot } from "../update.js";
@@ -86,7 +86,9 @@ export interface AppSession {
   exitCode: number | null;
   /** When you marked it done yourself; null until you do. */
   doneAt: string | null;
-  /** A reply waiting for you, or a run that failed, on a session you have not marked done. */
+  /** What the agent stopped to ask you, from its question.md; null unless it is "asking". */
+  question: string | null;
+  /** A reply waiting for you, a question the agent is waiting on, or a run that failed, on a session you have not marked done. */
   needsYou: boolean;
   /** Not marked done and started over STALE_AFTER_MS ago, so the app files it with Done rather than Working. */
   stale: boolean;
@@ -168,7 +170,8 @@ export function appSessions(
       resultPending,
       exitCode: live?.exitCode ?? null,
       doneAt: entry.doneAt ?? null,
-      needsYou: !entry.doneAt && (resultPending || status?.state === "failed"),
+      question: null,
+      needsYou: !entry.doneAt && (resultPending || status?.state === "failed" || live?.state === "asking"),
       stale: !entry.doneAt && now - Date.parse(entry.createdAt) > STALE_AFTER_MS,
       headless: false,
       running: false,
@@ -177,9 +180,18 @@ export function appSessions(
   return out;
 }
 
-/** Each session's run state, read from its worktree. */
+/** Each session's run state, and the question it is waiting on, read from its worktree. */
 async function withRunState(sessions: AppSession[]): Promise<AppSession[]> {
-  return Promise.all(sessions.map(async (s) => (s.state === "gone" ? s : { ...s, ...(await runState(s.worktreePath)) })));
+  return Promise.all(
+    sessions.map(async (s) => {
+      if (s.state === "gone") return s;
+      const [run, question] = await Promise.all([
+        runState(s.worktreePath),
+        s.state === "asking" ? readQuestion(s.worktreePath) : null,
+      ]);
+      return { ...s, ...run, question };
+    }),
+  );
 }
 
 /** The newest session on a branch, or an error that says it is gone. */

@@ -131,6 +131,8 @@ struct SessionDetailView: View {
         // Done is done: the next step is whatever you pick, not a button asking for it.
         if session.markedDone { return nil }
         if session.resultPending { return .reviewReply }
+        // Answered where the agent is waiting; reopening would start a second session beside it.
+        if session.state == "asking" { return session.headless ? .terminal : nil }
         if session.headless && session.running { return .stop }
         if session.state == "failed" { return session.headless ? .runAgain : .reopen }
         if let pr = session.pr, session.state == "pr-open" { return .viewPR(pr.number) }
@@ -203,6 +205,7 @@ struct SessionDetailView: View {
                 ApprovalCard(approval: approval)
             }
             if session.resultPending || reply != nil { replyCard }
+            if session.state == "asking" && !session.markedDone { questionCard }
             if session.state == "failed" { failureCard }
             if session.headless && session.running { liveCard }
             if !session.message.isEmpty { quote }
@@ -257,6 +260,34 @@ struct SessionDetailView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(pending ? theme.fill(.needsYou).opacity(0.45) : Color.secondary.opacity(0.25), lineWidth: pending ? 1.5 : 1)
         )
+    }
+
+    /// The agent stopped to ask you something; the answer goes to it, not to the thread.
+    private var questionCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text("YOUR TURN")
+                    .font(.caption.weight(.bold))
+                    .tracking(0.6)
+                    .foregroundStyle(theme.text(.needsYou))
+                Text("\(session.agent.isEmpty ? "The agent" : session.agent) is waiting on you").font(.caption).foregroundStyle(.secondary)
+            }
+            Text(session.question ?? "It stopped to ask you something. Its question is in the session.")
+                .font(.body)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if session.headless {
+                Button("Open Terminal Tab") { tab = .terminal }
+                    .buttonStyle(.borderedProminent)
+            } else {
+                Text("Answer it where the agent is running; it goes back to work from there.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.fill(.needsYou).opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(theme.fill(.needsYou).opacity(0.45), lineWidth: 1.5))
     }
 
     private var failureCard: some View {
@@ -516,6 +547,9 @@ struct ActivityStep: Hashable {
 
         if session.headless && session.running {
             steps.append(ActivityStep(label: "Running", detail: "In the background; its conversation is in the app", time: nil, mark: .current))
+        }
+        if session.state == "asking" && !session.markedDone {
+            steps.append(ActivityStep(label: "Waiting on you", detail: "The agent stopped to ask you something", time: nil, mark: .current))
         }
         if session.state == "failed" {
             steps.append(ActivityStep(label: "Agent stopped", detail: session.exitCode.map { "Exit code \($0)" } ?? "With an error", time: nil, mark: .failed))

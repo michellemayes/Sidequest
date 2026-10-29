@@ -104,7 +104,7 @@ describe("history store", () => {
     await recordSession(entry(1));
     const pr = { number: 7, url: "https://x/7", state: "OPEN" as const };
     const statuses = new Map([
-      ["fix/thing-0", { state: "pr-open" as const, commits: 2, dirty: true, pr, resultMs: 5, resultPending: true, exitCode: null }],
+      ["fix/thing-0", { state: "pr-open" as const, commits: 2, dirty: true, pr, resultMs: 5, resultPending: true, questionMs: null, exitCode: null }],
     ]);
     await recordStatuses(statuses);
     const history = await loadHistory();

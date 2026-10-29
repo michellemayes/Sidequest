@@ -14,7 +14,7 @@ import { open, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { run, CommandError } from "../util/exec.js";
 import { log } from "../util/log.js";
-import { resultMtime } from "./result.js";
+import { questionMtime, resultMtime } from "./result.js";
 import type { HistoryEntry } from "./history.js";
 import { mapLimit } from "../util/async.js";
 import { isDirectory } from "../util/fs.js";
@@ -22,6 +22,8 @@ import { isDirectory } from "../util/fs.js";
 export type SessionState =
   /** Started, nothing to show for it yet. */
   | "working"
+  /** Stopped to ask you something, in .sidequest/question.md, and has not had an answer since. */
+  | "asking"
   /** Left a reply for the thread without committing anything: an investigation, an answer. */
   | "answered"
   /** Has commits on its branch. */
@@ -51,6 +53,8 @@ export interface SessionStatus {
   resultMs: number | null;
   /** A result newer than the one last posted, settled long enough to be finished. */
   resultPending: boolean;
+  /** mtime of the agent's question.md; null when it is not waiting on you. */
+  questionMs: number | null;
   /**
    * How the latest headless run ended, off the last line of agent.log; null
    * for a terminal session, or a headless one that is still running.
@@ -227,6 +231,7 @@ export class StatusWatcher {
         pr,
         resultMs: before?.resultMs ?? null,
         resultPending: false,
+        questionMs: null,
         exitCode: before?.exitCode ?? null,
       };
     }
@@ -243,21 +248,22 @@ export class StatusWatcher {
       this.now - activityMs > DAY_MS &&
       this.now - last.at < IDLE_RECHECK_MS
     ) {
-      const [resultMs, exitCode] = await Promise.all([resultMtime(cwd), headlessExit(cwd)]);
+      const [resultMs, questionMs, exitCode] = await Promise.all([resultMtime(cwd), questionMtime(cwd), headlessExit(cwd)]);
       const pr = before.commits > 0 || before.pr ? await this.pullRequest(entry) : null;
       return {
-        state: stateOf(before.commits, pr, resultMs, exitCode),
+        state: stateOf(before.commits, pr, resultMs, exitCode, questionMs),
         commits: before.commits,
         dirty: before.dirty,
         pr,
         resultMs,
         resultPending: this.isPending(resultMs, entry),
+        questionMs,
         exitCode,
       };
     }
     this.lastFull.set(entry.branch, { at: this.now, activityMs });
 
-    const [commits, dirty, resultMs, exitCode] = await Promise.all([
+    const [commits, dirty, resultMs, questionMs, exitCode] = await Promise.all([
       this.commitsAhead(entry),
       // Without --no-optional-locks, status refreshes the index and takes
       // index.lock to do it, so a look every few seconds could fail the
@@ -267,18 +273,20 @@ export class StatusWatcher {
         () => false,
       ),
       resultMtime(cwd),
+      questionMtime(cwd),
       headlessExit(cwd),
     ]);
     // A branch with nothing on it has no pull request worth asking about.
     const pr = commits > 0 || before?.pr ? await this.pullRequest(entry) : null;
 
     return {
-      state: stateOf(commits, pr, resultMs, exitCode),
+      state: stateOf(commits, pr, resultMs, exitCode, questionMs),
       commits,
       dirty,
       pr,
       resultMs,
       resultPending: this.isPending(resultMs, entry),
+      questionMs,
       exitCode,
     };
   }
@@ -476,8 +484,11 @@ export function stateOf(
   pr: PullRequest | null,
   resultMs: number | null,
   exitCode: number | null = null,
+  questionMs: number | null = null,
 ): SessionState {
   if (pr?.state === "MERGED") return "merged";
+  // Waiting on you outranks the rest, unless a reply came after the question.
+  if (questionMs !== null && questionMs > (resultMs ?? 0)) return "asking";
   if (pr?.state === "OPEN") return "pr-open";
   if (pr?.state === "CLOSED") return "pr-closed";
   if (commits > 0) return "committed";
@@ -541,6 +552,7 @@ function sameStatus(a: SessionStatus, b: SessionStatus): boolean {
     a.dirty === b.dirty &&
     a.resultMs === b.resultMs &&
     a.resultPending === b.resultPending &&
+    a.questionMs === b.questionMs &&
     a.exitCode === b.exitCode &&
     a.pr?.url === b.pr?.url &&
     a.pr?.state === b.pr?.state;

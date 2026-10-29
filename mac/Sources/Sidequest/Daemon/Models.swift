@@ -27,7 +27,7 @@ struct AppSession: Codable, Identifiable, Hashable {
     var agentId: String
     var createdAt: String
     var permalink: String
-    /// working, answered, committed, pr-open, pr-closed, merged, gone, failed or unknown.
+    /// working, asking, answered, committed, pr-open, pr-closed, merged, gone, failed or unknown.
     var state: String
     var commits: Int
     var dirty: Bool
@@ -37,6 +37,8 @@ struct AppSession: Codable, Identifiable, Hashable {
     var exitCode: Int?
     /// When you marked it done yourself; nil until you do (and from an engine too old to know).
     var doneAt: String?
+    /// What the agent stopped to ask you, while it is "asking". Nil from an engine too old to say.
+    var question: String? = nil
     var needsYou: Bool
     /// Unfinished and over two weeks old, so it is filed with Done rather than Working. Nil from an engine too old to say.
     var stale: Bool? = nil
@@ -52,7 +54,7 @@ struct AppSession: Codable, Identifiable, Hashable {
 
     /// Still being worked on: nothing to show yet, or commits but no pull request.
     /// One left unfinished for over two weeks is not still being worked on.
-    var isWorking: Bool { !markedDone && stale != true && (state == "working" || state == "committed" || state == "unknown") }
+    var isWorking: Bool { !markedDone && stale != true && ["working", "asking", "committed", "unknown"].contains(state) }
     var isDone: Bool { markedDone || ["answered", "pr-open", "pr-closed", "merged", "gone"].contains(state) }
 }
 
