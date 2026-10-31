@@ -553,11 +553,17 @@ mention them once five or more have piled up.
 Start with `sidequest doctor`.
 
 - **"Slack is running without --remote-debugging-port"**: Slack only accepts
-  the flag at launch. Run `sidequest start --force`.
+  the flag at launch. Sidequest starts anyway, so your sessions and the Mac app
+  keep working, and leaves that Slack alone. Click **Restart Slack** in the app,
+  or run `sidequest start --force`, to bring the overlay back.
 - **The overlay is gone after quitting and reopening Slack**: a Slack opened
   from the Dock has no DevTools port, so the running daemon quits it and
   relaunches it with the port within a couple of seconds. If that doesn't
   happen, check `sidequest status` (the daemon has to be running) and the log.
+- **"could not relaunch Slack: Slack started but nothing is listening"**:
+  Slack came back without opening its port. Sidequest stops relaunching it
+  then, so Slack stays open, and starts again once Slack's port is open.
+  **Restart Slack** in the app tries again.
 - **No buttons**: hover a message first. If `sidequest status` shows zero
   attached windows, the overlay wasn't injected. (`status` reads the count from
   the end of the log; when it says nothing about windows, look in the log.)

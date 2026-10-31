@@ -33,11 +33,16 @@ export class SlackKeeper {
   private stopped = true;
   private busy = false;
   /**
-   * The Slack process a relaunch last failed on. It is not tried again, so a
-   * Slack that refuses the flag is not quit over and over; a new Slack
-   * process gets a fresh try.
+   * Set once a relaunch fails. The Slack left running after one is usually
+   * the keeper's own (a new pid, or one Slack respawned without the flag),
+   * so trying again on a new pid quit Slack every minute and a half for as
+   * long as it refused the port. It waits instead until the port is seen
+   * open, from a Restart Slack or a daemon restart.
    */
-  private failedPid: number | null = null;
+  private stoodDown = false;
+  /** A Slack that was already open when the daemon started without --force, left for you to restart. */
+  private sparedPid: number | null = null;
+  private spareNext: boolean;
 
   constructor(
     private readonly options: {
@@ -46,8 +51,12 @@ export class SlackKeeper {
       onEvent?: (event: KeeperEvent) => void;
       deps?: KeeperDeps;
       checkMs?: number;
+      /** Leave the Slack running at the first look alone. */
+      spareCurrent?: boolean;
     },
-  ) {}
+  ) {
+    this.spareNext = options.spareCurrent ?? false;
+  }
 
   private get deps(): KeeperDeps {
     return this.options.deps ?? macDeps(this.options.targetUrlPattern);
@@ -80,20 +89,32 @@ export class SlackKeeper {
     try {
       const { cdpPort } = this.options;
       const slack = await this.deps.slackProcess();
-      if (!slack) return false;
-      // Started with the flag and still coming up, or already listening.
-      if (hasPortFlag(slack.args, cdpPort)) return false;
-      if (await this.deps.portOpen(cdpPort)) return false;
-      if (slack.pid === this.failedPid) return false;
+      if (!slack) {
+        this.spareNext = false;
+        return false;
+      }
+      if (this.spareNext) {
+        this.spareNext = false;
+        this.sparedPid = slack.pid;
+      }
+      // Started with the flag: still coming up, or listening.
+      if (hasPortFlag(slack.args, cdpPort)) {
+        if (this.stoodDown && (await this.deps.portOpen(cdpPort))) this.stoodDown = false;
+        return false;
+      }
+      if (await this.deps.portOpen(cdpPort)) {
+        this.stoodDown = false;
+        return false;
+      }
+      if (this.stoodDown || slack.pid === this.sparedPid) return false;
 
       this.emit({ type: "relaunching" });
       try {
         await this.deps.relaunch(cdpPort);
-        this.failedPid = null;
         this.emit({ type: "relaunched" });
         return true;
       } catch (err) {
-        this.failedPid = slack.pid;
+        this.stoodDown = true;
         this.emit({ type: "relaunch-error", message: describeError(err).message });
         return false;
       }

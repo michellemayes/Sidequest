@@ -185,3 +185,23 @@ describe("attaching to a Slack window", () => {
     await vi.waitFor(() => expect(types()).toContain("config-error"), { timeout: 3000 });
   });
 });
+
+describe("a Slack that is not there", () => {
+  it("says a failing poll once, not every four seconds", async () => {
+    const closed = createServer();
+    await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+    const { port } = closed.address() as { port: number };
+    await new Promise<void>((resolve) => closed.close(() => resolve()));
+
+    const events: AttacherEvent[] = [];
+    const quiet = new Attacher({ cdpPort: port, targetUrlPattern: "app\\.slack\\.com", watchIntervalMs: false, onEvent: (e) => events.push(e) });
+    try {
+      await quiet.sweepNow();
+      await quiet.sweepNow();
+      await quiet.sweepNow();
+      expect(events.filter((e) => e.type === "poll-error")).toHaveLength(1);
+    } finally {
+      quiet.stop();
+    }
+  });
+});

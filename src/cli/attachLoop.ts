@@ -154,6 +154,8 @@ export async function runAttacherLoop(options: {
   const keeper = new SlackKeeper({
     cdpPort,
     targetUrlPattern,
+    // Not quit behind your back: the app's Restart Slack banner asks first.
+    spareCurrent: launch.reason === "not-listening",
     onEvent: (event) => {
       switch (event.type) {
         case "relaunching":
@@ -164,7 +166,7 @@ export async function runAttacherLoop(options: {
           void attacher.sweepNow();
           break;
         case "relaunch-error":
-          log.warn(`could not relaunch Slack: ${event.message}`);
+          log.warn(`could not relaunch Slack: ${event.message} Leaving it running; Restart Slack in the app tries again.`);
           break;
       }
     },
@@ -180,7 +182,9 @@ export async function runAttacherLoop(options: {
   console.log(
     launch.started
       ? "Started Slack with its DevTools port open."
-      : "Slack was already listening on its DevTools port.",
+      : launch.reason === "not-listening"
+        ? "Slack is not listening on its DevTools port; the overlay attaches once it is."
+        : "Slack was already listening on its DevTools port.",
   );
   console.log(`  config:    ${configFile()}`);
   console.log(`  worktrees: ${config.settings.worktreesRoot}`);

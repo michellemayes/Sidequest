@@ -45,6 +45,7 @@ export class Attacher {
   private sweepSummary: SweepSummary = { targets: 0, matched: 0 };
   /** So a window that never appears is said once, not every four seconds. */
   private reportedEmpty = false;
+  private lastPollError = "";
   /** Follows the recent sessions, for the marks on their messages and their replies. */
   private watcher: StatusWatcher | null = null;
   private statuses = new Map<string, SessionStatus>();
@@ -119,11 +120,7 @@ export class Attacher {
     await this.startWatcher();
     const tick = async (): Promise<void> => {
       if (this.stopped) return;
-      try {
-        await this.sweep();
-      } catch (err) {
-        this.emit({ type: "poll-error", message: describeError(err).message });
-      }
+      await this.sweepNow();
       // Not awaited: a round goes to Slack and back, and the poll should not wait on it.
       if (!this.stopped) void this.syncer.tick();
       if (!this.stopped) {
@@ -157,8 +154,13 @@ export class Attacher {
     if (this.stopped) return;
     try {
       await this.sweep();
+      this.lastPollError = "";
     } catch (err) {
-      this.emit({ type: "poll-error", message: describeError(err).message });
+      // Every four seconds for as long as Slack is closed is one problem, not thousands.
+      const message = describeError(err).message;
+      if (message === this.lastPollError) return;
+      this.lastPollError = message;
+      this.emit({ type: "poll-error", message });
     }
   }
 
