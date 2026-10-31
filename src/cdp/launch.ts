@@ -118,7 +118,8 @@ async function waitForSlackToExit(timeoutMs: number): Promise<boolean> {
 
 export interface LaunchResult {
   started: boolean;
-  reason?: string;
+  /** "not-listening": Slack could not be brought up with its port, and the daemon started without it. */
+  reason?: "already-listening" | "not-listening";
   app?: string;
 }
 

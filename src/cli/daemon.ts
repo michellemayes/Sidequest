@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { resolveAgent } from "../agents/agents.js";
-import { launchSlack } from "../cdp/launch.js";
+import { launchSlack, type LaunchResult } from "../cdp/launch.js";
 import { daemonLogFile, shellHookFile } from "../config/paths.js";
 import type { Config } from "../config/schema.js";
 import { ensureConfigRoot, loadConfig } from "../config/store.js";
@@ -11,6 +11,7 @@ import { finishedWorktrees } from "../session/cleanup.js";
 import { computeStats, loadHistory } from "../session/history.js";
 import { UserFacingError } from "../util/errors.js";
 import { pidExists } from "../util/lockfile.js";
+import { platform } from "../util/platform.js";
 import { runAttacherLoop } from "./attachLoop.js";
 import { refreshShellHook } from "./hook.js";
 import { pileUpNudge, runsAs, terminalSummary } from "./shared.js";
@@ -28,7 +29,7 @@ export async function start(options: { force: boolean; foreground: boolean }): P
   // (daemon or --foreground) would inject the overlay twice.
   if (!process.env.SIDEQUEST_DAEMON) await assertNoRunningDaemon();
 
-  const launch = await launchSlack({ cdpPort, force: options.force, targetUrlPattern });
+  const launch = await launchSlackOrCarryOn({ cdpPort, force: options.force, targetUrlPattern });
 
   // Relaunching Slack is the disruptive part; do it up front where its errors
   // are visible, then hand the attach loop to a background daemon so no
@@ -39,6 +40,25 @@ export async function start(options: { force: boolean; foreground: boolean }): P
   }
 
   await runAttacherLoop({ launch, config });
+}
+
+/**
+ * Slack only carries the overlay. Your sessions, their replies and the Mac
+ * app's window all work without it, so a Slack that will not open its port
+ * is a warning and a daemon that keeps looking, not an engine that refuses
+ * to start and takes every session out of the app with it.
+ */
+async function launchSlackOrCarryOn(options: Parameters<typeof launchSlack>[0]): Promise<LaunchResult> {
+  if (platform() !== "darwin") return launchSlack(options);
+  try {
+    return await launchSlack(options);
+  } catch (err) {
+    if (!(err instanceof UserFacingError)) throw err;
+    if (!process.env.SIDEQUEST_DAEMON) {
+      console.warn(`warning: ${err.message}${err.hint ? `\n  ${err.hint}` : ""}`);
+    }
+    return { started: false, reason: "not-listening" };
+  }
 }
 
 async function assertNoRunningDaemon(): Promise<void> {

@@ -65,17 +65,44 @@ describe("SlackKeeper", () => {
     expect(mac.relaunches).toBe(0);
   });
 
-  it("gives up on a Slack it failed to relaunch, and tries again on a new one", async () => {
+  /*
+   * The reported bug: Slack stopped opening its port, and every Slack left
+   * after a failed relaunch had a new pid, so it was quit again and again.
+   */
+  it("stands down after a failed relaunch, whatever Slack comes up next", async () => {
     const state = { slack: { pid: 100, args: "Slack" }, portOpen: false, relaunchFails: true };
     const mac = fakeMac(state);
     const k = keeper(mac);
     await k.check();
-    await k.check();
-    expect(mac.relaunches).toBe(1);
-
     state.slack = { pid: 200, args: "Slack" };
     await k.check();
+    state.slack = { pid: 300, args: "Slack" };
+    await k.check();
+    expect(mac.relaunches).toBe(1);
+  });
+
+  it("picks up again once Slack has opened its port", async () => {
+    const state = { slack: { pid: 100, args: "Slack" }, portOpen: false, relaunchFails: true };
+    const mac = fakeMac(state);
+    const k = keeper(mac);
+    await k.check();
+    state.portOpen = true;
+    await k.check();
+
+    state.relaunchFails = false;
+    state.portOpen = false;
+    state.slack = { pid: 200, args: "Slack" };
+    expect(await k.check()).toBe(true);
     expect(mac.relaunches).toBe(2);
+  });
+
+  it("leaves the Slack it was told to spare, and relaunches the next one", async () => {
+    const state = { slack: { pid: 100, args: "Slack" }, portOpen: false };
+    const mac = fakeMac(state);
+    const k = new SlackKeeper({ cdpPort: PORT, targetUrlPattern: "app\\.slack\\.com", deps: mac, spareCurrent: true });
+    expect(await k.check()).toBe(false);
+    state.slack = { pid: 200, args: "Slack" };
+    expect(await k.check()).toBe(true);
   });
 });
 
