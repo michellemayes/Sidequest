@@ -560,8 +560,16 @@ Start with `sidequest doctor`.
   from the Dock has no DevTools port, so the running daemon quits it and
   relaunches it with the port within a couple of seconds. If that doesn't
   happen, check `sidequest status` (the daemon has to be running) and the log.
-- **"could not relaunch Slack: Slack started but nothing is listening"**:
-  Slack came back without opening its port. Sidequest stops relaunching it
+- **Slack 4.53 or later**: Slack refuses the DevTools port on its default
+  profile and quits. Sidequest then starts it on a profile of its own,
+  `Slack-Sidequest` next to Slack's (in `~/Library/Application Support`, or
+  inside the App Store build's container), copied from yours the first time so
+  you stay signed in. Every later launch uses that profile. A workspace you add
+  in a Slack opened without Sidequest isn't in it; add it again there, or delete
+  the `Slack-Sidequest` folder while Slack is quit to copy it afresh.
+- **"Slack quit without opening 127.0.0.1:9222"** or **"Slack started but
+  nothing is listening"**: Slack came back without opening its port. Its own
+  output is in `~/.sidequest/slack-launch.log`. Sidequest stops relaunching it
   then, so Slack stays open, and starts again once Slack's port is open.
   **Restart Slack** in the app tries again.
 - **No buttons**: hover a message first. If `sidequest status` shows zero

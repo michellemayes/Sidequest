@@ -1,12 +1,14 @@
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { devtoolsVersion, isAttachableTarget, listTargets } from "./client.js";
 import { run, succeeds } from "../util/exec.js";
 import { UserFacingError } from "../util/errors.js";
 import { platform } from "../util/platform.js";
 import { sleep } from "../util/async.js";
+import { configRoot } from "../config/paths.js";
+import { ensureSidequestProfile, sidequestSlackProfile } from "./slackProfile.js";
 
 const APP_CANDIDATES = [
   "/Applications/Slack.app",
@@ -121,6 +123,8 @@ export interface LaunchResult {
   /** "not-listening": Slack could not be brought up with its port, and the daemon started without it. */
   reason?: "already-listening" | "not-listening";
   app?: string;
+  /** Sidequest's own Slack profile, when Slack refused its port on the default one. */
+  profile?: string;
 }
 
 /**
@@ -176,19 +180,93 @@ export async function launchSlack(options: {
     );
   }
 
-  const child = spawn(join(app, "Contents", "MacOS", "Slack"), [
-    `--remote-debugging-port=${options.cdpPort}`,
-  ], { detached: true, stdio: "ignore" });
-  child.unref();
+  const profile = await startWithPort(options.cdpPort, macLaunchDeps(app));
+  return { started: true, app, ...(profile ? { profile } : {}) };
+}
 
-  const deadline = Date.now() + 45_000;
-  while (Date.now() < deadline) {
-    if (await isDebugPortOpen(options.cdpPort)) return { started: true, app };
-    await sleep(500);
+/**
+ * Start Slack with its port open; resolves to the profile it runs on.
+ *
+ * A Slack that quits at once instead of listening has refused the port on its
+ * default profile (Slack 4.53 and later), so it is started again on
+ * Sidequest's own, which every later launch then uses.
+ */
+export async function startWithPort(port: number, deps: LaunchDeps): Promise<string | undefined> {
+  let profile = deps.existingProfile();
+  let attempt = await deps.start(port, profile);
+  if (attempt.kind === "exited" && !profile) {
+    profile = await deps.createProfile();
+    attempt = await deps.start(port, profile);
   }
+  if (attempt.kind === "listening") return profile;
 
+  const said = reason(attempt.output);
   throw new UserFacingError(
-    `Slack started but nothing is listening on 127.0.0.1:${options.cdpPort}.`,
-    "Slack may have refused the flag, or another Slack instance was already running.",
+    attempt.kind === "exited"
+      ? `Slack quit without opening 127.0.0.1:${port}${said ? `: ${said}` : "."}`
+      : `Slack started but nothing is listening on 127.0.0.1:${port}.`,
+    `Slack's own output is in ${launchLogFile()}.`,
   );
 }
+
+export type StartOutcome = { kind: "listening" } | { kind: "exited" | "timed-out"; output: string };
+
+/** The parts of a launch that touch the Mac; swapped out in tests. */
+export interface LaunchDeps {
+  /** Sidequest's own Slack profile, once one has been made. */
+  existingProfile(): string | undefined;
+  createProfile(): Promise<string>;
+  /** Start Slack and wait for its port, or for it to quit first. */
+  start(port: number, profile: string | undefined): Promise<StartOutcome>;
+}
+
+function macLaunchDeps(app: string): LaunchDeps {
+  return {
+    existingProfile() {
+      const dir = sidequestSlackProfile();
+      return existsSync(dir) ? dir : undefined;
+    },
+    createProfile: () => ensureSidequestProfile(),
+    async start(port, profile) {
+      const log = launchLogFile();
+      mkdirSync(dirname(log), { recursive: true });
+      // A file, not a pipe: Slack outlives the daemon, and a closed pipe
+      // would end it on its next write.
+      const out = openSync(log, "w");
+      const args = [`--remote-debugging-port=${port}`];
+      if (profile) args.push(`--user-data-dir=${profile}`);
+      const child = spawn(join(app, "Contents", "MacOS", "Slack"), args, { detached: true, stdio: ["ignore", out, out] });
+      closeSync(out);
+      let exited = false;
+      child.once("exit", () => { exited = true; });
+      child.once("error", () => { exited = true; });
+      child.unref();
+
+      const deadline = Date.now() + 45_000;
+      while (Date.now() < deadline) {
+        if (await isDebugPortOpen(port)) return { kind: "listening" };
+        if (exited) return { kind: "exited", output: readLog(log) };
+        await sleep(500);
+      }
+      return { kind: "timed-out", output: readLog(log) };
+    },
+  };
+}
+
+export function launchLogFile(): string {
+  return join(configRoot(), "slack-launch.log");
+}
+
+function readLog(path: string): string {
+  try {
+    return readFileSync(path, "utf8").slice(-8192);
+  } catch {
+    return "";
+  }
+}
+
+function reason(output: string): string {
+  const lines = output.split("\n").map((l) => l.trim()).filter(Boolean);
+  return (lines.find((l) => /refus|not allowed|error/i.test(l)) ?? "").slice(0, 300);
+}
+
